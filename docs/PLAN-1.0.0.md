@@ -68,12 +68,12 @@
 - **v1.0.0-p1.2b（已完成 · 任务 2）**：NDJSON 事件封装（§15.1）——`core/events.py`（`EventType`/`Event`/`EventSequence`/`RunEventEmitter` + orjson 序列化）+ `/api/v1/demo/stream` canned 序列。测试 `test_events.py`。
 - **v1.0.0-p1.2c（已完成 · 任务 3）**：alembic 脚手架（`alembic.ini` + `migrations/env.py` 用 `DATABASE_URL` 覆盖）+ 基线迁移 `0001_initial_baseline`（镜像 init.sql 12 表 + 种子，幂等）+ 漂移护栏 `test_migrations.py`。**Phase 1 至此全部完成**。
 
-### Phase 2 · 流式协议 + 中间层  【v1.0.0-p2.1】
+### Phase 2 · 流式协议 + 中间层  【v1.0.0-p2.1a（网关）→ p2.1b（前端）】
 
-- **目标**：NestJS 网关容器接 NDJSON 转发；前端执行可视化组件接入（折叠步骤条、§十五.2 的 Worker/双层缓冲/虚拟滚动优化）。
-- **任务**：① `gateway` 容器（NestJS，认证/上传/NDJSON 透传，不重排）；② 前端 `ToolCallsCollapse` 类组件（参考 `Desktop/AgentTest/weight-loss-agent/src/components/ToolCallsCollapse.tsx`）；③ 参考 ima SSE 工程方案做 NDJSON 适配（§15.2）。
-- **测试**：网关→后端 NDJSON 透传 e2e；前端组件渲染快照。
-- **Tag**：`v1.0.0-p2.1`。
+- **目标**：NestJS 网关容器接 NDJSON 转发；前端执行可视化组件接入（折叠步骤条、§十五.2 优化）。
+- **v1.0.0-p2.1a（已完成）**：`gateway` 容器——全局 `JwtAuthGuard`（passport-jwt，与后端 PyJWT 共用密钥）+ `@Public()` 白名单；`ProxyController` 把 `/api/v1/*` NDJSON 透传（不缓冲/不重排，守卫先于转发）；`InternalAuthClient` 用 `node:http` + `X-Internal-Token` 调后端内部探活；配置 fail-closed。frontend nginx `/api`→gateway。测试 `configuration.spec.ts` + `proxy.e2e.spec.ts`（真跑 9 passed）。
+- **v1.0.0-p2.1b（待做）**：前端 `ToolCallsCollapse` 类组件（参考 `weight-loss-agent/src/components/ToolCallsCollapse.tsx`）+ NDJSON 流式 hook（§15.2 Worker/双层缓冲/虚拟滚动）。
+- **Tag**：`v1.0.0-p2.1a` / `p2.1b`。
 
 ### Phase 3 · Planner + Router  【v1.0.0-p3.1 / p3.2】
 
@@ -119,7 +119,7 @@
 | ----- | --------------------------- | ----- | ----------- |
 | 0     | 脚手架 + Docker 联动             | ✅ 完成  | v1.0.0-p0.1 |
 | 1     | 后端核心骨架（p1.1 / p1.2a / p1.2b / p1.2c） | ✅ 完成 | v1.0.0-p1.2c |
-| 2     | 流式协议 + 中间层                  | ⏳ 待开始 | —           |
+| 2     | 流式协议 + 中间层（p2.1a 网关完成，p2.1b 前端待做） | 🔶 p2.1a 完成 | v1.0.0-p2.1a |
 | 3     | Planner + Router            | ⏳ 待开始 | —           |
 | 4     | 多 Agent 协调 + 兜底 + 续跑        | ⏳ 待开始 | —           |
 | 5     | 办公能力补齐                      | ⏳ 待开始 | —           |

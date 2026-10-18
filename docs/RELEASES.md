@@ -5,6 +5,31 @@
 
 ---
 
+## v1.0.0-p2.1a — NestJS 网关容器：JWT 鉴权 + NDJSON 透传（2026-10-18）
+
+**类型**：流式协议 + 中间层（Phase 2 前半）
+**对应计划**：PLAN-1.0.0.md Phase 2 / v1.0.0-p2.1a
+**Tag 提交**：见 `git show v1.0.0-p2.1a`
+
+### 交付内容
+- `gateway/` NestJS 10 容器：全局 `JwtAuthGuard`（passport-jwt，与后端 PyJWT 共用密钥）+ `@Public()` 白名单；`ProxyController` 把 `/api/v1/*` NDJSON 透传（`selfHandleResponse:false` 不缓冲、`Accept-Encoding:identity`、`fixRequestBody` 顺序纪律、代理注册为 Controller 使守卫先于转发）；`InternalAuthClient` 用 `node:http` + `X-Internal-Token` 调后端内部探活。
+- 配置 fail-closed（生产缺 `GATEWAY_JWT_SECRET`/`INTERNAL_SHARED_SECRET` 启动失败）。
+- 接线：`docker-compose.yml` 加 gateway 服务；frontend nginx `/api` → `gateway:3000`；`.env.example` 补全；`.gitignore` 屏蔽 Node 产物。
+
+### 验证状态
+- ✅ `tsc --noEmit` 通过。
+- ✅ `jest`：9 passed（含 `proxy.e2e.spec.ts`：NDJSON 白名单透传有序、非白名单 401、有效 JWT 转发、内部 node:http ping 打通）。
+- ✅ `docker compose config` 通过。
+- ⏸️ 全栈 `docker compose up` 未自动跑（点5 谨慎）。
+
+### 已知遗留
+- 登录签发 / 网关身份头注入后端未做；未做网关限流；`package-lock.json` 未固化。
+
+### 下一步
+`v1.0.0-p2.1b`：前端执行可视化组件。
+
+---
+
 ## v1.0.0-p1.2c — Alembic 迁移基线（2026-10-18，Phase 1 收口）
 
 **类型**：后端核心骨架（Phase 1 / 任务 3）

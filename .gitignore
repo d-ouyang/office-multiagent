@@ -6,6 +6,11 @@ __pycache__/
 .venv/
 venv/
 
+# ---- Node / gateway ----
+node_modules/
+package-lock.json
+gateway/dist/
+
 # ---- 环境 / 密钥（只留示例） ----
 .env
 .env.*
