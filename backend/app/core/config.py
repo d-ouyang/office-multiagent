@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # ---- 模型注册表（配置驱动，非硬编码；§十七）----
     models_config: str = ""          # 留空则自动定位 backend/config/models.yaml
 
+    # ---- 规划器（配置驱动，§四.2/§四.3）----
+    planner_config: str = ""         # 留空则自动定位 backend/config/planner.yaml
+
     # ---- 云端模型密钥（仅存环境变量，不进 git）----
     siliconflow_api_key: str = ""
     deepseek_api_key: str = ""

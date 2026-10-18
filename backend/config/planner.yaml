@@ -1,0 +1,46 @@
+# 规划器配置（配置驱动，非硬编码）—— 设计文档 §四.2 / §四.3 + §12.5（JEV 决策层接口化预留）。
+#
+# 意图识别 + 复杂度打分用【确定性规则】打底：这类判断高频、低延迟、要可测，
+# 交给代码而不是每次调 LLM（§十二"算数交给代码、LLM 只做推理"）。
+# LLM 增强（如 DAG 分解、歧义消解）留作后续 DecisionModel 插槽，改配置即可接，不硬编码。
+# DAG 分解（§四.2 第三步）在 p3.2 做，本文件先覆盖意图 + 复杂度。
+
+intents:
+  analysis:
+    keywords: [分析, 统计, 趋势, 对比, 占比, 洞察, 汇总分析, 相关性]
+    agent: data_analysis
+  cleaning:
+    keywords: [清洗, 去重, 缺失值, 异常值, 格式化, 规范化, 补全, 脏数据]
+    agent: data_cleaning
+  report:
+    keywords: [报表, 报告, 周报, 月报, 导出, 生成pdf, 生成excel, 生成word, ppt]
+    agent: report_generation
+  rag:
+    keywords: [查一下, 知识库, 文档里, 根据资料, 检索, 引用, 出处, 制度, 手册]
+    agent: rag_retrieval
+  visualization:
+    keywords: [图表, 画图, 可视化, 柱状图, 折线图, 饼图, 看板, 大屏]
+    agent: visualization
+  image_restore:
+    keywords: [图片还原, 截图, 识图, ocr, 表格还原, 图片里的表格]
+    agent: image_restore
+
+complexity:
+  # 多步骤连接词：每命中一个 +step_weight（多步=趋向复杂）
+  step_connectors: [然后, 接着, 之后, 并且, 同时, 最后, 第一步, 第二步, 第三步, 首先]
+  step_weight: 1.0
+  # 每多识别出一个意图（能力）+intent_weight（既要分析又要报表=复杂）
+  intent_weight: 1.5
+  # 多输出格式：除第一种外每多一种 +output_weight
+  output_markers: [excel, pdf, word, ppt, csv, 图表, 报表]
+  output_weight: 1.0
+  # 文本长度：每超过 length_threshold 一段 +length_weight
+  length_threshold: 120
+  length_weight: 0.5
+  # 依赖/条件词：每命中一个 +dependency_weight
+  dependency_markers: [依赖, 基于, 根据前面, 如果, 条件, 关联, 前提]
+  dependency_weight: 1.0
+  # 阈值：score >= complex_threshold → 复杂（多 Agent）；否则简单（单 Agent）
+  complex_threshold: 3.0
+  # 主意图之外最多保留几个意图进任务
+  max_intents: 3

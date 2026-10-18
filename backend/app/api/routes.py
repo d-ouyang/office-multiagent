@@ -1,12 +1,15 @@
-"""API 路由：/health 联动探测、/models 模型注册表、/internal/auth/ping 内部鉴权自检、/demo/stream NDJSON 示例。"""
+"""API 路由：/health 联动探测、/models 模型注册表、/plan 规划路由、/internal/auth/ping 内部鉴权自检、/demo/stream NDJSON 示例。"""
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from ..core import chroma_client, db, redis_client
 from ..core.config import settings
 from ..core.events import EventType, RunEventEmitter, iter_ndjson
 from ..core.internal_auth import require_internal
 from ..core.model_registry import get_dialogue_models
+from ..core.planner import plan as make_plan
+from ..core.router import decide
 
 router = APIRouter()
 
@@ -37,6 +40,48 @@ def health():
 def models(pool: list[str] | None = Query(default=None, description="按模型池过滤")):
     """对话下拉可见模型（§十七.1 字段）。"""
     return {"models": get_dialogue_models(pool)}
+
+
+class PlanRequest(BaseModel):
+    text: str
+
+
+@router.post("/plan")
+def plan_endpoint(body: PlanRequest):
+    """意图识别 + 复杂度打分 + 路由决策（§四.2/§四.3，确定性规则，可测）。"""
+    p = make_plan(body.text)
+    d = decide(p)
+    return {
+        "intent": p.intents[0] if p.intents else "general",
+        "intents": p.intents,
+        "score": p.score,
+        "route": d.mode,
+        "reason": d.reason,
+        "primary_agent": d.primary_agent,
+        "signals": p.signals,
+        "entities": p.entities,
+    }
+
+
+class TaskRequest(BaseModel):
+    text: str
+
+
+@router.post("/tasks")
+async def tasks_stream(body: TaskRequest):
+    """跑一次编排并以 NDJSON 流式返回事件（planner→路由→桩 Agent→done）。
+
+    真实 Agent 在 Phase 4；当前为确定性骨架，收集后流式（够快）。受网关 JWT 保护。
+    """
+    from ..orchestration.graph import run_task
+
+    _result, events = run_task(body.text)
+
+    def gen():
+        for ev in events:
+            yield encode_line(ev)
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
 @router.get("/internal/auth/ping", dependencies=[Depends(require_internal)])

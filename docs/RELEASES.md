@@ -5,6 +5,31 @@
 
 ---
 
+## v1.0.0-p3.1 — Planner + Router：意图识别 / 复杂度打分 / 路由（2026-10-18）
+
+**类型**：核心机制（Phase 3 前半）
+**对应计划**：PLAN-1.0.0.md Phase 3 / v1.0.0-p3.1
+**Tag 提交**：见 `git show v1.0.0-p3.1`
+
+### 交付内容
+- `config/planner.yaml` + `core/planner.py`：意图识别（6 类 → Agent 类型）+ 复杂度打分（步骤/多意图/多输出/长度/依赖，`signals` 可解释），**配置驱动确定性规则**（§十二：高频低延迟判断交给代码，LLM 留插槽）。
+- `core/router.py`：按 `complex_threshold` 分流 single/multi。
+- `orchestration/graph.py`：LangGraph `planner → 条件路由 → single/multi 桩节点 → END`，共享 `RunEventEmitter` 保 seq 单调，推 NDJSON 事件。
+- `POST /api/v1/plan`（路由决策）+ `POST /api/v1/tasks`（跑编排、NDJSON 流式），均受网关 JWT 保护。
+
+### 验证状态
+- ✅ `pytest backend/tests`：39 passed / 3 skipped（新增 test_planner 6 + test_graph 3）。
+- ✅ 覆盖简单→single / 复杂→multi、意图分类、signals 可解释、路由驱动 LangGraph、事件 seq 单调。
+- ⏸️ 未接真实 LLM / 未跑全栈（点5）。
+
+### 已知遗留
+- 规则版对歧义/口语可能误判（signals 可解释 + LLM 插槽缓解）；`/tasks` 桩 Agent + 收集后流式；完整实体抽取随 p3.2。
+
+### 下一步
+`v1.0.0-p3.2`：DAG 拆分子任务。
+
+---
+
 ## v1.0.0-p2.1b — 前端执行可视化 + NDJSON 流式 hook（2026-10-18，Phase 2 收口）
 
 **类型**：流式协议 + 中间层（Phase 2 后半）
