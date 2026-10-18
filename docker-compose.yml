@@ -1,0 +1,95 @@
+# office-multiagent · 本地 Docker 联动
+# 服务：mysql / redis / chroma / backend / frontend，同处 office-net。
+# 启动：docker compose up -d --build   （首次拉镜像+构建后端较重，属耗时操作，按立项纪律不自动跑）
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-office}
+      MYSQL_USER: ${MYSQL_USER:-office}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-office_pass}
+    ports:
+      - "3306:3306"   # 本地直连调试用；生产可去掉仅留内网
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [office-net]
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [office-net]
+
+  chroma:
+    image: chromadb/chroma:latest   # 生产建议 pin 版本；设计文档 §12.3 亦可直接复用共享 RAG 的 Chroma
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [office-net]
+
+  backend:
+    build: ./backend
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-office}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-office_pass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-office}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      REQUIRE_CHROMA: "false"
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [office-net]
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      - backend
+    networks: [office-net]
+
+networks:
+  office-net:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  chroma_data:

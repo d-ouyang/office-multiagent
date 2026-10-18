@@ -1,0 +1,25 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ---- 环境 / 密钥（只留示例） ----
+.env
+.env.*
+!.env.example
+
+# ---- IDE / OS ----
+.vscode/
+.idea/
+.DS_Store
+
+# ---- Docker 卷数据（由 compose 管理，不进 git） ----
+mysql_data/
+chroma_data/
+
+# ---- 测试产物 ----
+.coverage
+htmlcov/

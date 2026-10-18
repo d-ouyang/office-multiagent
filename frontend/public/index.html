@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>office-multiagent · 联动状态</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { font-family: system-ui, -apple-system, "PingFang SC", sans-serif; background:#0f1115; color:#e6e6e6; margin:0; padding:40px; }
+    h1 { font-size:20px; }
+    .card { background:#171a21; border:1px solid #2a2f3a; border-radius:10px; padding:20px; max-width:640px; }
+    .row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #232833; }
+    .ok { color:#4ade80; } .bad { color:#f87171; } .dim { color:#9aa0aa; }
+    button { margin-top:16px; background:#2563eb; color:#fff; border:0; padding:8px 16px; border-radius:6px; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <h1>office-multiagent · 容器联动状态</h1>
+  <div class="card" id="status">加载中…</div>
+  <button onclick="load()">刷新</button>
+
+  <script>
+    async function load() {
+      const el = document.getElementById('status');
+      el.innerHTML = '请求中…';
+      try {
+        const r = await fetch('/api/v1/health');
+        const d = await r.json();
+        let html = `<div class="row"><span>整体状态</span><span class="${d.status==='ok'?'ok':'bad'}">${d.status}</span></div>`;
+        for (const [k,v] of Object.entries(d.services)) {
+          html += `<div class="row"><span>${k}</span><span class="${v.ok?'ok':'bad'}">${v.ok?'OK':'DOWN'}</span></div>`;
+        }
+        el.innerHTML = html;
+      } catch (e) {
+        el.innerHTML = `<span class="bad">请求失败：${e}</span>`;
+      }
+    }
+    load();
+  </script>
+</body>
+</html>
