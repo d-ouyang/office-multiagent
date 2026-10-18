@@ -5,6 +5,29 @@
 
 ---
 
+## v1.0.0-p1.2b — NDJSON 事件封装（2026-10-18）
+
+**类型**：后端核心骨架（Phase 1 / 任务 2）
+**对应计划**：PLAN-1.0.0.md Phase 1 / v1.0.0-p1.2b
+**Tag 提交**：见 `git show v1.0.0-p1.2b`
+
+### 交付内容
+- 新增 `core/events.py`：NDJSON 事件协议（§15.1/§15.3）——`EventType` 枚举、`Event` 信封（run_id/turn_id/seq/ts/data）、`EventSequence` 单调 seq、`RunEventEmitter` 类型化构造器、orjson 序列化（`encode_line`/`parse_line`，缺则回退标准 json）。
+- 新增 `/api/v1/demo/stream`：canned NDJSON 序列，演示全协议类型，供前端/网关联调（Phase 3 前占位，不依赖外部服务）。
+
+### 验证状态
+- ✅ `pytest backend/tests`：25 passed / 3 skipped（新增 `test_events.py` 8 例）。
+- ✅ 覆盖信封/seq 单调/构造器字段/round-trip/单行换行/未登记 type 从严/demo 端到端。
+- ⏸️ 全栈实跑未自动跑（点5 谨慎）。
+
+### 已知遗留
+- `task_summary` 产物/来源为演示 dict，Phase 5/6 落库后回填；断点续流按 seq 续传留到 Phase 4。
+
+### 下一步
+`v1.0.0-p1.2c`：`db/init.sql` → alembic 迁移基线。
+
+---
+
 ## v1.0.0-p1.2a — 连接层加固（2026-10-18）
 
 **类型**：后端核心骨架（Phase 1 / 任务 1）

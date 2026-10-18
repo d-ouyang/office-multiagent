@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="office-multiagent", version="1.0.0-p1.2a", lifespan=lifespan)
+app = FastAPI(title="office-multiagent", version="1.0.0-p1.2b", lifespan=lifespan)
 
 app.add_middleware(CorrelationMiddleware)
 app.include_router(router, prefix="/api/v1")

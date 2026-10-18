@@ -1,8 +1,10 @@
-"""API 路由：/health 联动探测、/models 模型注册表、/internal/auth/ping 内部鉴权自检。"""
+"""API 路由：/health 联动探测、/models 模型注册表、/internal/auth/ping 内部鉴权自检、/demo/stream NDJSON 示例。"""
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 
 from ..core import chroma_client, db, redis_client
 from ..core.config import settings
+from ..core.events import EventType, RunEventEmitter, iter_ndjson
 from ..core.internal_auth import require_internal
 from ..core.model_registry import get_dialogue_models
 
@@ -41,3 +43,30 @@ def models(pool: list[str] | None = Query(default=None, description="按模型�
 def internal_auth_ping():
     """内部调用自检：只有带正确 X-Internal-Token 才能进（fail-closed）。"""
     return {"ok": True, "source": "config"}
+
+
+@router.get("/demo/stream")
+async def demo_stream():
+    """脚手架：一条 canned NDJSON 事件序列（§15.1 协议全类型演示）。
+
+    用于验证协议/前端联调，Phase 3 真实 Agent 编排前占位；不依赖任何外部服务。
+    前端 fetch + ReadableStream 按 \\n 切行逐行 JSON.parse（残行留缓冲区，§15.2）。
+    """
+    em = RunEventEmitter(run_id="demo-run", turn_id="demo-turn")
+
+    def gen():
+        yield em.thinking_delta("先理解需求，再决定要不要调工具……")
+        yield em.tool_call_start("t1", "web_search", {"query": "办公助手"})
+        yield em.observation("t1", "找到 3 条结果（此处为截断演示）", truncated=True, total=3)
+        yield em.tool_call_end("t1", "web_search", success=True, duration_ms=120)
+        yield em.status("planner", "running", subtask_id="sub-1")
+        yield em.content_delta("这是给用户的正文流。")
+        yield em.artifact("a1", "excel", "http://localhost:8000/assets/a1.xlsx", "报表.xlsx")
+        yield em.source("s1", "web_url", "ref-1", "参考资料", "http://example.com")
+        yield em.task_summary(
+            artifacts=[{"asset_id": "a1", "type": "excel", "name": "报表.xlsx"}],
+            sources=[{"source_id": "s1", "type": "web_url", "title": "参考资料"}],
+        )
+        yield em.done("done")
+
+    return StreamingResponse(iter_ndjson(gen()), media_type="application/x-ndjson")
