@@ -10,6 +10,7 @@ from app.core.logging import (
     CorrelationMiddleware,
     _JsonFormatter,
     log_agent_step,
+    log_duration,
     log_token_audit,
     setup_logging,
 )
@@ -34,3 +35,4 @@ def test_setup_logging_and_helpers_no_error():
     setup_logging()  # 不应抛
     log_agent_step("s1", "planner", "plan", note="ok")
     log_token_audit(1, "deepseek-chat", reserve=100, settle=90)
+    log_duration("startup", "warmup_connections", 0.0, mysql=True)  # span 非 name，禁占保留字

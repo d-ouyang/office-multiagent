@@ -5,6 +5,31 @@
 
 ---
 
+## v1.0.0-p1.2a — 连接层加固（2026-10-18）
+
+**类型**：后端核心骨架（Phase 1 / 任务 1）
+**对应计划**：PLAN-1.0.0.md Phase 1 / v1.0.0-p1.2a
+**Tag 提交**：见 `git show v1.0.0-p1.2a`
+
+### 交付内容
+- 三件套客户端改**懒创建工厂**（`db.get_engine()` / `redis_client.get_redis()`），连接池 / 超时参数全部走配置（`mysql_pool_size` / `redis_socket_timeout` / `connect_max_retries` 等）。
+- `pool_pre_ping` + `pool_recycle` / `health_check_interval`：DB/Redis 瞬断后逐请求自愈重连。
+- 新增 `core/startup.py`：启动期线性退避预热三件套，`main.py` 加 `lifespan`；mysql/redis 未就绪**降级运行不杀进程**，由 `/health` 暴露。
+- 顺带修 `log_duration` 用 `name` 撞 `LogRecord.name` 保留属性的 `KeyError`（改 `span` + 回归断言）。
+
+### 验证状态
+- ✅ `pytest backend/tests`：17 passed / 3 skipped（集成测试默认 skip）。
+- ✅ 覆盖引擎/redis 单例与参数、重试语义、warmup 缺服务返回报告不抛。
+- ⏸️ 全栈实跑未自动跑（点5 谨慎）。
+
+### 已知遗留
+- chroma 未加显式超时；全栈实跑 / 集成测试待显式执行。
+
+### 下一步
+`v1.0.0-p1.2b`：NDJSON 事件封装。
+
+---
+
 ## v1.0.0-p1.1 — 后端核心骨架前置：鉴权 stub + 模型注册表 + 日志（2026-10-18）
 
 **类型**：后端核心骨架（Phase 1 前半）

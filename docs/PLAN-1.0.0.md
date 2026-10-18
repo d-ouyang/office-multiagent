@@ -64,7 +64,9 @@
   - **不做**：Planner/Router、真实 Agent 逻辑、NDJSON 封装、alembic 迁移基线（留到 p1.2）。
   - **测试**：`test_models.py`（对话列表只含 in_dialogue、池过滤、逻辑小模型不泄漏）、`test_internal_auth.py`（token 正确放行/缺省401/fail-closed）、`test_logging.py`（JSON 摊平 extra、辅助函数可用）。
   - **Tag**：`v1.0.0-p1.1` + release。
-- **v1.0.0-p1.2（待做）**：① `core/db.py`/`redis_client.py`/`chroma_client.py` 接入依赖注入与重试；② NDJSON 事件封装（§15.1）；③ `db/init.sql` → alembic 迁移基线。
+- **v1.0.0-p1.2a（已完成 · 任务 1）**：连接层加固——`db.py`/`redis_client.py` 改懒创建工厂 + 池/超时参数走配置；新增 `core/startup.py` 启动期线性退避预热三件套，mysql/redis 未就绪降级不杀进程（`main.py` lifespan）。测试 `test_connection.py`。
+- **v1.0.0-p1.2b（待做）**：NDJSON 事件封装（§15.1）。
+- **v1.0.0-p1.2c（待做）**：`db/init.sql` → alembic 迁移基线。
 
 ### Phase 2 · 流式协议 + 中间层  【v1.0.0-p2.1】
 
@@ -116,7 +118,7 @@
 | Phase | 内容                          | 状态    | Tag         |
 | ----- | --------------------------- | ----- | ----------- |
 | 0     | 脚手架 + Docker 联动             | ✅ 完成  | v1.0.0-p0.1 |
-| 1     | 后端核心骨架（p1.1 骨架前置 / p1.2 余下） | 🔶 p1.1 完成 | v1.0.0-p1.1 |
+| 1     | 后端核心骨架（p1.1/p1.2a 完成，p1.2b/c 余下） | 🔶 p1.2a 完成 | v1.0.0-p1.2a |
 | 2     | 流式协议 + 中间层                  | ⏳ 待开始 | —           |
 | 3     | Planner + Router            | ⏳ 待开始 | —           |
 | 4     | 多 Agent 协调 + 兜底 + 续跑        | ⏳ 待开始 | —           |

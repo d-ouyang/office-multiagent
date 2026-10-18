@@ -43,5 +43,17 @@ class Settings(BaseSettings):
     siliconflow_api_key: str = ""
     deepseek_api_key: str = ""
 
+    # ---- 连接层加固（p1.2a）----
+    mysql_pool_size: int = 5
+    mysql_max_overflow: int = 10
+    mysql_pool_timeout: int = 30
+    redis_socket_timeout: float = 2.0
+    redis_socket_connect_timeout: float = 2.0
+    redis_health_check_interval: int = 30
+    chroma_timeout: float = 5.0
+    # 启动探活重试：compose 起停顺序下，DB/Redis 可能晚于 backend 就绪
+    connect_max_retries: int = 3
+    connect_retry_backoff: float = 1.0
+
 
 settings = Settings()

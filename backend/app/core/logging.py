@@ -118,9 +118,13 @@ def log_token_audit(
     )
 
 
-def log_duration(logger_name: str, name: str, start: float, **fields: Any) -> None:
-    """记录一段耗时（毫秒）。"""
+def log_duration(logger_name: str, span: str, start: float, **fields: Any) -> None:
+    """记录一段耗时（毫秒）。
+
+    ⚠️ 字段名用 `span` 而非 `name`：`name` 是 LogRecord 的保留属性，
+    放进 extra 会直接 KeyError（被 test_connection 抓到的真实 bug）。
+    """
     logging.getLogger(logger_name).info(
         "duration",
-        extra={"name": name, "ms": int((time.time() - start) * 1000), **fields},
+        extra={"span": span, "ms": int((time.time() - start) * 1000), **fields},
     )
