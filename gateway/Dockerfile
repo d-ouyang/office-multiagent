@@ -1,5 +1,5 @@
 # ---- 构建阶段 ----
-FROM node:22-alpine AS build
+FROM node:20-alpine AS build
 WORKDIR /app
 # 国内镜像源加速（服务器无 clashx，须走国内源）
 RUN npm config set registry https://registry.npmmirror.com
@@ -9,7 +9,7 @@ COPY . .
 RUN npm run build
 
 # ---- 运行阶段 ----
-FROM node:22-alpine AS runtime
+FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 RUN npm config set registry https://registry.npmmirror.com

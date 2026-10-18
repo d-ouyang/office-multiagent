@@ -7,6 +7,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -i https://mirrors.cloud.tencent.com/pypi/simple -r requirements.txt
 
 COPY app/ ./app/
+COPY config/ ./config/
 COPY tests/ ./tests/
 
 EXPOSE 8000

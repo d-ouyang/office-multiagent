@@ -5,6 +5,29 @@
 
 ---
 
+## v1.0.0-p4.2a — 三层联调 + Compose 就绪修复（2026-10-18）
+
+**类型**：整合验证 / 修复（Phase 4 收尾）
+**Tag 提交**：见 `git show v1.0.0-p4.2a`
+
+### 交付内容
+- **修真 bug**：`backend/Dockerfile` 补 `COPY config/`（原漏拷 `models.yaml`/`planner.yaml`，容器内 /models·/plan·/tasks 会 500）。
+- `docker-compose.yml` infra pin `mysql:8.0` / `chromadb/chroma:0.5.23`；gateway/frontend 基线用已缓存 tag。
+- **三层真联调（宿主进程）**：网关→真后端公开 NDJSON 透传 ✅、受保护 401 ✅、有效 JWT→真编排 NDJSON ✅（闭合 p2.1a 假后端未覆盖的链路）。
+
+### 验证状态
+- ✅ 应用单测 65 passed / 3 skipped（未改应用代码）。
+- ✅ 宿主进程三层真 HTTP 联调通过。
+- ⏸️ 五容器 `docker compose up --build` 沙箱内未跑通（Docker registry 出网受限，`python:3.13-slim` 拉不动）→ 交本机执行，配置已就绪。
+
+### 已知遗留
+- 五容器 compose 实跑、真实 mysql/chroma 联调、真实 LLM 均待（本机 / Phase 5）。
+
+### 下一步
+本机 `docker compose up --build` 跑通五容器；Phase 5 办公能力池。
+
+---
+
 ## v1.0.0-p4.2 — Token 池两段式扣减 + 中断 + 断点续跑（2026-10-18，Phase 4 收口）
 
 **类型**：核心机制（Phase 4 后半）

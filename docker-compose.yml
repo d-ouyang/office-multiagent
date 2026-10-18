@@ -4,7 +4,7 @@
 
 services:
   mysql:
-    image: mysql:8.4
+    image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pass}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-office}
@@ -35,7 +35,7 @@ services:
     networks: [office-net]
 
   chroma:
-    image: chromadb/chroma:latest   # 生产建议 pin 版本；设计文档 §12.3 亦可直接复用共享 RAG 的 Chroma
+    image: chromadb/chroma:0.5.23   # pin 版本；亦可复用共享 RAG 的 Chroma（设计文档 §12.3）
     ports:
       - "8001:8000"
     volumes:
