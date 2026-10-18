@@ -5,6 +5,30 @@
 
 ---
 
+## v1.0.0-p1.2c — Alembic 迁移基线（2026-10-18，Phase 1 收口）
+
+**类型**：后端核心骨架（Phase 1 / 任务 3）
+**对应计划**：PLAN-1.0.0.md Phase 1 / v1.0.0-p1.2c
+**Tag 提交**：见 `git show v1.0.0-p1.2c`
+
+### 交付内容
+- Alembic 脚手架：`backend/alembic.ini` + `migrations/env.py`（用 `core.db.DATABASE_URL` 覆盖 URL，单一真相源）+ `script.py.mako`。
+- 基线迁移 `0001_initial_baseline.py`：镜像 `db/init.sql` 全部 12 表 + 种子（幂等 `CREATE TABLE IF NOT EXISTS` / `INSERT IGNORE`），downgrade 逆序 DROP。
+- 漂移护栏 `test_migrations.py`：基线表集必须 == init.sql 表集；env 必须覆盖 URL；revision/down_revision 校验。
+
+### 验证状态
+- ✅ `pytest backend/tests`：30 passed / 3 skipped（新增 5 例）。
+- ✅ `alembic history`（offline）：`<base> -> 0001_initial (head)`。
+- ⏸️ 未对真实 MySQL 跑 upgrade（点5 谨慎）。
+
+### 已知遗留
+- 原生 DDL 基线；后续上 ORM 再考虑 autogenerate。迁移执行交 Phase 7 deploy 一次性跑，不在 app 启动自动跑（多副本 footgun）。
+
+### 下一步
+**Phase 2（p2.1）**：NestJS 网关 + 前端可视化。
+
+---
+
 ## v1.0.0-p1.2b — NDJSON 事件封装（2026-10-18）
 
 **类型**：后端核心骨架（Phase 1 / 任务 2）

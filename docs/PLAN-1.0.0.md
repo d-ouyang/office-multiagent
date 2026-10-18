@@ -66,7 +66,7 @@
   - **Tag**：`v1.0.0-p1.1` + release。
 - **v1.0.0-p1.2a（已完成 · 任务 1）**：连接层加固——`db.py`/`redis_client.py` 改懒创建工厂 + 池/超时参数走配置；新增 `core/startup.py` 启动期线性退避预热三件套，mysql/redis 未就绪降级不杀进程（`main.py` lifespan）。测试 `test_connection.py`。
 - **v1.0.0-p1.2b（已完成 · 任务 2）**：NDJSON 事件封装（§15.1）——`core/events.py`（`EventType`/`Event`/`EventSequence`/`RunEventEmitter` + orjson 序列化）+ `/api/v1/demo/stream` canned 序列。测试 `test_events.py`。
-- **v1.0.0-p1.2c（待做）**：`db/init.sql` → alembic 迁移基线。
+- **v1.0.0-p1.2c（已完成 · 任务 3）**：alembic 脚手架（`alembic.ini` + `migrations/env.py` 用 `DATABASE_URL` 覆盖）+ 基线迁移 `0001_initial_baseline`（镜像 init.sql 12 表 + 种子，幂等）+ 漂移护栏 `test_migrations.py`。**Phase 1 至此全部完成**。
 
 ### Phase 2 · 流式协议 + 中间层  【v1.0.0-p2.1】
 
@@ -118,7 +118,7 @@
 | Phase | 内容                          | 状态    | Tag         |
 | ----- | --------------------------- | ----- | ----------- |
 | 0     | 脚手架 + Docker 联动             | ✅ 完成  | v1.0.0-p0.1 |
-| 1     | 后端核心骨架（p1.1/p1.2a/p1.2b 完成，p1.2c 余下） | 🔶 p1.2b 完成 | v1.0.0-p1.2b |
+| 1     | 后端核心骨架（p1.1 / p1.2a / p1.2b / p1.2c） | ✅ 完成 | v1.0.0-p1.2c |
 | 2     | 流式协议 + 中间层                  | ⏳ 待开始 | —           |
 | 3     | Planner + Router            | ⏳ 待开始 | —           |
 | 4     | 多 Agent 协调 + 兜底 + 续跑        | ⏳ 待开始 | —           |
