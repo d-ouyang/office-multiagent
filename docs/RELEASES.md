@@ -5,6 +5,31 @@
 
 ---
 
+## v1.0.0-p2.1b — 前端执行可视化 + NDJSON 流式 hook（2026-10-18，Phase 2 收口）
+
+**类型**：流式协议 + 中间层（Phase 2 后半）
+**对应计划**：PLAN-1.0.0.md Phase 2 / v1.0.0-p2.1b
+**Tag 提交**：见 `git show v1.0.0-p2.1b`
+
+### 交付内容
+- 前端升级为 React 18 + Vite 5 + TS（多阶段 Dockerfile：node build → nginx 伺服 dist + 反代 `/api`→gateway）。
+- `lib/ndjson.ts`（LineBuffer + parseEvent）、`lib/consume.ts`（consumeNdjson 流式消费）、`lib/derive.ts`（事件→toolCalls/正文/思考/产物/来源）。
+- `hooks/useNdjsonStream.ts`（fetch + AbortController + 状态机）。
+- `components/ToolCallsCollapse.tsx`（移植 weight-loss-agent 同名组件，去 tdesign 用 lucide + CSS 变量）+ `EventTimeline` + `DemoPage`（拉 `/api/v1/demo/stream` 渲染执行过程）。
+
+### 验证状态
+- ✅ `tsc -b` 通过；`vite build` 成功（gzip 51KB）。
+- ✅ `vitest run`：17 passed（ndjson / consume / derive / ToolCallsCollapse）。
+- ⏸️ 全栈 `docker compose up` 未自动跑（点5 谨慎）。
+
+### 已知遗留
+- §15.2 Worker/MD/虚拟滚动优化未接（先保可测 inline 消费）；登录态执行可视化等 Phase 3 任务端点。
+
+### 下一步
+**Phase 3（p3.1）**：Planner + Router。
+
+---
+
 ## v1.0.0-p2.1a — NestJS 网关容器：JWT 鉴权 + NDJSON 透传（2026-10-18）
 
 **类型**：流式协议 + 中间层（Phase 2 前半）

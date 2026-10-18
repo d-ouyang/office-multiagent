@@ -6,10 +6,13 @@ __pycache__/
 .venv/
 venv/
 
-# ---- Node / gateway ----
+# ---- Node / 前端 / 网关 ----
 node_modules/
 package-lock.json
-gateway/dist/
+dist/
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # ---- 环境 / 密钥（只留示例） ----
 .env
