@@ -69,17 +69,25 @@ def plan_endpoint(body: PlanRequest):
 
 class TaskRequest(BaseModel):
     text: str
+    user_id: int | None = None   # 提供则走 token 池 reserve/settle（§十四）
+    estimate: int = 0            # 本次任务 token 预扣估算
 
 
 @router.post("/tasks")
 async def tasks_stream(body: TaskRequest):
-    """跑一次编排并以 NDJSON 流式返回事件（planner→路由→桩 Agent→done）。
+    """跑一次编排并以 NDJSON 流式返回事件（planner→路由→Agent→done）。
 
-    真实 Agent 在 Phase 4；当前为确定性骨架，收集后流式（够快）。受网关 JWT 保护。
+    带 user_id 时前置 token 池 reserve（p4.2）：余额不足→quota_paused 中断；
+    完成 settle。受网关 JWT 保护。
     """
+    from ..core.db import get_engine
+    from ..core.token_pool import TokenPool
     from ..orchestration.graph import run_task
 
-    _result, events = run_task(body.text)
+    pool = TokenPool(get_engine()) if body.user_id is not None else None
+    _result, events = run_task(
+        body.text, user_id=body.user_id, estimate=body.estimate, token_pool=pool
+    )
 
     def gen():
         for ev in events:

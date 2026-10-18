@@ -5,6 +5,29 @@
 
 ---
 
+## v1.0.0-p4.2 — Token 池两段式扣减 + 中断 + 断点续跑（2026-10-18，Phase 4 收口）
+
+**类型**：核心机制（Phase 4 后半）
+**对应计划**：PLAN-1.0.0.md Phase 4 / v1.0.0-p4.2
+**Tag 提交**：见 `git show v1.0.0-p4.2`
+
+### 交付内容
+- `core/token_pool.py`：`TokenPool` reserve（原子 `UPDATE...WHERE balance>=x` 防超额）/ settle（补差）/ balance，落 `token_ledger`；参数化 SQL 跨 MySQL/SQLite。
+- `graph.py`：`quota` 门节点——reserve 失败 `interrupt()` 暂停（checkpointer），`Command(resume=...)` 充值后续跑；完成 settle。
+- `POST /api/v1/tasks` 增 `user_id`/`estimate`，走 token 池，余额不足推 `quota_paused`。
+
+### 验证状态
+- ✅ `pytest backend/tests`：65 passed / 3 skipped（token_pool 5 + graph_token 3，含中断后续跑、原子不超额）。
+- ⏸️ 三层真实联调（compose）下一步做。
+
+### 已知遗留
+- 真实 token 计数随 LLM brain（Phase 5）；跨请求续跑需持久化 checkpointer（SqliteSaver/MySQL）。
+
+### 下一步
+三层真实联调（compose up）整合验证；之后 Phase 5 办公能力池。
+
+---
+
 ## v1.0.0-p4.1 — Orchestrator + 单 Agent ReAct + 工具兜底（2026-10-18）
 
 **类型**：核心机制（Phase 4 前半）

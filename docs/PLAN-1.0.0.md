@@ -87,7 +87,7 @@
 
 - **目标**：Orchestrator 调度、串行/并行汇总、工具异常兜底、checkpointer 断点续跑、token 硬上限（设计文档 §四.4/§四.5/§四.6、§十四）。
 - **v1.0.0-p4.1（已完成）**：`orchestration/tools.py`（重试+能力缺失不胡编）+ `react.py`（ReAct 循环 + max_iterations 防跑飞 + Brain 协议 + StubBrain 基线）+ `orchestrator.py`（DAG 拓扑分层 + run_dag 调度汇总）；graph single→run_react / multi→run_dag。**后端编排闭环真跑通过**（uvicorn+curl：/tasks 复杂任务按拓扑序推 NDJSON）。测试 57 passed。闭环抓到并修 /tasks 漏 import encode_line。
-- **v1.0.0-p4.2（待做）**：任务级 / 单 Agent `max_iterations` + 两段式 token 扣减（reserve/settle，原子 `UPDATE...WHERE balance>=x`）+ 中断 `paused_insufficient_quota` + checkpointer 断点续跑。
+- **v1.0.0-p4.2（已完成）**：`core/token_pool.py`（reserve/settle 原子扣减 + ledger）+ `graph.py` quota 门（`interrupt()` 暂停 + `Command(resume=...)` 续跑）+ `/tasks` 增 `user_id`/`estimate`。测试 65 passed。**Phase 4 至此全部完成**。
 - **测试**：超时强制中止给阶段结论；余额不足→中断事件+续跑恢复；反向验证护栏（拆掉后断言转红，§11.6）。
 - **Tag**：`v1.0.0-p4.1` / `p4.2`。
 
@@ -123,7 +123,7 @@
 | 1     | 后端核心骨架（p1.1 / p1.2a / p1.2b / p1.2c） | ✅ 完成 | v1.0.0-p1.2c |
 | 2     | 流式协议 + 中间层（网关 + 前端可视化） | ✅ 完成 | v1.0.0-p2.1b |
 | 3     | Planner + Router + DAG 拆分 | ✅ 完成 | v1.0.0-p3.2 |
-| 4     | 多 Agent 协调 + 兜底 + 续跑（p4.1 协调+兜底完成，p4.2 token+续跑待做） | 🔶 p4.1 完成 | v1.0.0-p4.1 |
+| 4     | 多 Agent 协调 + 兜底 + 续跑 + token 池 | ✅ 完成 | v1.0.0-p4.2 |
 | 5     | 办公能力补齐                      | ⏳ 待开始 | —           |
 | 6     | Token 池 + 模型权限 + 前端精细化 + 压缩 | ⏳ 待开始 | —           |
 | 7     | 部署到远程服务器                    | ⏳ 待开始 | —           |
