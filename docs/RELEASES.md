@@ -5,6 +5,32 @@
 
 ---
 
+## v1.0.0-p4.1 — Orchestrator + 单 Agent ReAct + 工具兜底（2026-10-18）
+
+**类型**：核心机制（Phase 4 前半）
+**对应计划**：PLAN-1.0.0.md Phase 4 / v1.0.0-p4.1
+**Tag 提交**：见 `git show v1.0.0-p4.1`
+
+### 交付内容
+- `orchestration/tools.py`：工具注册 + 退避重试（≤2）+ 能力缺失不胡编（§四.5）。
+- `orchestration/react.py`：ReAct 循环 + max_iterations 防跑飞（超限强制阶段结论）+ Brain 协议 + StubBrain 确定性基线。
+- `orchestration/orchestrator.py`：DAG 拓扑分层（topo_levels）+ 按层调度汇总（run_dag）。
+- `graph.py`：single→run_react / multi→run_dag，共享 emitter 保 seq 单调。
+
+### 验证状态
+- ✅ `pytest backend/tests`：57 passed / 3 skipped（tools/react/orchestrator + /tasks 端点回归）。
+- ✅ **后端编排闭环真跑**（uvicorn + curl）：/plan 简单→single、复杂→multi+DAG；/tasks 复杂任务按拓扑序 cleaning→analysis→report 推 NDJSON（seq 单调）；简单任务走单 Agent ReAct。
+- ✅ 闭环抓到真 bug（/tasks 漏 import encode_line）并修 + 补回归。
+- ⏸️ 未接真实 LLM / 未跑 mysql/chroma / 三层真实联调（交 compose 整合验证）。
+
+### 已知遗留
+- StubBrain 非真实推理；run_dag 层内串行未并行；token 池 + 断点续跑（p4.2）。
+
+### 下一步
+`v1.0.0-p4.2`：token 池两段式扣减 + 中断 + 断点续跑；三层联调（compose）整跑 case。
+
+---
+
 ## v1.0.0-p3.2 — DAG 子任务拆分（2026-10-18，Phase 3 收口）
 
 **类型**：核心机制（Phase 3 后半）

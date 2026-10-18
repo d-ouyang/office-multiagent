@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from ..core import chroma_client, db, redis_client
 from ..core.config import settings
-from ..core.events import EventType, RunEventEmitter, iter_ndjson
+from ..core.events import EventType, RunEventEmitter, encode_line, iter_ndjson
 from ..core.internal_auth import require_internal
 from ..core.decomposer import decompose
 from ..core.model_registry import get_dialogue_models

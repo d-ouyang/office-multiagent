@@ -1,5 +1,8 @@
 """LangGraph 编排骨架测试（p3.1）：路由真正驱动控制流 + NDJSON 事件单调有序。"""
+from fastapi.testclient import TestClient
+
 from app.core.events import EventType, parse_line
+from app.main import app
 from app.orchestration.graph import run_task
 
 
@@ -31,3 +34,15 @@ def test_events_roundtrip_through_ndjson():
     _result, events = run_task("画一个柱状图看板")
     for ev in events:
         assert parse_line(__import__("json").dumps(ev.model_dump(mode="json"))) is not None
+
+
+def test_tasks_endpoint_streams_ndjson():
+    # 真实 HTTP 层回归：/tasks 必须逐行吐出 NDJSON（曾漏 import encode_line 被实跑抓到）
+    c = TestClient(app)
+    r = c.post("/api/v1/tasks", json={"text": "先清洗，再分析，再出报表"})
+    assert r.status_code == 200
+    assert "ndjson" in r.headers["content-type"]
+    events = [parse_line(l) for l in r.text.splitlines() if l.strip()]
+    assert events and events[-1].type == EventType.DONE
+    seqs = [e.seq for e in events]
+    assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)

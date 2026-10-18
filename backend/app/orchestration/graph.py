@@ -1,8 +1,8 @@
-"""LangGraph 编排骨架（p3.1 + p3.2 DAG）：planner → 条件路由 → 单/多 Agent 桩节点 → done。
+"""LangGraph 编排（p3.1/p3.2/p4.1）：planner → 条件路由 → 单 Agent ReAct / Orchestrator DAG → done。
 
-证明「路由真正驱动 LangGraph 控制流」。真实单 Agent ReAct / Orchestrator 在 Phase 4；
-本模块节点先推 NDJSON 状态事件（§15.1）并返回桩结果。复杂任务在 planner 节点拆 DAG（p3.2），
-multi 节点按拓扑序推各子任务状态。seq 经【共享 RunEventEmitter】保持单调（§15.1）。
+p4.1 起节点跑【真实编排机器】：单 Agent 走 `run_react`（§四.4 ReAct 循环 + max_iterations 防跑飞），
+多 Agent 走 `run_dag`（§四.3 按 DAG 拓扑分层调度 + 汇总）。Brain 用确定性 StubBrain（无 LLM、
+可测），LLM brain 后续按 Brain 协议插入。seq 经【共享 RunEventEmitter】保持单调（§15.1）。
 """
 from __future__ import annotations
 
@@ -12,10 +12,13 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 from typing_extensions import TypedDict
 
-from ..core.decomposer import decompose
+from ..core.decomposer import DAG, Subtask, decompose
 from ..core.events import Event, RunEventEmitter, new_run_id
 from ..core.planner import Plan, plan as run_plan
 from ..core.router import decide
+from .orchestrator import default_agent_runner, run_dag
+from .react import StubBrain, run_react
+from .tools import ToolRegistry
 
 
 class TaskState(TypedDict, total=False):
@@ -32,6 +35,7 @@ class TaskState(TypedDict, total=False):
 
 def build_graph(emitter: RunEventEmitter, emit: Callable[[Event], None]) -> Any:
     """构建编排图。emit 把节点内事件抛给调用方（收集或流式）。"""
+    tools = ToolRegistry()  # 基线无注册工具；Phase 5 办公能力池往里 register
 
     def planner_node(state: TaskState) -> dict[str, Any]:
         p: Plan = run_plan(state["text"])
@@ -59,28 +63,40 @@ def build_graph(emitter: RunEventEmitter, emit: Callable[[Event], None]) -> Any:
 
     def single_node(state: TaskState) -> dict[str, Any]:
         agent = state.get("primary_agent", "general")
-        emit(emitter.status(agent, "running"))
-        result = f"[single:{agent}] 桩结果（单 Agent ReAct 见 Phase 4）"
-        emit(emitter.status(agent, "done"))
-        emit(emitter.content_delta(result))
-        return {"result": result}
+        res = run_react(
+            state["text"],
+            StubBrain(f"[{agent}] 处理完成"),
+            tools,
+            emitter=emitter,
+            emit=emit,
+        )
+        return {"result": res.final}
 
     def multi_node(state: TaskState) -> dict[str, Any]:
         emit(emitter.status("orchestrator", "running"))
-        dag = state.get("dag", {})
-        for st in dag.get("subtasks", []):
-            emit(emitter.status(st["agent_type"], "running", subtask_id=st["id"]))
-            emit(emitter.status(st["agent_type"], "done", subtask_id=st["id"]))
-        emit(
-            emitter.task_summary(
-                artifacts=[],
-                sources=[],
-            )
+        dag_dict = state.get("dag", {})
+        # 由 dict 重建 DAG 对象（state 里存的是 to_dict 结果）
+        dag = DAG(
+            subtasks=[
+                Subtask(
+                    id=s["id"],
+                    agent_type=s["agent_type"],
+                    intent=s["intent"],
+                    depends_on=list(s.get("depends_on", [])),
+                )
+                for s in dag_dict.get("subtasks", [])
+            ]
         )
-        result = f"[multi] 已拆 {len(dag.get('subtasks', []))} 个子任务，拓扑序 {dag.get('topo_order')}（Orchestrator 见 Phase 4）"
-        emit(emitter.content_delta(result))
+        results = run_dag(
+            dag,
+            emitter=emitter,
+            emit=emit,
+            agent_runner=default_agent_runner(tools),
+        )
+        summary = "；".join(f"{k}:{v.final}" for k, v in results.items())
+        emit(emitter.content_delta(f"多 Agent 汇总 → {summary}"))
         emit(emitter.status("orchestrator", "done"))
-        return {"result": result}
+        return {"result": f"[multi] {summary}"}
 
     g = StateGraph(TaskState)
     g.add_node("planner", planner_node)
