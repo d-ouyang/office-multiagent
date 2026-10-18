@@ -1,55 +1,39 @@
 # office-multiagent · 多 Agent 企业级智能办公助手
 
-> 基于 `智能办公助手-多Agent系统设计方案-总结.md` 落地的新项目。
-> 立项原则（见 docs/PLAN-1.0.0.md）：**Docker 优先**——前后端、数据库全部以容器方式联动，不在本地从零手写前后端；
-> **版本纪律**：每步完成写总结、每阶段成功打 tag、每次打 tag 出 release 文档、每步有 testcase。
+基于 `智能办公助手-多Agent系统设计方案-总结.md` 的多 Agent 办公助手。**Docker 优先**：前后端、数据库全部容器联动，不在本地从零手写前后端。
 
-## 目录结构
+## 技术栈
 
-```
-office-multiagent/
-├── docker-compose.yml        # 串起 frontend / backend / mysql / redis / chroma
-├── backend/                  # FastAPI + LangGraph 编排后端（容器化）
-│   ├── Dockerfile
-│   ├── requirements.txt      # 来自主仓已验证清单（pip dry-run 零冲突）
-│   └── app/                  # 应用代码（当前为联动脚手架）
-├── frontend/                 # 前端容器（nginx 反代 /api → backend）
-│   ├── Dockerfile
-│   └── public/index.html     # 状态页（调 /api/v1/health）
-├── db/
-│   └── init.sql              # MySQL 建表（session/task/wallet/token_ledger/model_pool…）
-├── docs/
-│   ├── PLAN-1.0.0.md         # 可执行计划（本文件是源头）
-│   ├── RELEASES.md           # 每次打 tag 的 release 文档
-│   └── iterations/           # 每步完成总结（vX.Y.Z-pN.M-<slug>.md）
-└── tests/                    # 见 backend/tests（随镜像跑 pytest）
-```
+| 层 | 技术 |
+|---|---|
+| 前端 | nginx 容器，反代 `/api` → backend（状态页 + 后续 Agent 可视化） |
+| 中间层 | 阶段2 起加 NestJS 网关容器（认证 / 上传 / NDJSON 透传） |
+| 编排后端 | Python 3.13 + FastAPI + LangGraph（规划器 / 路由 / Agent 编排，NDJSON 流） |
+| 数据 | MySQL（真相源）/ Redis（broker+缓存）/ Chroma（向量，可复用共享实例） |
+
+> 模型全部**云端**（硅基流动 / DeepSeek key 由用户持有），无本地部署；大模型列表与中间小模型（embedding/reranker/decision）均走 `backend/config/models.yaml` 配置，不硬编码。
 
 ## 本地启动（Docker）
 
 ```bash
-cp .env.example .env          # 按需改密码
-docker compose up -d --build  # 首次会拉镜像 + 构建，稍慢
-# 前端 http://localhost:8080  /  后端 http://localhost:8000/docs
-curl http://localhost:8000/api/v1/health
+cp .env.example .env          # 按需改密码 / 填模型 key
+docker compose up -d --build  # 首次拉镜像+构建较重，按立项纪律【不自动跑】，请本地显式执行
 ```
 
-> ⚠️ 首次 `docker compose up` 会拉取 MySQL/Redis/Chroma 镜像并构建后端（装 requirements，含 chromadb 较重），
-> 属「耗时操作」，按立项纪律**不自动跑**——请本地显式执行，或让我在远程服务器经沙箱 SSH 跑。
+启动后访问：
+- 前端：http://localhost:8080
+- 后端 API 文档：http://localhost:8000/docs
+- 健康检查：`curl http://localhost:8000/api/v1/health`
+- 模型列表：`curl http://localhost:8000/api/v1/models`
 
 ## 远程部署（腾讯云轻量 4C4G，沙箱可直连）
 
-```bash
-# 沙箱内（无需你手动复制命令）：
-ssh -o BatchMode=yes ubuntu@42.192.111.82 'mkdir -p /opt/office && cd /opt/office && git pull'
-# 或直接把本仓库推到服务器后 docker compose up
-```
-服务器现状与 RAG 同机，故**中间件共享、容器独立**（详见设计文档 §12.3、§12.4）。
+与 RAG 同机：**中间件共享、容器独立**。沙箱经 SSH 直连服务器（`ssh -o BatchMode=yes ubuntu@42.192.111.82`），部署不需要你手动复制命令。详见 `docs/PLAN-1.0.0.md` Phase 7。
 
 ## 版本纪律
 
-- 版本号：`vX.Y.Z-pN.M`（p 段对应 PLAN 任务编号，半项加字母后缀）。
-- 老 tag 永不重打；打前 `git tag | grep 'pN\.M'` 查占用。
-- 每步完成 → `docs/iterations/vX.Y.Z-pN.M-<slug>.md` 总结。
-- 每阶段成功 → `git tag` + `docs/RELEASES.md` 加一条。
-- 每步有 testcase（`pytest`，DB 清理/删除类操作默认 skip，防误跑）。
+- 版本号 `vX.Y.Z-pN.M`（p 段对应 PLAN 任务编号）。
+- 每步：总结（`docs/iterations/`）+ 打 tag + release（`docs/RELEASES.md`）+ testcase。
+- 老 tag 永不重打；涉及数据库清洗/删除或重耗时操作默认不自动跑。
+
+详见 [`docs/PLAN-1.0.0.md`](docs/PLAN-1.0.0.md) 与 [`docs/RELEASES.md`](docs/RELEASES.md)。

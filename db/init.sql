@@ -128,8 +128,8 @@ INSERT IGNORE INTO `model_pool` (`id`, `name`) VALUES
 
 INSERT IGNORE INTO `pool_model` (`pool_id`, `model_name`) VALUES
   (1, 'deepseek-chat'), (1, 'qwen-plus'),
-  (2, 'deepseek-chat'), (2, 'qwen-plus'), (2, 'glm-4'),
-  (3, 'deepseek-chat'), (3, 'qwen-plus'), (3, 'glm-4'), (3, 'kimi');
+  (2, 'deepseek-chat'), (2, 'qwen-plus'), (2, 'glm-4'), (2, 'deepseek-reasoner'),
+  (3, 'deepseek-chat'), (3, 'qwen-plus'), (3, 'glm-4'), (3, 'kimi'), (3, 'deepseek-reasoner');
 
 INSERT IGNORE INTO `user` (`id`, `username`, `password_hash`, `kb_role`, `model_pool_id`) VALUES
   (1, 'dev', '__CHANGE_ME__', 'superadmin', 3);

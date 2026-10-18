@@ -5,6 +5,36 @@
 
 ---
 
+## v1.0.0-p1.1 — 后端核心骨架前置：鉴权 stub + 模型注册表 + 日志（2026-10-18）
+
+**类型**：后端核心骨架（Phase 1 前半）
+**对应计划**：PLAN-1.0.0.md Phase 1 / v1.0.0-p1.1
+**Tag 提交**：见 `git show v1.0.0-p1.1`
+
+### 交付内容
+- **配置固化**（`core/config.py`）：新增 `log_level` / `log_format` / `jwt_secret` / `internal_shared_secret` / `models_config` / 云端模型 key 字段。
+- **内部鉴权 stub**（`core/internal_auth.py`）：`X-Internal-Token` + hmac 恒定时间比对，fail-closed；对应 RAG `internal-auth.client.ts`。`/api/v1/internal/auth/ping` 受保护路由。
+- **模型注册表（配置驱动）**：`backend/config/models.yaml`（对话大模型 + 逻辑小模型分列，全云端、不硬编码）+ `core/model_registry.py` + `/api/v1/models`（§十七.1 字段，按模型池过滤）。
+- **日志与可观测性**（`core/logging.py`）：JSON 行日志 + `CorrelationMiddleware`（请求链路 correlation_id）+ `log_agent_step` / `log_token_audit` / `log_duration` 语义化辅助；设计文档新增 §十八。
+- **README 精简**（用户点2）、`.env.example` 补全、GitHub 远端仓库建立并推送。
+
+### 验证状态
+- ✅ `pytest backend/tests/test_models.py`：对话列表只含 `in_dialogue` 模型、池过滤生效、逻辑小模型不泄漏。
+- ✅ `pytest backend/tests/test_internal_auth.py`：token 正确放行 / 缺省 401 / fail-closed。
+- ✅ `pytest backend/tests/test_logging.py`：JSON 摊平 extra、辅助函数可用。
+- ✅ `pytest backend/tests/test_smoke.py`：app 导入与 /health 结构（app 导入保持轻量，pyyaml 懒加载）。
+- ⏸️ 全栈实跑 / 集成测试未自动跑（点5 谨慎）。
+
+### 已知遗留
+- 用户 JWT 签发（网关 passport-jwt）与后端 PyJWT 验签的打通留到 Phase 2 网关。
+- NDJSON 封装、alembic 迁移基线留到 p1.2。
+- 种子密码占位 `__CHANGE_ME__`。
+
+### 下一步
+v1.0.0-p1.2：连接重试注入 / NDJSON 封装 / alembic 基线。
+
+---
+
 ## v1.0.0-p0.1 — 项目脚手架 + Docker 联动（2026-10-18）
 
 **类型**：脚手架 / 里程碑 0

@@ -33,6 +33,7 @@ gunicorn==26.2.0              # 生产用 gunicorn + uvicorn.workers.UvicornWork
 orjson==3.13.0               # 比标准 json 快，NDJSON 序列化用
 pydantic==2.14.1
 pydantic-settings==2.16.0
+pyyaml==6.0.2                # 模型注册表等 YAML 配置（配置驱动，非硬编码）
 
 # ---- 编排 / Agent / LLM（LangGraph 生态，版本强耦合，整体锁定） ----
 langchain==1.4.6
