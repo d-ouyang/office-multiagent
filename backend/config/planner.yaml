@@ -44,3 +44,13 @@ complexity:
   complex_threshold: 3.0
   # 主意图之外最多保留几个意图进任务
   max_intents: 3
+
+# DAG 拆分（p3.2，§四.2 第三步）：复杂任务按意图依赖生成子任务图。
+# 只对【同时出现】的意图生效；被依赖方不在任务里则自动忽略该边。
+# 与 p3.1 一致用确定性规则打底；LLM 分解长尾/歧义留作 DecisionModel 插槽。
+dag:
+  dependencies:
+    analysis: [cleaning]      # 先清洗再分析
+    report: [analysis]        # 报表依赖分析结论
+    visualization: [analysis] # 可视化依赖分析结论
+    # rag / image_restore / cleaning 无依赖（可并行）

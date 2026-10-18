@@ -79,7 +79,7 @@
 
 - **目标**：复杂度判断 + 单/多 Agent 路由 + DAG 拆分（设计文档 §四.2/§四.3）。
 - **v1.0.0-p3.1（已完成）**：`core/planner.py`（意图识别 + 复杂度打分，`config/planner.yaml` 配置驱动确定性规则，signals 可解释）+ `core/router.py`（按阈值分流）+ `orchestration/graph.py`（LangGraph：planner→条件路由→single/multi 桩节点→END，共享 emitter 保 seq 单调，推 NDJSON）+ `POST /api/v1/plan`、`/api/v1/tasks`。测试 39 passed。
-- **v1.0.0-p3.2（待做）**：DAG 拆分子任务（复杂→子任务图+依赖），实体抽取补强，推 `status`/`thinking_delta`。
+- **v1.0.0-p3.2（已完成）**：`core/decomposer.py`（`decompose→DAG`，Kahn 拓扑 + 环 fail-fast，缺席依赖忽略）+ `planner.yaml` 的 `dag.dependencies`；graph multi 节点按子任务推 status + task_summary；`/plan` 复杂任务附带 `dag`。测试 45 passed。**Phase 3 至此全部完成**。
 - **测试**：固定用例断言路由结果（简单 vs 复杂）、DAG 依赖图正确。
 - **Tag**：`v1.0.0-p3.1` / `p3.2`。
 
@@ -121,7 +121,7 @@
 | 0     | 脚手架 + Docker 联动             | ✅ 完成  | v1.0.0-p0.1 |
 | 1     | 后端核心骨架（p1.1 / p1.2a / p1.2b / p1.2c） | ✅ 完成 | v1.0.0-p1.2c |
 | 2     | 流式协议 + 中间层（网关 + 前端可视化） | ✅ 完成 | v1.0.0-p2.1b |
-| 3     | Planner + Router（p3.1 规划+路由完成，p3.2 DAG 待做） | 🔶 p3.1 完成 | v1.0.0-p3.1 |
+| 3     | Planner + Router + DAG 拆分 | ✅ 完成 | v1.0.0-p3.2 |
 | 4     | 多 Agent 协调 + 兜底 + 续跑        | ⏳ 待开始 | —           |
 | 5     | 办公能力补齐                      | ⏳ 待开始 | —           |
 | 6     | Token 池 + 模型权限 + 前端精细化 + 压缩 | ⏳ 待开始 | —           |

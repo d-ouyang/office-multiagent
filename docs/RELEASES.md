@@ -5,6 +5,30 @@
 
 ---
 
+## v1.0.0-p3.2 — DAG 子任务拆分（2026-10-18，Phase 3 收口）
+
+**类型**：核心机制（Phase 3 后半）
+**对应计划**：PLAN-1.0.0.md Phase 3 / v1.0.0-p3.2
+**Tag 提交**：见 `git show v1.0.0-p3.2`
+
+### 交付内容
+- `config/planner.yaml` 新增 `dag.dependencies`（意图依赖表，配置驱动）。
+- `core/decomposer.py`：`decompose(plan) -> DAG`（子任务 + 依赖边），Kahn 拓扑排序 + 环 fail-fast，缺席依赖自动忽略。
+- `orchestration/graph.py`：multi 节点按 DAG 子任务逐个推 status 事件 + task_summary。
+- `POST /api/v1/plan` 复杂任务附带 `dag`（subtasks + topo_order）。
+
+### 验证状态
+- ✅ `pytest backend/tests`：45 passed / 3 skipped（新增 test_decomposer 6 例，含环检测）。
+- ⏸️ 未接真实 LLM / 未跑全栈闭环（点5；闭环走通再整跑 case）。
+
+### 已知遗留
+- 规则 DAG 依赖模型是常见流程先验，LLM 分解插槽后续接；子任务未落库（留 Phase 4）。
+
+### 下一步
+**Phase 4（p4.1）**：Orchestrator 调度 + 单 Agent ReAct + 兜底 + 断点续跑；届时补全栈闭环再整跑 case。
+
+---
+
 ## v1.0.0-p3.1 — Planner + Router：意图识别 / 复杂度打分 / 路由（2026-10-18）
 
 **类型**：核心机制（Phase 3 前半）

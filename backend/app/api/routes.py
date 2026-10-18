@@ -7,6 +7,7 @@ from ..core import chroma_client, db, redis_client
 from ..core.config import settings
 from ..core.events import EventType, RunEventEmitter, iter_ndjson
 from ..core.internal_auth import require_internal
+from ..core.decomposer import decompose
 from ..core.model_registry import get_dialogue_models
 from ..core.planner import plan as make_plan
 from ..core.router import decide
@@ -51,7 +52,7 @@ def plan_endpoint(body: PlanRequest):
     """意图识别 + 复杂度打分 + 路由决策（§四.2/§四.3，确定性规则，可测）。"""
     p = make_plan(body.text)
     d = decide(p)
-    return {
+    out = {
         "intent": p.intents[0] if p.intents else "general",
         "intents": p.intents,
         "score": p.score,
@@ -61,6 +62,9 @@ def plan_endpoint(body: PlanRequest):
         "signals": p.signals,
         "entities": p.entities,
     }
+    if d.mode == "multi":
+        out["dag"] = decompose(p).to_dict()  # 复杂任务给子任务 DAG（p3.2）
+    return out
 
 
 class TaskRequest(BaseModel):

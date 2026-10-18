@@ -21,6 +21,10 @@ def test_complex_input_routes_multi():
     assert any(
         e.type == EventType.STATUS and e.data.get("agent") == "orchestrator" for e in events
     )
+    # p3.2：复杂任务带子任务 DAG
+    dag = result["dag"]
+    assert dag and len(dag["subtasks"]) >= 2
+    assert dag["topo_order"]  # 拓扑序非空
 
 
 def test_events_roundtrip_through_ndjson():

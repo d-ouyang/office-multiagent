@@ -57,3 +57,4 @@ def test_plan_endpoint():
     assert body["route"] in ("single", "multi")
     assert "score" in body and "reason" in body and "primary_agent" in body
     assert body["route"] == "multi"  # 该用例复杂度高
+    assert body["dag"]["subtasks"]  # 复杂任务附带子任务 DAG（p3.2）
