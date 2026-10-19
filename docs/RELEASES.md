@@ -5,6 +5,27 @@
 
 ---
 
+## v1.0.0-p4.2b — 与 RAG 同机共存：端口去冲突（2026-10-19）
+
+**类型**：整合修复（compose）
+**Tag 提交**：见 `git show v1.0.0-p4.2b`
+
+### 交付内容
+- `docker-compose.yml`：去掉 office `mysql/redis/chroma/backend` 宿主端口映射（内网 only，§12.3/§13.3）；`gateway` 宿主端口改 `3001`（避 RAG 的 3000）。
+- 解决 RAG 宿主进程占 8000/3000、rag 中间件占 3306/6379/8001 导致的端口遮蔽 + office 中间件被踢出 office-net（backend 曾 degraded）。
+
+### 验证状态
+- ✅ 本机实跑：office-net 含全部 6 容器；backend /health 全绿；前端 :8080→nginx→office-gateway→office-backend NDJSON 通；宿主 :3001 → office-gateway；RAG 不受影响。
+- ✅ 应用单测仍 65 passed（未改应用代码）。
+
+### 最终端口
+frontend 8080 / gateway 3001 / backend·mysql·redis·chroma 内网 only。
+
+### 下一步
+Phase 5 办公能力池。
+
+---
+
 ## v1.0.0-p4.2a — 三层联调 + Compose 就绪修复（2026-10-18）
 
 **类型**：整合验证 / 修复（Phase 4 收尾）
