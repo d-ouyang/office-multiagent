@@ -46,6 +46,17 @@ class Settings(BaseSettings):
     siliconflow_api_key: str = ""
     deepseek_api_key: str = ""
 
+    # ---- Phase 5 · 办公能力池（p5.1a）----
+    # Brain 用的对话大模型 id（config/models.yaml 注册表里的 id）
+    llm_brain_model: str = "deepseek-chat"
+    llm_timeout: float = 120.0
+    # RAG 检索工具（外部工具：走 RAG 后端内部接口，带网关证明；rag p4.11 认 office 域密钥）
+    rag_base_url: str = "http://127.0.0.1:8000"
+    rag_internal_secret: str = ""       # 须与 RAG 后端 OFFICE_GATEWAY_SHARED_SECRET 同值
+    rag_service_username: str = "office-service"  # 注入 X-Username（须能在 RAG user 表解析）
+    # db_query 工具护栏：强制 LIMIT 行数上限
+    db_query_max_rows: int = 50
+
     # ---- 连接层加固（p1.2a）----
     mysql_pool_size: int = 5
     mysql_max_overflow: int = 10

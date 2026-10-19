@@ -19,9 +19,11 @@ from ..core.events import Event, RunEventEmitter, new_run_id
 from ..core.planner import Plan, plan as run_plan
 from ..core.router import decide
 from ..core.token_pool import TokenPool
+from ..core.db import get_engine
+from .agents import build_default_registry
+from .brain import make_brain
 from .orchestrator import default_agent_runner, run_dag
-from .react import StubBrain, run_react
-from .tools import ToolRegistry
+from .react import run_react
 
 
 class TaskState(TypedDict, total=False):
@@ -37,6 +39,7 @@ class TaskState(TypedDict, total=False):
     dag: dict
     reserved: int
     status: str
+    tokens_used: int
     result: str
 
 
@@ -48,7 +51,7 @@ def build_graph(
     checkpointer: Any | None = None,
 ) -> Any:
     """构建编排图。token_pool 提供时前置 quota 门（reserve + 中断续跑）。"""
-    tools = ToolRegistry()
+    tools = build_default_registry(get_engine())  # p5.1a：真实工具（db_query / rag_retrieve）
 
     def quota_node(state: TaskState) -> dict[str, Any]:
         user_id = state.get("user_id")
@@ -94,10 +97,11 @@ def build_graph(
 
     def single_node(state: TaskState) -> dict[str, Any]:
         agent = state.get("primary_agent", "general")
-        res = run_react(
-            state["text"], StubBrain(f"[{agent}] 处理完成"), tools, emitter=emitter, emit=emit
-        )
-        return {"result": res.final}
+        # p5.1a：配置驱动 Brain——模型+密钥就绪走 LLM，否则回落 StubBrain（测试基线不变）
+        brain = make_brain(tools, fallback_answer=f"[{agent}] 处理完成")
+        res = run_react(state["text"], brain, tools, emitter=emitter, emit=emit)
+        usage = getattr(brain, "usage", None) or {}
+        return {"result": res.final, "tokens_used": int(usage.get("total_tokens", 0))}
 
     def multi_node(state: TaskState) -> dict[str, Any]:
         emit(emitter.status("orchestrator", "running"))
@@ -181,9 +185,10 @@ def run_task(
             events,
         )
 
-    # 正常完成 → settle（基线无真实 LLM 用量，actual=0，全额退回预扣）
+    # 正常完成 → settle（actual=真实 LLM 用量；StubBrain 基线为 0，全额退回预扣）
     if token_pool is not None and user_id is not None:
-        token_pool.settle(user_id, estimate, 0, task_id=run_id)
+        actual = int(state.get("tokens_used", 0))
+        token_pool.settle(user_id, estimate, actual, task_id=run_id)
     emit(emitter.done(state.get("route", "single")))
     return (
         {
@@ -195,6 +200,7 @@ def run_task(
             "score": state.get("score", 0.0),
             "primary_agent": state.get("primary_agent"),
             "dag": state.get("dag"),
+            "tokens_used": int(state.get("tokens_used", 0)),
             "result": state.get("result", ""),
         },
         events,

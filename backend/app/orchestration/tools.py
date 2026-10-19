@@ -22,15 +22,24 @@ class ToolResult:
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Callable[..., Any]] = {}
+        self._descriptions: dict[str, str] = {}
 
-    def register(self, name: str, fn: Callable[..., Any]) -> None:
+    def register(self, name: str, fn: Callable[..., Any], description: str = "") -> None:
         self._tools[name] = fn
+        self._descriptions[name] = description
 
     def has(self, name: str) -> bool:
         return name in self._tools
 
     def names(self) -> list[str]:
         return sorted(self._tools)
+
+    def describe(self) -> list[dict[str, str]]:
+        """工具清单（给 LLM Brain 的提示词用）：name + description。"""
+        return [
+            {"name": n, "description": self._descriptions.get(n, "")}
+            for n in sorted(self._tools)
+        ]
 
     def call(
         self,

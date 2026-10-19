@@ -5,6 +5,27 @@
 
 ---
 
+## v1.0.0-p5.1a — 真实工具层 + LLM 客户端 + Brain 接入（2026-10-19，Phase 5 首步）
+
+**类型**：能力（办公能力池首批）
+**Tag 提交**：见 `git show v1.0.0-p5.1a`
+
+### 交付内容
+- `core/llm.py`：OpenAI 兼容客户端（models.yaml 注册表驱动，密钥 Settings→env 两级，usage 提取，fail-closed）。
+- 真实工具：`db_query`（只读硬护栏：单条 SELECT、禁分号、词边界拦写、强制 LIMIT）、`rag_retrieve`（走 RAG 内部接口带网关证明）。
+- `orchestration/brain.py`：LlmBrain（ReAct JSON 决策，坏输出/不可用→如实停止不编造，usage 累计）+ `make_brain` 配置驱动回落 StubBrain。
+- graph：single 走 make_brain；`tokens_used` 进 state，settle 用真实用量（§十四 闭环）。
+
+### 验证状态
+- ✅ pytest 95 passed / 3 skipped（+30：llm/tools_db/tools_rag/brain，全 mock 不花钱）。
+- ✅ 真实 RAG 工具 smoke：rag_retrieve → 本机 RAG → route=rag_qa 真通。
+- ⏸️ 真 LLM 调用待本机配 DEEPSEEK_API_KEY；db_query 实库待 compose；Agent 提示词化 → p5.1b。
+
+### 下一步
+p5.1b：6 个业务 Agent 提示词化 + 真 LLM 端到端联调。
+
+---
+
 ## v1.0.0-p5.0b — rag 上游按上游身份注入 + 剥客户端身份头（2026-10-19）
 
 **类型**：安全（共享网关 Phase B 收口；配 rag 仓 p4.11）
