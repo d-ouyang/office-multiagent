@@ -85,6 +85,10 @@ services:
       GATEWAY_BACKEND_URL: http://backend:8000
       GATEWAY_ALLOWED_ORIGINS: ${GATEWAY_ALLOWED_ORIGINS:-http://localhost:8080}
       GATEWAY_PROXY_TIMEOUT_MS: ${GATEWAY_PROXY_TIMEOUT_MS:-180000}
+      # 共享网关（p5.0）：RAG 上游 + 限流
+      RAG_BACKEND_URL: ${RAG_BACKEND_URL:-http://host.docker.internal:8000}
+      GATEWAY_RATE_LIMIT_MAX: ${GATEWAY_RATE_LIMIT_MAX:-600}
+      GATEWAY_RATE_LIMIT_WINDOW_MS: ${GATEWAY_RATE_LIMIT_WINDOW_MS:-60000}
     ports:
       - "3001:3000"   # 宿主 3001，避开 RAG 宿主网关占用的 3000；前端 nginx 走容器网络 gateway:3000 不受影响
     depends_on:

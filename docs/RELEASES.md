@@ -5,6 +5,31 @@
 
 ---
 
+## v1.0.0-p5.0a — 共享网关：配置驱动路由表 + 多上游 + 横切加固（2026-10-19）
+
+**类型**：架构（共享网关 Phase A/B/C；认证放 B）
+**对应**：《共享网关迁移设计》
+**Tag 提交**：见 `git show v1.0.0-p5.0a`
+
+### 交付内容
+- `gateway/config/routes.yaml` + `proxy/route-table.ts`：配置驱动路由表（多上游 + 最长前缀 + public + 前缀剥离 + `${ENV}` 展开）。
+- `proxy.controller.ts` 重构为单通配按表解析、每上游动态代理、剥前缀、透传 correlation-id；守卫公开判定改读同一张表。
+- Phase C：`AllExceptionsFilter` 统一错误体；`FixedWindowCounter`+`RateLimitMiddleware` 每 IP 限流（配置驱动，0=关闭）。
+- 修复：gateway 运行阶段补 `COPY config/`；`js-yaml` 入依赖；compose/env 加 `RAG_BACKEND_URL`、`GATEWAY_RATE_LIMIT_*`。
+
+### 验证状态
+- ✅ `tsc --noEmit` + `nest build` 通过。
+- ✅ `jest` 26 passed / 4 suites（route-table 10 + rate-limiter 4 + e2e 多上游/剥前缀/correlation-id/NO_ROUTE）。
+- ⏸️ RAG 上游真实连通 + RAG 侧去双认证属部署态/跨仓，见设计文档 Phase B。
+
+### 已知遗留
+- 限流每实例内存；全局限流/多副本 LB/独立 IdP 留后续；RAG 后端改造跨仓未做。
+
+### 下一步
+本机验证 /rag/* 打通宿主 RAG；推进 rag 仓信任改造；回归 office Phase 5 办公能力池。
+
+---
+
 ## v1.0.0-p4.2b — 与 RAG 同机共存：端口去冲突（2026-10-19）
 
 **类型**：整合修复（compose）

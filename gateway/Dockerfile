@@ -16,5 +16,6 @@ RUN npm config set registry https://registry.npmmirror.com
 COPY package*.json ./
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist
+COPY config/ ./config/
 EXPOSE 3000
 CMD ["node", "dist/main"]

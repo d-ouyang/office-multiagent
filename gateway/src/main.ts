@@ -17,6 +17,8 @@ import { json, urlencoded } from 'express';
 
 import { AppModule } from './app.module';
 import { GatewayConfig } from './config/configuration';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { getUpstreams } from './proxy/route-table';
 
 // 进程级异常兜底：网关是无状态转发服务，单请求异常不让进程退出（可用性优先）。
 // 代价：若将来网关持有进程内状态（如内存限流计数），此兜底会「带损坏状态继续」，
@@ -59,14 +61,19 @@ async function bootstrap(): Promise<void> {
   }
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+  // 统一错误体（Phase C）：异常一律 { error:{ code, message, requestId } }
+  app.useGlobalFilters(new AllExceptionsFilter());
   // SIGTERM 先停收新请求再退出（容器滚动更新不掐断在途请求）
   app.enableShutdownHooks();
 
   await app.listen(config.port, '0.0.0.0');
 
   logger.log(`网关已启动 | http://0.0.0.0:${config.port} env=${config.isProduction ? 'production' : 'development'}`);
-  logger.log(`转发规则 | /api/v1/* -> ${config.backendUrl}（代理超时 ${config.proxyTimeoutMs}ms）`);
+  for (const u of getUpstreams()) {
+    logger.log(`上游 | [${u.name}] /${u.prefix || ''} -> ${u.baseUrl}（代理超时 ${config.proxyTimeoutMs}ms）`);
+  }
   logger.log(`CORS | 允许来源=${config.allowedOrigins.join(' ')}`);
+  logger.log(`限流 | 每 IP ${config.rateLimitMax} 次 / ${config.rateLimitWindowMs}ms${config.rateLimitMax <= 0 ? '（已关闭）' : ''}`);
 }
 
 bootstrap().catch((err) => {

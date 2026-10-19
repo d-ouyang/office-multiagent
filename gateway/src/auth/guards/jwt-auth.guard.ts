@@ -1,12 +1,16 @@
 /**
- * 全局 JWT 守卫（p2.1a）——对应 RAG gateway/src/auth/guards/jwt-auth.guard.ts。
- * 默认保护一切路由，@Public() 白名单放行；缺 token / 过期 / 无效一律 401（fail-closed）。
+ * 全局 JWT 守卫（p2.1a → p5.0）——默认保护一切；放行条件二选一：
+ *   ① @Public() 元数据（网关自身路由，如 /api/health、/api/internal/ping）；
+ *   ② 路由表命中且 public（代理路径，见 config/routes.yaml）。
+ * 缺 token / 过期 / 无效一律 401（fail-closed）。未命中路由 → 非公开 → 交给守卫 401。
  */
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
+import type { Request } from 'express';
 
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { getUpstreams, isPublicPath } from '../../proxy/route-table';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') implements CanActivate {
@@ -20,6 +24,10 @@ export class JwtAuthGuard extends AuthGuard('jwt') implements CanActivate {
       context.getClass(),
     ]);
     if (isPublic) return true;
+
+    const req = context.switchToHttp().getRequest<Request>();
+    if (isPublicPath(getUpstreams(), req.path)) return true;
+
     return super.canActivate(context);
   }
 

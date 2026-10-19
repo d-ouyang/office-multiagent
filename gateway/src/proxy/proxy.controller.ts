@@ -1,41 +1,45 @@
 /**
- * 反向代理（p2.1a）——网关最后一站：把通过鉴权的请求转给后端 FastAPI，NDJSON 流式透传。
+ * 反向代理（p2.1a → p5.0 共享网关）——网关最后一站：把通过鉴权的请求按【路由表】转给对应上游，NDJSON 流式透传。
  *
- * 三条来自 RAG 实战的硬纪律（照搬，勿改）：
- *  1) 代理注册成【Controller 通配路由】而非 app.use 中间件——Express 中间件跑在
- *     Nest 守卫之前，挂中间件层会「没带 token 也转发成功」而日志一切正常，极难发现。
- *     只有走到 handler 才转发，鉴权一定已过。
- *  2) NDJSON 不缓冲：`selfHandleResponse: false`（代理自己 pipe，边收边转）；
- *     转发请求带 `Accept-Encoding: identity`，少一层 gzip 缓冲。
- *  3) `fixRequestBody` 必须在所有 `setHeader` 之后——它会 end 掉 proxyReq、
- *     此后 setHeader 抛 ERR_HTTP_HEADERS_SENT 且无人 catch，一个 POST 就能打挂进程。
+ * 来自 RAG 实战的硬纪律（照搬，勿改）：
+ *  1) 代理注册成【Controller 通配路由】而非 app.use 中间件——Express 中间件跑在 Nest 守卫之前，
+ *     挂中间件层会「没带 token 也转发成功」而日志一切正常。只有走到 handler 才转发，鉴权一定已过。
+ *  2) NDJSON 不缓冲：`selfHandleResponse: false`；转发请求带 `Accept-Encoding: identity`。
+ *  3) `fixRequestBody` 必须在所有 setHeader 之后——它会 end 掉 proxyReq，此后 setHeader 抛错无人 catch。
  *
- * 白名单路径（@Public，只读脚手架）必须【声明在通配路由之前】：Express 按注册顺序
- * 匹配，顺序反了白名单会被守卫拒成 401（fail-closed 但白名单静默失效）。
+ * p5.0 变化（共享网关 Phase A/B）：
+ *  · 目标上游不再硬编码单个 backendUrl，而是按 config/routes.yaml 路由表解析（多上游）。
+ *  · 公开/受保护由路由表的 public 决定（守卫 consult 同一张表），不再用 @Public 逐条声明。
+ *  · 支持外部前缀剥离（如 /rag/* → 上游 /api/v1/*）。
+ *  · Phase C：透传 correlation-id（X-Request-Id）到上游。
  */
 import { All, Controller, Inject, Logger, Next, Req, Res } from '@nestjs/common';
 import { NextFunction, Request, Response } from 'express';
 import { createProxyMiddleware, fixRequestBody, RequestHandler } from 'http-proxy-middleware';
 
-import { Public } from '../auth/decorators/public.decorator';
 import { GatewayConfig, gatewayConfig } from '../config/configuration';
-
-/** 免 token 透传的上游路径（只读脚手架；精确路径，不做前缀通配）。 */
-export const PUBLIC_PROXY_PATHS = ['api/v1/health', 'api/v1/models', 'api/v1/demo/stream'] as const;
+import { getUpstreams, resolveRoute, type Upstream } from './route-table';
 
 @Controller()
 export class ProxyController {
   private readonly logger = new Logger('Proxy');
-  private readonly proxy: RequestHandler;
+  private readonly upstreams = getUpstreams();
+  private readonly proxies = new Map<string, RequestHandler>();
 
-  constructor(@Inject(gatewayConfig.KEY) private readonly config: GatewayConfig) {
-    this.proxy = createProxyMiddleware({
-      target: config.backendUrl,
+  constructor(@Inject(gatewayConfig.KEY) private readonly config: GatewayConfig) {}
+
+  /** 每个上游一个代理实例（target 不同），懒建 + 缓存。 */
+  private getProxy(u: Upstream): RequestHandler {
+    const existing = this.proxies.get(u.name);
+    if (existing) return existing;
+    const timeout = this.config.proxyTimeoutMs;
+    const proxy = createProxyMiddleware({
+      target: u.baseUrl,
       changeOrigin: true,
       ws: false,
       xfwd: true,
-      timeout: config.proxyTimeoutMs,
-      proxyTimeout: config.proxyTimeoutMs,
+      timeout,
+      proxyTimeout: timeout,
       // 保持默认「代理自己 pipe 响应」：流式不被缓冲的前提
       selfHandleResponse: false,
       on: {
@@ -44,29 +48,30 @@ export class ProxyController {
           try {
             // 不压缩：NDJSON 逐字输出最怕中间多一层 gzip 缓冲
             proxyReq.setHeader('Accept-Encoding', 'identity');
+            // Phase C：透传 correlation-id 到上游（与后端 correlation_id 对齐）
+            const rid = incoming.headers['x-request-id'];
+            if (typeof rid === 'string' && rid) proxyReq.setHeader('X-Request-Id', rid);
             // 重写请求体（会 end 掉 proxyReq，必须在所有 setHeader 之后）
-            fixRequestBody(proxyReq, req as Request);
+            fixRequestBody(proxyReq, incoming);
           } catch (e) {
             this.logger.error(
-              `注入转发请求失败（本次继续，下游可能拿不到完整请求体）| path=${incoming.originalUrl} err=${(e as Error).message}`,
+              `注入转发请求失败（本次继续，下游可能拿不到完整请求体）| upstream=${u.name} path=${incoming.originalUrl} err=${(e as Error).message}`,
             );
           }
         },
         proxyRes: (proxyRes, req) => {
           const incoming = req as Request;
           const code = proxyRes.statusCode ?? 200;
-          // 4xx/5xx warn；正常流式会有大量 200，只 warn/error 不刷 debug
           if (code >= 400) {
-            this.logger.warn(`${incoming.method} ${incoming.originalUrl} -> ${code}`);
+            this.logger.warn(`${incoming.method} ${incoming.originalUrl} -> ${code} [${u.name}]`);
           }
         },
         error: (err, req, res) => {
           const incoming = req as Request;
           this.logger.error(
-            `代理转发失败 | path=${incoming.originalUrl} target=${config.backendUrl} err=${err.message}`,
+            `代理转发失败 | path=${incoming.originalUrl} upstream=${u.name}(${u.baseUrl}) err=${err.message}`,
           );
           const r = res as Response;
-          // 已开始发响应（流式吐了一半）改不了状态码，只能断开
           if (r.headersSent) {
             r.end();
             return;
@@ -82,19 +87,23 @@ export class ProxyController {
         },
       },
     });
-    this.logger.log(`反向代理就绪 | /api/v1/* -> ${config.backendUrl}（超时 ${config.proxyTimeoutMs}ms）`);
+    this.proxies.set(u.name, proxy);
+    this.logger.log(`上游就绪 | [${u.name}] prefix=/${u.prefix || '(root)'} -> ${u.baseUrl}`);
+    return proxy;
   }
 
-  /** 白名单路径（只读脚手架）免 token 透传。⚠️ 必须声明在通配路由之前。 */
-  @Public()
-  @All([...PUBLIC_PROXY_PATHS])
-  handlePublic(@Req() req: Request, @Res() res: Response, @Next() next: NextFunction): void {
-    this.proxy(req, res, next);
-  }
-
-  /** 通配路由：/api/v1/* 其余一切（需 token，由全局 JwtAuthGuard 把关）。 */
-  @All('api/v1/*')
+  /** 通配路由：按路由表解析上游并转发（守卫已按同一张表判过公开/受保护）。 */
+  @All('*')
   handle(@Req() req: Request, @Res() res: Response, @Next() next: NextFunction): void {
-    this.proxy(req, res, next);
+    const resolved = resolveRoute(this.upstreams, req.path);
+    if (!resolved) {
+      (res as Response).status(404).json({ error: { code: 'NO_ROUTE', message: '无匹配路由' } });
+      return;
+    }
+    // 剥前缀：把 req.url 改成「转发路径 + 原 query」，代理据此拼上游 URL
+    const qi = req.url.indexOf('?');
+    const query = qi >= 0 ? req.url.slice(qi) : '';
+    req.url = `/${resolved.forwardPath}${query}`;
+    this.getProxy(resolved.upstream)(req, res, next);
   }
 }

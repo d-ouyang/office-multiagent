@@ -8,6 +8,7 @@ import { InternalModule } from './internal/internal.module';
 import { ProxyModule } from './proxy/proxy.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RequestIdMiddleware } from './common/middlewares/request-id.middleware';
+import { RateLimitMiddleware } from './common/middlewares/rate-limit.middleware';
 import { gatewayConfig } from './config/configuration';
 
 @Module({
@@ -24,13 +25,14 @@ import { gatewayConfig } from './config/configuration';
     ProxyModule,
   ],
   providers: [
-    // 全局守卫：默认保护一切，@Public() 放行（fail-closed）。
+    // 全局守卫：默认保护一切，@Public()/路由表 public 放行（fail-closed）。
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    RateLimitMiddleware,
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    // 中间件跑在守卫之前，requestId 在鉴权失败时也已存在。
-    consumer.apply(RequestIdMiddleware).forRoutes('*');
+    // 顺序：requestId 先（写 x-request-id）→ 限流（429 体能带上 requestId）。
+    consumer.apply(RequestIdMiddleware, RateLimitMiddleware).forRoutes('*');
   }
 }

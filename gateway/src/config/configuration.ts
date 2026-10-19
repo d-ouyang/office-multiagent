@@ -21,6 +21,8 @@ export interface GatewayConfig {
   internalToken: string;
   allowedOrigins: string[];
   proxyTimeoutMs: number;
+  rateLimitMax: number;        // 每 IP 每窗口最大请求数；0=关闭
+  rateLimitWindowMs: number;   // 限流窗口（毫秒）
   isProduction: boolean;
 }
 
@@ -73,6 +75,9 @@ export function loadGatewayConfig(): GatewayConfig {
       'http://localhost:8080',
     ]),
     proxyTimeoutMs: Number(process.env.GATEWAY_PROXY_TIMEOUT_MS ?? 180_000),
+    // 内存固定窗口限流（每 IP）；多副本下是每实例计数，严格全局限流需 Redis（文档标注）
+    rateLimitMax: Number(process.env.GATEWAY_RATE_LIMIT_MAX ?? 600),
+    rateLimitWindowMs: Number(process.env.GATEWAY_RATE_LIMIT_WINDOW_MS ?? 60_000),
     isProduction,
   };
 }

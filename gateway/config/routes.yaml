@@ -1,0 +1,20 @@
+# 共享网关路由表（配置驱动）——《共享网关迁移设计》Phase A/B。
+# upstream = 一个业务后端；routes 按 path 前缀匹配，public 决定免 token（精确/前缀，最长匹配）。
+# prefix：外部访问前缀，转发到上游时剥掉。office 用 ''（直接 /api/v1/*）；RAG 用 'rag'（外部 /rag/* → 转发 /api/v1/*）。
+# base_url 支持 ${VAR} / ${VAR:-默认}，从环境变量展开（容器/本机各配各的）。
+upstreams:
+  - name: office
+    prefix: ''
+    base_url: ${GATEWAY_BACKEND_URL:-http://backend:8000}
+    routes:
+      - { path: 'api/v1/health', public: true }
+      - { path: 'api/v1/models', public: true }
+      - { path: 'api/v1/demo/stream', public: true }
+      - { path: 'api/v1', public: false }
+
+  - name: rag
+    prefix: 'rag'
+    base_url: ${RAG_BACKEND_URL:-http://host.docker.internal:8000}
+    routes:
+      - { path: 'api/v1/system/health', public: true }
+      - { path: 'api/v1', public: false }

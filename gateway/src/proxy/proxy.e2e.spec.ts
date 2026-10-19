@@ -1,12 +1,14 @@
 /**
- * 代理 e2e（p2.1a）：起一个假后端流式吐 NDJSON，验证网关
+ * 代理 e2e（p2.1a → p5.0 共享网关）：起假后端流式吐 NDJSON，验证网关
  *   · 白名单路径（demo/stream）免 token 且 NDJSON 逐行透传、不重排、不缓冲；
  *   · 其余 /api/v1/* 无 token → 401（fail-closed）；
  *   · 带有效 JWT → 放行并转发；
+ *   · 多上游：/rag/* 路由到 rag 上游并剥前缀（p5.0 Phase B）；
+ *   · 未命中路由 → 404 NO_ROUTE（fail-closed）；
+ *   · correlation-id 透传到上游（Phase C）；
  *   · /api/internal/ping 走 node:http + X-Internal-Token 打通后端内部探活。
  */
 import { INestApplication } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import * as http from 'node:http';
@@ -18,22 +20,22 @@ import { AppModule } from '../app.module';
 const JWT_SECRET = 'test-secret';
 const INTERNAL_SECRET = 'internal-secret';
 
-describe('Proxy e2e（NDJSON 透传 + 鉴权）', () => {
+describe('Proxy e2e（NDJSON 透传 + 鉴权 + 多上游）', () => {
   let app: INestApplication;
   let backend: http.Server;
-  let backendUrl: string;
+  let ragBackend: http.Server;
+  let ragReceivedRid: string | undefined;
 
   beforeAll(async () => {
-    // 在 AppModule 解析配置前设好环境变量（开发态，密钥显式给，确定可知）
     process.env.NODE_ENV = 'development';
     process.env.GATEWAY_JWT_SECRET = JWT_SECRET;
     process.env.INTERNAL_SHARED_SECRET = INTERNAL_SECRET;
+    process.env.GATEWAY_RATE_LIMIT_MAX = '0'; // 关限流，避免干扰计数断言
 
     backend = http.createServer((req, res) => {
       const url = req.url ?? '';
       if (url.startsWith('/api/v1/demo/stream')) {
         res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
-        // 逐行写、行间轻微延迟，模拟流式
         const lines = [
           { type: 'thinking_delta', run_id: 'r', turn_id: 't', seq: 1, data: { delta: 'a' } },
           { type: 'tool_call_start', run_id: 'r', turn_id: 't', seq: 2, data: { tool_id: 'x', name: 'web_search' } },
@@ -76,9 +78,16 @@ describe('Proxy e2e（NDJSON 透传 + 鉴权）', () => {
       res.end();
     });
     await new Promise<void>((resolve) => backend.listen(0, '127.0.0.1', resolve));
-    const port = (backend.address() as AddressInfo).port;
-    backendUrl = `http://127.0.0.1:${port}`;
-    process.env.GATEWAY_BACKEND_URL = backendUrl;
+    process.env.GATEWAY_BACKEND_URL = `http://127.0.0.1:${(backend.address() as AddressInfo).port}`;
+
+    // rag 上游：剥前缀后应收到 /api/v1/qa；顺便记录收到的 correlation-id
+    ragBackend = http.createServer((req, res) => {
+      ragReceivedRid = req.headers['x-request-id'] as string | undefined;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ rag: true, path: req.url }));
+    });
+    await new Promise<void>((resolve) => ragBackend.listen(0, '127.0.0.1', resolve));
+    process.env.RAG_BACKEND_URL = `http://127.0.0.1:${(ragBackend.address() as AddressInfo).port}`;
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
@@ -88,7 +97,10 @@ describe('Proxy e2e（NDJSON 透传 + 鉴权）', () => {
   afterAll(async () => {
     await app?.close();
     await new Promise<void>((resolve) => backend.close(() => resolve()));
+    await new Promise<void>((resolve) => ragBackend.close(() => resolve()));
   });
+
+  const token = () => new JwtService({ secret: JWT_SECRET }).sign({ sub: 1, username: 'u', role: 'user' });
 
   it('白名单 /api/v1/demo/stream 免 token，NDJSON 逐行透传且有序', async () => {
     const res = await request(app.getHttpServer()).get('/api/v1/demo/stream');
@@ -110,13 +122,34 @@ describe('Proxy e2e（NDJSON 透传 + 鉴权）', () => {
   });
 
   it('带有效 JWT → 放行并转发', async () => {
-    const jwt = new JwtService({ secret: JWT_SECRET });
-    const token = jwt.sign({ sub: 1, username: 'u', role: 'user' });
     const res = await request(app.getHttpServer())
       .get('/api/v1/tasks')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${token()}`);
     expect(res.status).toBe(200);
     expect(res.body.secret).toBe(true);
+  });
+
+  it('多上游：/rag/api/v1/qa 无 token → 401', async () => {
+    await request(app.getHttpServer()).get('/rag/api/v1/qa').expect(401);
+  });
+
+  it('多上游：/rag/api/v1/qa 带 token → 路由到 rag 并剥前缀 + 透传 correlation-id', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/rag/api/v1/qa?x=1')
+      .set('Authorization', `Bearer ${token()}`);
+    expect(res.status).toBe(200);
+    expect(res.body.rag).toBe(true);
+    expect(res.body.path).toBe('/api/v1/qa?x=1'); // 剥掉 /rag，保留 query
+    expect(res.headers['x-request-id']).toBeTruthy();
+    expect(ragReceivedRid).toBe(res.headers['x-request-id']); // 上游收到同一 correlation-id
+  });
+
+  it('未命中路由 → 404 NO_ROUTE（带 token）', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/nope')
+      .set('Authorization', `Bearer ${token()}`);
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('NO_ROUTE');
   });
 
   it('/api/internal/ping 走 node:http + X-Internal-Token 打通后端', async () => {
