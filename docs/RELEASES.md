@@ -5,6 +5,25 @@
 
 ---
 
+## v1.0.0-p5.0b — rag 上游按上游身份注入 + 剥客户端身份头（2026-10-19）
+
+**类型**：安全（共享网关 Phase B 收口；配 rag 仓 p4.11）
+**Tag 提交**：见 `git show v1.0.0-p5.0b`
+
+### 交付内容
+- 路由表增 `strip_identity` / `inject_identity` / `internal_secret`；rag 上游启用。
+- `proxyReq`：剥 9 个客户端身份头（与 RAG IDENTITY_HEADERS 对齐）+ 注入 `X-Username` + `X-Internal-Auth`；**刻意不注 X-User-Id**（跨系统 id 撞行风险，走 username 回落，fail-closed）。
+- env/compose 加 `RAG_INTERNAL_SECRET`（须与 RAG `OFFICE_GATEWAY_SHARED_SECRET` 同值）。
+
+### 验证状态
+- ✅ jest 28 passed / 4 suites（e2e：注入/剥离/伪造头/correlation-id 全断言）；tsc + build 通过。
+- ⏸️ 与 RAG gateway 模式真实联调待生产/联调环境；身份对齐（username）为数据前提。
+
+### 下一步
+回 office 主线 Phase 5 办公能力池。
+
+---
+
 ## v1.0.0-p5.0a — 共享网关：配置驱动路由表 + 多上游 + 横切加固（2026-10-19）
 
 **类型**：架构（共享网关 Phase A/B/C；认证放 B）

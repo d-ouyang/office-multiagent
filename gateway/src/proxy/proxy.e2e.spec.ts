@@ -31,6 +31,7 @@ describe('Proxy e2e（NDJSON 透传 + 鉴权 + 多上游）', () => {
     process.env.GATEWAY_JWT_SECRET = JWT_SECRET;
     process.env.INTERNAL_SHARED_SECRET = INTERNAL_SECRET;
     process.env.GATEWAY_RATE_LIMIT_MAX = '0'; // 关限流，避免干扰计数断言
+    process.env.RAG_INTERNAL_SECRET = 'rag-office-secret';
 
     backend = http.createServer((req, res) => {
       const url = req.url ?? '';
@@ -80,11 +81,19 @@ describe('Proxy e2e（NDJSON 透传 + 鉴权 + 多上游）', () => {
     await new Promise<void>((resolve) => backend.listen(0, '127.0.0.1', resolve));
     process.env.GATEWAY_BACKEND_URL = `http://127.0.0.1:${(backend.address() as AddressInfo).port}`;
 
-    // rag 上游：剥前缀后应收到 /api/v1/qa；顺便记录收到的 correlation-id
+    // rag 上游：剥前缀后应收到 /api/v1/qa；顺便记录收到的 correlation-id 与身份头
     ragBackend = http.createServer((req, res) => {
       ragReceivedRid = req.headers['x-request-id'] as string | undefined;
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ rag: true, path: req.url }));
+      res.end(
+        JSON.stringify({
+          rag: true,
+          path: req.url,
+          username: req.headers['x-username'] ?? null,
+          internalAuth: req.headers['x-internal-auth'] ?? null,
+          userId: req.headers['x-user-id'] ?? null,
+        }),
+      );
     });
     await new Promise<void>((resolve) => ragBackend.listen(0, '127.0.0.1', resolve));
     process.env.RAG_BACKEND_URL = `http://127.0.0.1:${(ragBackend.address() as AddressInfo).port}`;
@@ -133,13 +142,17 @@ describe('Proxy e2e（NDJSON 透传 + 鉴权 + 多上游）', () => {
     await request(app.getHttpServer()).get('/rag/api/v1/qa').expect(401);
   });
 
-  it('多上游：/rag/api/v1/qa 带 token → 路由到 rag 并剥前缀 + 透传 correlation-id', async () => {
+  it('多上游：/rag 剥前缀 + 注入可信身份 + 剥伪造身份头 + correlation-id', async () => {
     const res = await request(app.getHttpServer())
       .get('/rag/api/v1/qa?x=1')
-      .set('Authorization', `Bearer ${token()}`);
+      .set('Authorization', `Bearer ${token()}`)
+      .set('X-User-Id', '999'); // 客户端伪造的身份头
     expect(res.status).toBe(200);
     expect(res.body.rag).toBe(true);
     expect(res.body.path).toBe('/api/v1/qa?x=1'); // 剥掉 /rag，保留 query
+    expect(res.body.username).toBe('u'); // 注入网关验过的身份（来自 JWT）
+    expect(res.body.internalAuth).toBe('rag-office-secret'); // 网关证明
+    expect(res.body.userId).toBeNull(); // 伪造头被剥离，且刻意不注入 X-User-Id
     expect(res.headers['x-request-id']).toBeTruthy();
     expect(ragReceivedRid).toBe(res.headers['x-request-id']); // 上游收到同一 correlation-id
   });

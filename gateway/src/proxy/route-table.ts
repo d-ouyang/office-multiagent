@@ -24,6 +24,12 @@ export interface Upstream {
   prefix: string;
   baseUrl: string;
   routes: RouteRule[];
+  /** 信任边界：剥离客户端传入的身份头（防伪造，防"顺手 curl 一下"）。 */
+  stripIdentity: boolean;
+  /** 注入可信身份（来自网关验过的 JWT）+ 网关证明（X-Internal-Auth）。 */
+  injectIdentity: boolean;
+  /** 网关证明密钥（${ENV} 展开，须与上游后端配置的同名密钥同值）。空=不注入证明。 */
+  internalSecret: string;
 }
 export interface ResolvedRoute {
   upstream: Upstream;
@@ -57,6 +63,9 @@ export function loadRouteTable(raw: unknown): Upstream[] {
           public: Boolean(rule.public),
         };
       }),
+      stripIdentity: Boolean(up.strip_identity),
+      injectIdentity: Boolean(up.inject_identity),
+      internalSecret: expandEnv(String(up.internal_secret ?? '')),
     };
   });
 }

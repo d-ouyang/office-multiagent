@@ -18,7 +18,25 @@ import { NextFunction, Request, Response } from 'express';
 import { createProxyMiddleware, fixRequestBody, RequestHandler } from 'http-proxy-middleware';
 
 import { GatewayConfig, gatewayConfig } from '../config/configuration';
+import type { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { getUpstreams, resolveRoute, type Upstream } from './route-table';
+
+/**
+ * 客户端身份头清单 —— 与 RAG 后端 `core/identity.py` 的 `IDENTITY_HEADERS` 一一对应
+ * （RAG 网关侧同名单在 `identity-headers.ts`）。转发前一律剥离：客户端伪造的身份头
+ * 不许过网关；上游只信网关注入的（配合 X-Internal-Auth 网关证明）。
+ */
+export const INBOUND_IDENTITY_HEADERS = [
+  'x-user-id',
+  'x-username',
+  'x-user-role',
+  'x-role',
+  'x-dept-id',
+  'x-token-version',
+  'x-user-kb-role',
+  'x-identity-source',
+  'x-internal-auth',
+] as const;
 
 @Controller()
 export class ProxyController {
@@ -51,7 +69,22 @@ export class ProxyController {
             // Phase C：透传 correlation-id 到上游（与后端 correlation_id 对齐）
             const rid = incoming.headers['x-request-id'];
             if (typeof rid === 'string' && rid) proxyReq.setHeader('X-Request-Id', rid);
-            // 重写请求体（会 end 掉 proxyReq，必须在所有 setHeader 之后）
+            // 信任边界①：剥离客户端传入的身份头（防伪造）——上游只信网关注入的
+            if (u.stripIdentity) {
+              for (const h of INBOUND_IDENTITY_HEADERS) proxyReq.removeHeader(h);
+            }
+            // 信任边界②：注入网关验过的可信身份 + 网关证明（上游凭证明才认）
+            // ⚠️ 刻意不注入 X-User-Id：两套系统的 user.id 是两个命名空间，注入数字 id
+            //    可能在上游库里撞到另一个人的行；只注 X-Username，由上游按用户名回落
+            //    解析（对齐 = 两边用户名一致，见《共享网关迁移设计》）。
+            if (u.injectIdentity && u.internalSecret) {
+              const user = (incoming as Request & { user?: AuthenticatedUser }).user;
+              if (user?.username) {
+                proxyReq.setHeader('X-Username', encodeURIComponent(String(user.username)));
+                proxyReq.setHeader('X-Internal-Auth', u.internalSecret);
+              }
+            }
+            // 重写请求体（会 end 掉 proxyReq，必须在所有 setHeader/removeHeader 之后）
             fixRequestBody(proxyReq, incoming);
           } catch (e) {
             this.logger.error(

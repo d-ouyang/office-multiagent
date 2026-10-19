@@ -67,6 +67,31 @@ describe('stripPrefix', () => {
   });
 });
 
+describe('上游身份策略字段', () => {
+  it('缺省：未声明即不剥离/不注入（office 老路行为不变）', () => {
+    expect(table[0].stripIdentity).toBe(false);
+    expect(table[0].injectIdentity).toBe(false);
+    expect(table[0].internalSecret).toBe('');
+  });
+  it('声明了就映射 + ${ENV} 展开', () => {
+    const t = loadRouteTable({
+      upstreams: [
+        {
+          name: 'rag',
+          prefix: 'rag',
+          base_url: 'http://r',
+          strip_identity: true,
+          inject_identity: true,
+          internal_secret: '${RAG_INTERNAL_SECRET:-def}',
+        },
+      ],
+    });
+    expect(t[0].stripIdentity).toBe(true);
+    expect(t[0].injectIdentity).toBe(true);
+    expect(t[0].internalSecret).toBe('def');
+  });
+});
+
 describe('resolveRoute + isPublicPath', () => {
   it('公开路径识别', () => {
     expect(isPublicPath(table, '/api/v1/health')).toBe(true);

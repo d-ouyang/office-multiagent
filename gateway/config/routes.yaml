@@ -15,6 +15,13 @@ upstreams:
   - name: rag
     prefix: 'rag'
     base_url: ${RAG_BACKEND_URL:-http://host.docker.internal:8000}
+    # 信任边界（对应 RAG 后端 IDENTITY_MODE=gateway，见 rag 仓 core/identity.py）：
+    #   strip_identity   剥离客户端身份头（防伪造）
+    #   inject_identity  注入网关验过的可信身份（X-Username）+ 网关证明（X-Internal-Auth）
+    #   internal_secret  须与 RAG 后端的 OFFICE_GATEWAY_SHARED_SECRET 同值（rag p4.11）
+    strip_identity: true
+    inject_identity: true
+    internal_secret: ${RAG_INTERNAL_SECRET:-}
     routes:
       - { path: 'api/v1/system/health', public: true }
       - { path: 'api/v1', public: false }
