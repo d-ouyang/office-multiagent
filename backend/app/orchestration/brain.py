@@ -24,9 +24,8 @@ from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-#: LLM 每步输出的提示词（§四.4 ReAct：Thought → Action → Observation）
-_SYSTEM_TMPL = """你是办公助手系统中一个业务 Agent 的决策脑（ReAct 模式）。
-你的每一步【只能输出一个 JSON 对象，不要输出任何其他文字】：
+#: ReAct 输出协议（§四.4）——**统一在这里保证**，不写进各 Agent 的角色提示词（避免漂移）。
+_PROTOCOL_TMPL = """你的每一步【只能输出一个 JSON 对象，不要输出任何其他文字】：
   需要调用工具：{{"thought": "你的思考", "action": "工具名", "action_input": {{...}}}}
   任务已完成：{{"thought": "你的思考", "final": "面向用户的最终回答（中文，直接可用）"}}
 
@@ -88,12 +87,15 @@ class LlmBrain:
         chat_fn: ChatFn | None = None,
         timeout: float | None = None,
         max_steps_hint: int = 8,
+        system_prompt: str | None = None,
     ) -> None:
         self.model_id = model_id
         self._tools = tools
         self._chat: ChatFn = chat_fn or default_chat
         self._timeout = timeout
         self._max_steps_hint = max_steps_hint
+        # p5.1b：AgentSpec 的角色指令（config/agents.yaml）；None 用通用角色
+        self._custom_system = (system_prompt or "").strip() or None
         self.usage: dict[str, int] = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -113,7 +115,8 @@ class LlmBrain:
         )
         if not tools:
             tools = "（当前没有任何工具——需要数据时请在 final 中如实说明该能力暂缺）"
-        return _SYSTEM_TMPL.format(tools=tools, max_steps=self._max_steps_hint)
+        role = self._custom_system or "你是企业办公助手系统中一个业务 Agent（ReAct 模式）。"
+        return f"{role}\n\n{_PROTOCOL_TMPL.format(tools=tools, max_steps=self._max_steps_hint)}"
 
     @staticmethod
     def _render_history(history: list[Step]) -> str:
@@ -170,6 +173,7 @@ def make_brain(
     fallback_answer: str = "处理完成",
     model_id: str | None = None,
     chat_fn: ChatFn | None = None,
+    system_prompt: str | None = None,
 ) -> Brain:
     """配置驱动的 Brain 工厂：模型+密钥就绪 → LlmBrain；否则回落 StubBrain（可测基线）。"""
     mid = model_id or settings.llm_brain_model
@@ -178,4 +182,7 @@ def make_brain(
     except LlmError as e:
         logger.info("LLM brain 未就绪（%s），回落 StubBrain（确定性基线）", e)
         return StubBrain(fallback_answer)
-    return LlmBrain(model_id=mid, tools=tools, chat_fn=chat_fn, timeout=settings.llm_timeout)
+    return LlmBrain(
+        model_id=mid, tools=tools, chat_fn=chat_fn, timeout=settings.llm_timeout,
+        system_prompt=system_prompt,
+    )

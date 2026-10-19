@@ -83,6 +83,20 @@ def test_llm_brain_usage_accumulates():
     assert brain.usage["total_tokens"] == 30  # 15 × 2
 
 
+def test_llm_brain_custom_system_prompt_injected():
+    # p5.1b：AgentSpec 角色指令注入；JSON 协议仍由 brain 统一保证
+    chat = FakeChat(['{"thought":"t","final":"ok"}'])
+    brain = LlmBrain(
+        model_id="deepseek-chat", tools=_registry(), chat_fn=chat,
+        system_prompt="你是知识库问答 Agent。绝不编造制度条文。",
+    )
+    brain.next_step("任务", [])
+    system = chat.calls[0][0]["content"]
+    assert "知识库问答 Agent" in system
+    assert "只能输出一个 JSON" in system
+    assert "db_query" in system
+
+
 def test_make_brain_falls_back_to_stub_without_key(monkeypatch):
     monkeypatch.setattr(settings, "llm_brain_model", "deepseek-chat")
     monkeypatch.setattr(settings, "deepseek_api_key", "")

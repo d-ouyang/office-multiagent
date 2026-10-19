@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # ---- 规划器（配置驱动，§四.2/§四.3）----
     planner_config: str = ""         # 留空则自动定位 backend/config/planner.yaml
 
+    # ---- 业务 Agent 注册表（p5.1b，配置驱动 §五）----
+    agents_config: str = ""          # 留空则自动定位 backend/config/agents.yaml
+
     # ---- 云端模型密钥（仅存环境变量，不进 git）----
     siliconflow_api_key: str = ""
     deepseek_api_key: str = ""

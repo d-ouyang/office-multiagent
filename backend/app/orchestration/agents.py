@@ -1,13 +1,21 @@
-"""默认工具注册表（p5.1a）——真实工具的装配处（设计文档 §五 能力池）。
+"""业务 Agent 注册表（p5.1b）——配置驱动的 Agent 装配处（设计文档 §五 能力池）。
 
-p5.1a 先落两类真实工具（§五.2 首批）：
-  · db_query     公司业务库只读查询（硬护栏见 tools_db）
-  · rag_retrieve 公司知识库检索（RAG 作为外部工具复用，走内部接口）
-文档解析等重工具留 p5.1b；未注册的能力由 ToolRegistry 返回 CAPABILITY_MISSING
-（"能力缺失→如实告知"，§四.5，绝不硬编）。
+两层：
+  · 工具池：build_default_registry 装配全部真实工具（p5.1a：db_query / rag_retrieve）。
+  · AgentSpec：config/agents.yaml 里每个 agent_type 的角色提示词 + 工具白名单；
+    build_registry_for_spec 按白名单裁剪出该 Agent 可见的工具集。
+
+agent_type 与 config/planner.yaml 的 agent 字段一致（data_cleaning / data_analysis /
+report_generation / rag_retrieval / visualization / image_restore），另有 general 兜底。
+未注册的 agent_type 一律回落 general（不猜、不编）。
 """
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
 from sqlalchemy.engine import Engine
 
 from ..core.config import settings
@@ -15,7 +23,22 @@ from .tools import ToolRegistry
 from .tools_db import make_db_query_tool
 from .tools_rag import make_rag_retrieve_tool
 
+logger = logging.getLogger(__name__)
 
+FALLBACK_AGENT = "general"
+
+
+@dataclass(frozen=True)
+class AgentSpec:
+    agent_type: str
+    name: str
+    system_prompt: str
+    tools: list[str] = field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# 工具池（全部真实工具；各 Agent 按白名单取子集）
+# --------------------------------------------------------------------------- #
 def build_default_registry(engine: Engine | None) -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(
@@ -39,3 +62,57 @@ def build_default_registry(engine: Engine | None) -> ToolRegistry:
         ),
     )
     return reg
+
+
+def build_registry_for_spec(spec: AgentSpec, base: ToolRegistry) -> ToolRegistry:
+    """按 AgentSpec 的工具白名单裁剪；白名单里的未知名记 warning（对 Agent 不可见=能力缺失）。"""
+    reg = ToolRegistry()
+    for name in spec.tools:
+        if not base.has(name):
+            logger.warning("Agent %s 声明了未注册工具 %s（跳过=对该 Agent 能力缺失）", spec.agent_type, name)
+            continue
+        desc = next((d["description"] for d in base.describe() if d["name"] == name), "")
+        reg.register(name, base._tools[name], desc)  # noqa: SLF001 - 同包内装配
+    return reg
+
+
+# --------------------------------------------------------------------------- #
+# AgentSpec 加载（config/agents.yaml）
+# --------------------------------------------------------------------------- #
+def _resolve_agents_path() -> Path:
+    if settings.agents_config:
+        p = Path(settings.agents_config)
+        if p.exists():
+            return p
+    candidates = [
+        Path("/app/config/agents.yaml"),
+        Path(__file__).resolve().parents[2] / "config" / "agents.yaml",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    raise FileNotFoundError("agents.yaml 未找到（设 AGENTS_CONFIG 或放 backend/config/agents.yaml）")
+
+
+def load_agent_specs() -> dict[str, AgentSpec]:
+    raw = yaml.safe_load(_resolve_agents_path().read_text(encoding="utf-8")) or {}
+    specs: dict[str, AgentSpec] = {}
+    for agent_type, item in (raw.get("agents") or {}).items():
+        item = item or {}
+        specs[str(agent_type)] = AgentSpec(
+            agent_type=str(agent_type),
+            name=str(item.get("name", agent_type)),
+            system_prompt=str(item.get("system_prompt", "")).strip(),
+            tools=[str(t) for t in (item.get("tools") or [])],
+        )
+    return specs
+
+
+def get_agent_spec(agent_type: str | None) -> AgentSpec:
+    """按 agent_type 取 spec；未注册回落 general。"""
+    specs = load_agent_specs()
+    key = (agent_type or FALLBACK_AGENT).strip()
+    if key in specs:
+        return specs[key]
+    logger.info("agent_type %s 未注册，回落 %s", key, FALLBACK_AGENT)
+    return specs[FALLBACK_AGENT]

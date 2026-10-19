@@ -20,9 +20,9 @@ from ..core.planner import Plan, plan as run_plan
 from ..core.router import decide
 from ..core.token_pool import TokenPool
 from ..core.db import get_engine
-from .agents import build_default_registry
+from .agents import build_default_registry, build_registry_for_spec, get_agent_spec
 from .brain import make_brain
-from .orchestrator import default_agent_runner, run_dag
+from .orchestrator import run_dag
 from .react import run_react
 
 
@@ -52,6 +52,22 @@ def build_graph(
 ) -> Any:
     """构建编排图。token_pool 提供时前置 quota 门（reserve + 中断续跑）。"""
     tools = build_default_registry(get_engine())  # p5.1a：真实工具（db_query / rag_retrieve）
+
+    def spec_agent_runner(base):
+        """multi 的子任务执行器：按子任务 agent_type 取 AgentSpec（角色提示词+工具白名单）。"""
+
+        def _run(st):
+            spec = get_agent_spec(st.agent_type)
+            spec_tools = build_registry_for_spec(spec, base)
+            brain = make_brain(
+                spec_tools,
+                fallback_answer=f"[{st.agent_type}] 完成 {st.intent}",
+                system_prompt=spec.system_prompt,
+            )
+            em = RunEventEmitter("sub", st.id)
+            return run_react(f"{st.intent} 任务", brain, spec_tools, emitter=em)
+
+        return _run
 
     def quota_node(state: TaskState) -> dict[str, Any]:
         user_id = state.get("user_id")
@@ -97,9 +113,13 @@ def build_graph(
 
     def single_node(state: TaskState) -> dict[str, Any]:
         agent = state.get("primary_agent", "general")
-        # p5.1a：配置驱动 Brain——模型+密钥就绪走 LLM，否则回落 StubBrain（测试基线不变）
-        brain = make_brain(tools, fallback_answer=f"[{agent}] 处理完成")
-        res = run_react(state["text"], brain, tools, emitter=emitter, emit=emit)
+        # p5.1b：按 AgentSpec 装配（角色提示词 + 工具白名单）；无 key 回落 StubBrain（基线不变）
+        spec = get_agent_spec(agent)
+        spec_tools = build_registry_for_spec(spec, tools)
+        brain = make_brain(
+            spec_tools, fallback_answer=f"[{agent}] 处理完成", system_prompt=spec.system_prompt,
+        )
+        res = run_react(state["text"], brain, spec_tools, emitter=emitter, emit=emit)
         usage = getattr(brain, "usage", None) or {}
         return {"result": res.final, "tokens_used": int(usage.get("total_tokens", 0))}
 
@@ -116,7 +136,7 @@ def build_graph(
                 for s in state.get("dag", {}).get("subtasks", [])
             ]
         )
-        results = run_dag(dag, emitter=emitter, emit=emit, agent_runner=default_agent_runner(tools))
+        results = run_dag(dag, emitter=emitter, emit=emit, agent_runner=spec_agent_runner(tools))
         summary = "；".join(f"{k}:{v.final}" for k, v in results.items())
         emit(emitter.content_delta(f"多 Agent 汇总 → {summary}"))
         emit(emitter.status("orchestrator", "done"))

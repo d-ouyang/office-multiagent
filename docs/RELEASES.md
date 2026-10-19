@@ -5,6 +5,27 @@
 
 ---
 
+## v1.0.0-p5.1b — 业务 Agent 提示词化 + 真 LLM 端到端（2026-10-19，Phase 5）
+
+**类型**：能力（办公能力池 · Agent 层）
+**Tag 提交**：见 `git show v1.0.0-p5.1b`
+
+### 交付内容
+- `config/agents.yaml`：7 个业务 Agent（6 业务 + general）的角色提示词 + 工具白名单（配置驱动）。
+- AgentSpec 加载/回落/白名单裁剪；single 与 multi 子任务均按 spec 装配 Brain。
+- 角色指令与 ReAct JSON 协议分离（协议由 brain 统一保证，防 7 份提示词漂移）。
+- `tests/conftest.py`：单测强制无 LLM key（回落 StubBrain），真 LLM 验证只走显式 smoke。
+- DEEPSEEK_API_KEY 搬入 backend/.env（用户授权，git-ignored）。
+
+### 验证状态
+- ✅ pytest 103 passed / 3 skipped（4.55s，纯 mock）。
+- ✅ 真 LLM 端到端：rag 任务真检索并注明依据文件；无工具 Agent 如实告知能力未接入。
+
+### 下一步
+db_query 实库验证（compose MySQL）；文档解析工具（p5.2）。
+
+---
+
 ## v1.0.0-p5.1a — 真实工具层 + LLM 客户端 + Brain 接入（2026-10-19，Phase 5 首步）
 
 **类型**：能力（办公能力池首批）
