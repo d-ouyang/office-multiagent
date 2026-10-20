@@ -9,7 +9,9 @@
 """
 from __future__ import annotations
 
+import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -74,7 +76,7 @@ def chat(
     temperature: float = 0.2,
     transport: httpx.BaseTransport | None = None,
 ) -> LlmResult:
-    """调一次 /chat/completions。任何失败抛 LlmError（含 LlmNotConfigured）。"""
+    """调一次 /chat/completions（非流式）。任何失败抛 LlmError（含 LlmNotConfigured）。"""
     base_url, api_key, api_model = resolve_model(model_id)
     url = base_url.rstrip("/") + "/chat/completions"
     payload = {
@@ -98,6 +100,73 @@ def chat(
     usage = data.get("usage") or {}
     return LlmResult(
         content=str(content),
+        prompt_tokens=int(usage.get("prompt_tokens", 0)),
+        completion_tokens=int(usage.get("completion_tokens", 0)),
+        total_tokens=int(usage.get("total_tokens", 0)),
+        model=api_model,
+    )
+
+
+def chat_stream(
+    model_id: str,
+    messages: list[dict[str, str]],
+    *,
+    on_chunk: Callable[[str], None] | None = None,
+    on_thought: Callable[[str], None] | None = None,
+    timeout: float | None = None,
+    temperature: float = 0.2,
+    transport: httpx.BaseTransport | None = None,
+) -> LlmResult:
+    """流式 /chat/completions（p6.3 真流式管道）。
+
+    - 每个正文 chunk 立即回调 `on_chunk`（前端打字机的数据源）；
+    - DeepSeek R1 等模型的思考内容（reasoning_content）回调 `on_thought`；
+    - usage 从流式末块取（stream_options.include_usage），token 结算不受影响；
+    - 任何失败抛 LlmError（含 LlmNotConfigured），调用方如实告知，不编。
+    """
+    base_url, api_key, api_model = resolve_model(model_id)
+    url = base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": api_model,
+        "messages": messages,
+        "temperature": temperature,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    headers = {"Authorization": f"Bearer {api_key}"}
+    parts: list[str] = []
+    usage: dict[str, Any] = {}
+    try:
+        with httpx.Client(timeout=timeout or settings.llm_timeout, transport=transport) as client:
+            with client.stream("POST", url, json=payload, headers=headers) as resp:
+                if resp.status_code != 200:
+                    raise LlmError(f"LLM 返回 {resp.status_code}: {resp.read().decode('utf-8', 'replace')[:200]}")
+                for line in resp.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                    except ValueError:
+                        continue
+                    if obj.get("usage"):
+                        usage = obj["usage"]
+                    for choice in obj.get("choices") or []:
+                        delta = (choice.get("delta") or {}) if isinstance(choice, dict) else {}
+                        piece = delta.get("content") or ""
+                        if piece:
+                            parts.append(piece)
+                            if on_chunk is not None:
+                                on_chunk(piece)
+                        thought = delta.get("reasoning_content") or ""
+                        if thought and on_thought is not None:
+                            on_thought(thought)
+    except httpx.HTTPError as e:
+        raise LlmError(f"LLM 请求失败：{type(e).__name__}: {e}") from e
+    return LlmResult(
+        content="".join(parts),
         prompt_tokens=int(usage.get("prompt_tokens", 0)),
         completion_tokens=int(usage.get("completion_tokens", 0)),
         total_tokens=int(usage.get("total_tokens", 0)),

@@ -9,19 +9,46 @@ from app.orchestration.tools import ToolRegistry
 
 
 class FakeChat:
-    def __init__(self, outputs: list[str], fail: bool = False):
-        self.outputs = list(outputs)
+    """同步 + 流式双模假 LLM（不真调云端）。"""
+
+    def __init__(
+        self,
+        outputs: list[str] | None = None,
+        fail: bool = False,
+        stream_chunks: list[str] | None = None,
+        reasoning_chunks: list[str] | None = None,
+        fail_stream: bool = False,
+    ):
+        self.outputs = list(outputs or [])
         self.fail = fail
+        self.stream_chunks = list(stream_chunks or [])
+        self.reasoning_chunks = list(reasoning_chunks or [])
+        self.fail_stream = fail_stream
         self.calls: list[list[dict]] = []
+
+    def _result(self, content: str, model_id: str) -> LlmResult:
+        return LlmResult(
+            content=content, prompt_tokens=10, completion_tokens=5, total_tokens=15,
+            model=model_id,
+        )
 
     def __call__(self, model_id: str, messages: list[dict], **kw) -> LlmResult:
         self.calls.append(messages)
         if self.fail:
             raise LlmError("模拟断网")
-        return LlmResult(
-            content=self.outputs.pop(0), prompt_tokens=10, completion_tokens=5, total_tokens=15,
-            model=model_id,
-        )
+        return self._result(self.outputs.pop(0), model_id)
+
+    def stream(self, model_id: str, messages: list[dict], *, on_chunk=None, on_thought=None, **kw) -> LlmResult:
+        self.calls.append(messages)
+        if self.fail_stream:
+            raise LlmError("模拟流式断网")
+        for t in self.reasoning_chunks:
+            if on_thought:
+                on_thought(t)
+        for c in self.stream_chunks:
+            if on_chunk:
+                on_chunk(c)
+        return self._result("".join(self.stream_chunks), model_id)
 
 
 def _registry() -> ToolRegistry:
@@ -93,7 +120,7 @@ def test_llm_brain_custom_system_prompt_injected():
     brain.next_step("任务", [])
     system = chat.calls[0][0]["content"]
     assert "知识库问答 Agent" in system
-    assert "只能输出一个 JSON" in system
+    assert "只能二选一输出" in system  # p6.3：A.工具 JSON / B.自然语言终答（可流式）
     assert "db_query" in system
 
 
@@ -113,3 +140,56 @@ def test_make_brain_uses_llm_when_key_present(monkeypatch):
     monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
     brain = make_brain(_registry())
     assert isinstance(brain, LlmBrain)
+
+
+# ---------- p6.3 流式模式 ----------
+def _stream_brain(chat: FakeChat, on_content=None, on_thought=None) -> LlmBrain:
+    return LlmBrain(
+        model_id="deepseek-chat", tools=_registry(), chat_fn=chat, chat_stream_fn=chat.stream,
+        stream=True, on_content=on_content, on_thought=on_thought,
+    )
+
+
+def test_stream_natural_language_is_chunked():
+    chat = FakeChat(stream_chunks=["公司", "年假", "5天"])
+    got: list[str] = []
+    brain = _stream_brain(chat, on_content=got.append)
+    step = brain.next_step("任务", [])
+    assert step.final == "公司年假5天"
+    assert step.streamed is True          # run_react 不重复整段发
+    assert got == ["公司", "年假", "5天"]  # 逐字推过（真打字机）
+
+
+def test_stream_json_action_not_chunked():
+    chat = FakeChat(stream_chunks=['{"thought":"查库",', '"action":"db_query","action_input":{}}'])
+    got: list[str] = []
+    brain = _stream_brain(chat, on_content=got.append)
+    step = brain.next_step("任务", [])
+    assert step.action == "db_query"
+    assert got == []                       # JSON 协议不逐字推（等完整解析）
+
+
+def test_stream_thought_streamed_not_duplicated():
+    chat = FakeChat(
+        stream_chunks=['{"thought":"","action":"db_query","action_input":{}}'],
+        reasoning_chunks=["先想一下"],
+    )
+    thoughts: list[str] = []
+    brain = _stream_brain(chat, on_thought=thoughts.append)
+    step = brain.next_step("任务", [])
+    assert thoughts == ["先想一下"]
+    assert step.thought == ""             # 已流式发过，Step 里置空防 run_react 重发
+
+
+def test_stream_llm_error_stops_honestly():
+    chat = FakeChat(fail_stream=True)
+    brain = _stream_brain(chat)
+    step = brain.next_step("任务", [])
+    assert step.final is not None and "模型暂不可用" in step.final
+
+
+def test_stream_usage_accumulates():
+    chat = FakeChat(stream_chunks=["答", "案"])
+    brain = _stream_brain(chat)
+    brain.next_step("任务", [])
+    assert brain.usage["total_tokens"] == 15

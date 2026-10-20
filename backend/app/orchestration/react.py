@@ -18,6 +18,7 @@ class Step:
     action_input: dict[str, Any] = field(default_factory=dict)
     observation: str | None = None
     final: str | None = None        # 非 None = 终答，循环结束
+    streamed: bool = False          # p6.3：终答已由 brain 逐字推过（run_react 不重复整段发）
 
 
 class Brain(Protocol):
@@ -69,7 +70,8 @@ def run_react(
             _emit(emitter.thinking_delta(step.thought))
 
         if step.final is not None:
-            if emitter is not None:
+            # p6.3：brain 已逐字推过（streamed）则只记录，不再整段重发
+            if emitter is not None and not step.streamed:
                 _emit(emitter.content_delta(step.final))
             history.append(step)
             return AgentResult(final=step.final, steps=history, iterations=i)

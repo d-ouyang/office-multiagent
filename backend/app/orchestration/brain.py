@@ -18,24 +18,35 @@ import re
 from typing import Any, Protocol
 
 from ..core.config import settings
-from ..core.llm import LlmError, LlmResult, chat as default_chat, resolve_model
+from ..core.llm import (
+    LlmError,
+    LlmResult,
+    chat as default_chat,
+    chat_stream as default_chat_stream,
+    resolve_model,
+)
 from .react import Brain, Step, StubBrain
 from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+
+def looks_like_json(text: str) -> bool:
+    return (text or "").lstrip().startswith("{")
+
 #: ReAct 输出协议（§四.4）——**统一在这里保证**，不写进各 Agent 的角色提示词（避免漂移）。
-_PROTOCOL_TMPL = """你的每一步【只能输出一个 JSON 对象，不要输出任何其他文字】：
-  需要调用工具：{{"thought": "你的思考", "action": "工具名", "action_input": {{...}}}}
-  任务已完成：{{"thought": "你的思考", "final": "面向用户的最终回答（中文，直接可用）"}}
+#: p6.3 流式：完成态改为"直接写自然语言终答"（不包 JSON），使 LLM 输出可逐字流式转发。
+_PROTOCOL_TMPL = """你的每一步【只能二选一输出】：
+  A. 需要调用工具：输出一个 JSON 对象（除此之外不要有任何文字）：
+     {{"thought": "你的思考", "action": "工具名", "action_input": {{...}}}}
+  B. 任务已完成：直接写面向用户的最终回答（自然语言，中文，可直接使用；不要包 JSON、不要复述结构）
 
 可用工具（名字必须完全一致）：
 {tools}
 
 纪律：
-  · 工具不存在/调用失败/观察结果为空时，在 final 里【如实说明】，绝不编造数据或结论。
-  · 尽快给出 final，通常不超过 {max_steps} 步。
-  · final 必须直接面向用户，不要复述 JSON 结构。
+  · 工具不存在/调用失败/观察结果为空时，在最终回答里【如实说明】，绝不编造数据或结论。
+  · 尽快给出最终回答，通常不超过 {max_steps} 步。
 """
 
 
@@ -76,8 +87,28 @@ class ChatFn(Protocol):
     ) -> LlmResult: ...
 
 
+class ChatStreamFn(Protocol):
+    def __call__(
+        self,
+        model_id: str,
+        messages: list[dict[str, str]],
+        *,
+        on_chunk: Any = ...,
+        on_thought: Any = ...,
+        timeout: float | None = None,
+        temperature: float = ...,
+        transport: Any = ...,
+    ) -> LlmResult: ...
+
+
 class LlmBrain:
-    """LLM 决策脑。`usage` 供 graph 做真实 token 结算（§十四）。"""
+    """LLM 决策脑。`usage` 供 graph 做真实 token 结算（§十四）。
+
+    p6.3 流式模式（stream=True）：
+      · LLM 输出以 `{` 开头 → ReAct JSON 协议，等完整再解析（工具步骤不需要逐字）；
+      · 其他输出 → 视为面向用户的最终回答，**边收边推 on_content**（真打字机）；
+      · 思考内容（reasoning_content）实时推 on_thought。
+    """
 
     def __init__(
         self,
@@ -85,17 +116,25 @@ class LlmBrain:
         model_id: str,
         tools: ToolRegistry,
         chat_fn: ChatFn | None = None,
+        chat_stream_fn: ChatStreamFn | None = None,
         timeout: float | None = None,
         max_steps_hint: int = 8,
         system_prompt: str | None = None,
+        stream: bool = False,
+        on_content: Callable[[str], None] | None = None,
+        on_thought: Callable[[str], None] | None = None,
     ) -> None:
         self.model_id = model_id
         self._tools = tools
         self._chat: ChatFn = chat_fn or default_chat
+        self._chat_stream: ChatStreamFn = chat_stream_fn or default_chat_stream
         self._timeout = timeout
         self._max_steps_hint = max_steps_hint
         # p5.1b：AgentSpec 的角色指令（config/agents.yaml）；None 用通用角色
         self._custom_system = (system_prompt or "").strip() or None
+        self._stream = stream
+        self._on_content = on_content
+        self._on_thought = on_thought
         self.usage: dict[str, int] = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -141,6 +180,8 @@ class LlmBrain:
                 "content": f"任务：{task}\n\n已执行步骤：\n{self._render_history(history)}\n\n请给出下一步 JSON。",
             },
         ]
+        if self._stream:
+            return self._next_step_streaming(messages)
         try:
             res = self._chat(self.model_id, messages, timeout=self._timeout)
         except LlmError as e:
@@ -155,7 +196,54 @@ class LlmBrain:
                 thought="模型输出无法解析",
                 final="模型输出无法解析为决策 JSON，已停止本次任务（未编造结论）。请稍后重试。",
             )
-        thought = str(data.get("thought", ""))
+        return self._step_from_json(data, thought_streamed=False)
+
+    def _next_step_streaming(self, messages: list[dict[str, str]]) -> Step:
+        """p6.3：流式下一步。自然语言输出边收边推 on_content；JSON 等完整解析。"""
+        parts: list[str] = []
+        thought_streamed = False
+
+        def _on_thought(t: str) -> None:
+            nonlocal thought_streamed
+            thought_streamed = True
+            if self._on_thought is not None:
+                self._on_thought(t)
+
+        def _on_chunk(c: str) -> None:
+            parts.append(c)
+            # 只有"已确定不是 JSON"才逐字推；JSON 协议等完整解析（步骤不逐字）
+            if self._on_content is not None and not looks_like_json("".join(parts)):
+                self._on_content(c)
+
+        try:
+            res = self._chat_stream(
+                self.model_id,
+                messages,
+                on_chunk=_on_chunk,
+                on_thought=_on_thought,
+                timeout=self._timeout,
+            )
+        except LlmError as e:
+            logger.warning("LLM brain 流式调用失败，如实给阶段结论 | %s", e)
+            return Step(thought="模型调用失败", final=f"模型暂不可用，无法继续完成该任务：{e}")
+        self._accumulate(res)
+
+        text = res.content
+        if not looks_like_json(text):
+            # 自然语言终答：已逐字推过，标记 streamed 防 run_react 重复整段发
+            return Step(thought="", final=text, streamed=True)
+        data = extract_json(text)
+        if data is None:
+            logger.warning("LLM brain 输出无法解析为 JSON，如实停止（不编造）")
+            return Step(
+                thought="模型输出无法解析",
+                final="模型输出无法解析为决策 JSON，已停止本次任务（未编造结论）。请稍后重试。",
+            )
+        return self._step_from_json(data, thought_streamed=thought_streamed)
+
+    @staticmethod
+    def _step_from_json(data: dict[str, Any], *, thought_streamed: bool) -> Step:
+        thought = "" if thought_streamed else str(data.get("thought", ""))
         if data.get("final") is not None:
             return Step(thought=thought, final=str(data["final"]))
         action = data.get("action")
@@ -174,6 +262,9 @@ def make_brain(
     model_id: str | None = None,
     chat_fn: ChatFn | None = None,
     system_prompt: str | None = None,
+    stream: bool = False,
+    on_content: Callable[[str], None] | None = None,
+    on_thought: Callable[[str], None] | None = None,
 ) -> Brain:
     """配置驱动的 Brain 工厂：模型+密钥就绪 → LlmBrain；否则回落 StubBrain（可测基线）。"""
     mid = model_id or settings.llm_brain_model
@@ -183,6 +274,12 @@ def make_brain(
         logger.info("LLM brain 未就绪（%s），回落 StubBrain（确定性基线）", e)
         return StubBrain(fallback_answer)
     return LlmBrain(
-        model_id=mid, tools=tools, chat_fn=chat_fn, timeout=settings.llm_timeout,
+        model_id=mid,
+        tools=tools,
+        chat_fn=chat_fn,
+        timeout=settings.llm_timeout,
         system_prompt=system_prompt,
+        stream=stream,
+        on_content=on_content,
+        on_thought=on_thought,
     )

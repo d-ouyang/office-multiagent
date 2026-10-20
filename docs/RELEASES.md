@@ -5,6 +5,73 @@
 
 ---
 
+## v1.0.0-p6.3 — 真流式管道（打字机）+ 编排异常体面收尾（2026-10-20）
+
+**类型**：体验/架构（流式管道）
+**Tag 提交**：见 `git show v1.0.0-p6.3`
+
+### 交付内容
+- `chat_stream()`：httpx stream=True 逐 chunk 回调 + reasoning_content 思考流 + usage 末块。
+- LlmBrain 流式混合策略：JSON 等完整 / 自然语言边收边推 content_delta（真打字机）；ReAct 协议升级"二选一"。
+- `/tasks` 改 worker 线程 + queue + 同步 gen 实时转发（事件循环零阻塞）；run_task 加 sink + 异常 error/done 收尾。
+- 修 multi 子任务事件不进流旧疾（子 emitter→主 emitter，seq 单调）；MarkdownView 流式 80ms 节流。
+- agents.yaml：rag_retrieval 检索上限 2 次（真跑发现过度重试）。
+
+### 验证状态
+- ✅ pytest 121 passed / 3 skipped（+8 流式用例）；前端 tsc/vitest/build 全绿。
+- ✅ 真链路实测：终答 173 个 content_delta 连续 1-2ms 到达（0.87s 打完）。
+
+---
+
+## v1.0.0-p6.2b — 模型注册表扩充（硅基流动渠道）+ backend config 热更卷（2026-10-20）
+
+**类型**：配置
+**Tag 提交**：见 `git show v1.0.0-p6.2b`
+
+### 交付内容
+- models.yaml 新增 deepseek-v3-sf / deepseek-r1-sf（硅基流动渠道 DeepSeek，与官方 key 额度独立互为备份）；对话模型共 7 个。
+- compose backend 挂 `./backend/config:ro`：yaml 配置改完 recreate 即生效，无需重建镜像。
+- 硅基流动 key 注入根 .env / backend/.env（gitignored）；qwen-plus 真调验证通过。
+
+### 验证状态
+- ✅ /models 返回 7 个模型；硅基流动链路真调通过。
+
+---
+
+## v1.0.0-p6.2a — 前端聊天式 UI 改版（参考 RAG 布局）（2026-10-20）
+
+**类型**：前端
+**Tag 提交**：见 `git show v1.0.0-p6.2a`
+
+### 交付内容
+- 布局重构：AppSidebar（会话列表/新会话/用户信息/退出）+ 聊天主区（header/消息流/输入条含模型切换），RAG ChatView 同构布局。
+- 聊天流：用户右气泡 / 助手消息 = 深度思考折叠 + 步骤折叠 + markdown 正文；多轮消息累积（done 固化）。
+- markdown：marked + DOMPurify；`renderMarkdownSmart` 阈值判断——<20k 主线程、≥20k 走 md.worker。
+- 登录页居中卡片；模型切换下拉（暂存 localStorage，后端链路留 p6.5）。
+
+### 验证状态
+- ✅ tsc + vitest 21 + vite build 全绿；容器重建（8080）。
+
+---
+
+## v1.0.0-p6.1 — 登录链路（网关签发 sub=employee_id）+ 前端工作台 + 事件循环阻塞真修（2026-10-20）
+
+**类型**：安全/功能
+**Tag 提交**：见 `git show v1.0.0-p6.1`
+
+### 交付内容
+- user 表加 `employee_id`(UNIQUE)/`role`、删 `kb_role` 借名列；dev 种子 EMP001/dev/Office@2026。
+- 网关登录（认证单点）：POST /api/v1/auth/login（bcryptjs 校验 → 签 JWT sub=employee_id）+ /auth/me。
+- 前端登录页 + token + 401 回登录 + WorkspacePage 真工作台（发真 /tasks）。
+- ⚠️ 真修事件循环阻塞：/tasks 同步 run_task 占死循环 → run_in_threadpool（后为 p6.3 队列管道取代）。
+- compose：backend 注入 DEEPSEEK key + RAG_BASE_URL=host.docker.internal；gateway 注入 GATEWAY_MYSQL_*。
+
+### 验证状态
+- ✅ pytest 113 / jest 33 / vitest 21；容器全链路实测（login→token→/tasks 真检索真引用）。
+- ✅ 手动验证文档：docs/手动验证-p6.1-登录与真链路.md。
+
+---
+
 ## v1.0.0-p5.2 — 文档读取工具 + Demo 页 Agent 身份徽章 + db_query 实库验证（2026-10-20）
 
 **类型**：能力（工具池补全 + 前端可视化）

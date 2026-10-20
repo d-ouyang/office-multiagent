@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -24,6 +25,8 @@ from .agents import build_default_registry, build_registry_for_spec, get_agent_s
 from .brain import make_brain
 from .orchestrator import run_dag
 from .react import run_react
+
+logger = logging.getLogger(__name__)
 
 
 class TaskState(TypedDict, total=False):
@@ -63,9 +66,12 @@ def build_graph(
                 spec_tools,
                 fallback_answer=f"[{st.agent_type}] 完成 {st.intent}",
                 system_prompt=spec.system_prompt,
+                stream=True,
+                on_content=lambda c: emit(emitter.content_delta(c)),
+                on_thought=lambda t: emit(emitter.thinking_delta(t)),
             )
-            em = RunEventEmitter("sub", st.id)
-            return run_react(f"{st.intent} 任务", brain, spec_tools, emitter=em)
+            # 必须用主 emitter：子 emitter 的 seq 独立从 1 开始，会让主事件流 seq 乱序
+            return run_react(f"{st.intent} 任务", brain, spec_tools, emitter=emitter, emit=emit)
 
         return _run
 
@@ -120,6 +126,9 @@ def build_graph(
         emit(emitter.status(agent, "running"))
         brain = make_brain(
             spec_tools, fallback_answer=f"[{agent}] 处理完成", system_prompt=spec.system_prompt,
+            stream=True,  # p6.3：LLM 输出逐字转发（自然语言终答边收边推）
+            on_content=lambda c: emit(emitter.content_delta(c)),
+            on_thought=lambda t: emit(emitter.thinking_delta(t)),
         )
         res = run_react(state["text"], brain, spec_tools, emitter=emitter, emit=emit)
         usage = getattr(brain, "usage", None) or {}
@@ -168,13 +177,22 @@ def run_task(
     user_id: int | None = None,
     estimate: int = 0,
     token_pool: TokenPool | None = None,
+    sink: Callable[[Event], None] | None = None,
 ) -> tuple[dict[str, Any], list[Event]]:
-    """跑一次编排。带 token_pool+user_id 时前置 reserve；余额不足→quota_paused 中断。"""
+    """跑一次编排。带 token_pool+user_id 时前置 reserve；余额不足→quota_paused 中断。
+
+    p6.3：`sink` 每产生一个事件同步回调一次（供 /tasks 实时转发队列）；
+    不传则仅收集到返回的 events 列表（旧行为，测试依赖）。
+    """
     run_id = new_run_id()
     turn_id = new_run_id()
     emitter = RunEventEmitter(run_id, turn_id)
     events: list[Event] = []
-    emit = events.append
+
+    def emit(ev: Event) -> None:
+        events.append(ev)
+        if sink is not None:
+            sink(ev)
 
     checkpointer = MemorySaver() if token_pool is not None else None
     graph = build_graph(emitter, emit, token_pool=token_pool, checkpointer=checkpointer)
@@ -184,7 +202,22 @@ def run_task(
         init["user_id"] = user_id
         init["estimate"] = estimate
 
-    state = graph.invoke(init, cfg)
+    try:
+        state = graph.invoke(init, cfg)
+    except Exception as e:  # noqa: BLE001 - 编排崩溃也要给流一个体面的 done（前端能收尾）
+        logger.exception("编排执行失败 run_id=%s", run_id)
+        emit(emitter.error(f"编排执行失败：{e}"))
+        emit(emitter.done("failed"))
+        return (
+            {
+                "run_id": run_id,
+                "thread_id": run_id,
+                "status": "failed",
+                "route": None,
+                "result": "",
+            },
+            events,
+        )
 
     if "__interrupt__" in state:
         payload = state["__interrupt__"][0].value if state["__interrupt__"] else {}

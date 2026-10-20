@@ -3,7 +3,7 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.core.llm import LlmError, LlmNotConfigured, chat, resolve_model
+from app.core.llm import LlmError, LlmNotConfigured, chat, chat_stream, resolve_model
 
 
 def test_resolve_model_ok(monkeypatch):
@@ -69,4 +69,72 @@ def test_chat_malformed_payload_raises(monkeypatch):
             "deepseek-chat",
             [{"role": "user", "content": "hi"}],
             transport=httpx.MockTransport(_handler(200, {"unexpected": True})),
+        )
+
+
+# ---------- p6.3 流式 ----------
+class _IterStream(httpx.SyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._it = iter(chunks)
+
+    def __iter__(self):
+        return self._it
+
+
+def _sse(lines: list[str]) -> httpx.Response:
+    body = "".join(f"data: {line}\n\n" for line in lines).encode()
+    return httpx.Response(
+        200, headers={"content-type": "text/event-stream"}, stream=_IterStream([body])
+    )
+
+
+def test_chat_stream_chunks_and_usage(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    got: list[str] = []
+    res = chat_stream(
+        "deepseek-chat",
+        [{"role": "user", "content": "hi"}],
+        on_chunk=got.append,
+        transport=httpx.MockTransport(
+            lambda req: _sse([
+                '{"choices":[{"delta":{"content":"你好"}}]}',
+                '{"choices":[{"delta":{"content":"呀"}}]}',
+                '{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}',
+                "[DONE]",
+            ])
+        ),
+    )
+    assert got == ["你好", "呀"]
+    assert res.content == "你好呀"
+    assert (res.total_tokens, res.prompt_tokens, res.completion_tokens) == (15, 10, 5)
+    assert res.model == "deepseek-chat"
+
+
+def test_chat_stream_reasoning_content(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    thoughts: list[str] = []
+    chat_stream(
+        "deepseek-chat",
+        [{"role": "user", "content": "hi"}],
+        on_thought=thoughts.append,
+        transport=httpx.MockTransport(
+            lambda req: _sse([
+                '{"choices":[{"delta":{"reasoning_content":"先想一下"}}]}',
+                '{"choices":[{"delta":{"content":"答案"}}]}',
+                "[DONE]",
+            ])
+        ),
+    )
+    assert thoughts == ["先想一下"]
+
+
+def test_chat_stream_non_200_raises(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    with pytest.raises(LlmError, match="500"):
+        chat_stream(
+            "deepseek-chat",
+            [{"role": "user", "content": "hi"}],
+            transport=httpx.MockTransport(
+                lambda req: httpx.Response(500, stream=_IterStream([b"boom"]))
+            ),
         )

@@ -79,24 +79,44 @@ async def tasks_stream(body: TaskRequest):
 
     带 user_id 时前置 token 池 reserve（p4.2）：余额不足→quota_paused 中断；
     完成 settle。受网关 JWT 保护。
+
+    p6.3 真流式管道：编排在 worker 线程里跑，事件经 sink 实时推 queue，
+    同步 gen 从 queue 逐条 yield（Starlette 自动丢线程池消费，事件循环不阻塞）；
+    LLM 的每个生成 chunk 即时变成 content_delta/thinking_delta 到前端（打字机）。
     """
-    from starlette.concurrency import run_in_threadpool
+    import logging
+    import queue as _queue
+    import threading
 
     from ..core.db import get_engine
     from ..core.token_pool import TokenPool
     from ..orchestration.graph import run_task
 
+    logger = logging.getLogger(__name__)
     pool = TokenPool(get_engine()) if body.user_id is not None else None
-    # ⚠️ run_task 是同步长任务（LangGraph + 同步 LLM 调用，可达分钟级）。
-    # p6.1 真修：必须丢线程池，否则整个事件循环被阻塞——表现为 /tasks 期间
-    # /health 一并超时、Docker healthcheck 打 unhealthy、后续请求全部排队卡死。
-    # （宿主单请求时侥幸只表现为"响应慢"，容器+客户端断开+重试堆积后必现卡死。）
-    _result, events = await run_in_threadpool(
-        run_task, body.text, user_id=body.user_id, estimate=body.estimate, token_pool=pool
-    )
+    q: _queue.Queue = _queue.Queue()
+
+    def worker() -> None:
+        try:
+            run_task(
+                body.text,
+                user_id=body.user_id,
+                estimate=body.estimate,
+                token_pool=pool,
+                sink=q.put,
+            )
+        except Exception:  # noqa: BLE001 - worker 兜底：流以 None 收尾，异常进日志
+            logger.exception("run_task worker 异常")
+        finally:
+            q.put(None)  # 哨兵：流结束
+
+    threading.Thread(target=worker, daemon=True, name="run_task").start()
 
     def gen():
-        for ev in events:
+        while True:
+            ev = q.get()
+            if ev is None:
+                break
             yield encode_line(ev)
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
