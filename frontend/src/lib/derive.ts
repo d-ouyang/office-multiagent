@@ -75,3 +75,33 @@ export function deriveSources(events: StreamEvent[]): Array<{ source_id: string;
       url: e.data.url ? String(e.data.url) : undefined,
     }));
 }
+
+/** planner / orchestrator 是编排角色，不是"回答者"——徽章只认业务 Agent。 */
+const META_AGENTS = new Set(['planner', 'orchestrator']);
+
+/** agent_type → 中文展示名（与 config/agents.yaml 的 name 对应，前端静态映射）。 */
+const AGENT_LABELS: Record<string, string> = {
+  general: '通用办公 Agent',
+  rag_retrieval: '知识库问答 Agent',
+  data_analysis: '数据分析 Agent',
+  data_cleaning: '数据清洗 Agent',
+  report_generation: '报表生成 Agent',
+  visualization: '图表可视化 Agent',
+  image_restore: '图像修复 Agent',
+};
+
+export function agentLabel(agent: string): string {
+  return AGENT_LABELS[agent] ?? agent;
+}
+
+/** 最近一次出现过的业务 Agent（status 事件；running/done 都算"本次回答者"）。 */
+export function deriveCurrentAgent(events: StreamEvent[]): { agent: string; state: string } | null {
+  let current: { agent: string; state: string } | null = null;
+  for (const ev of events) {
+    if (ev.type !== 'status') continue;
+    const agent = String(ev.data.agent ?? '');
+    if (!agent || META_AGENTS.has(agent)) continue;
+    current = { agent, state: String(ev.data.state ?? '') };
+  }
+  return current;
+}

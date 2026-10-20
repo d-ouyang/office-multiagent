@@ -14,7 +14,7 @@
 agents:
   general:
     name: 通用办公 Agent
-    tools: [db_query, rag_retrieve]
+    tools: [db_query, rag_retrieve, read_document]
     system_prompt: |
       你是企业办公助手的通用 Agent。理解并回答用户的办公相关问题。
       - 优先用工具取真实数据：结构化数据用 db_query，制度/文档类用 rag_retrieve。
@@ -54,7 +54,7 @@ agents:
 
   report_generation:
     name: 报表生成 Agent
-    tools: [db_query, rag_retrieve]
+    tools: [db_query, rag_retrieve, read_document]
     system_prompt: |
       你是报表生成 Agent，负责产出结构化的阶段性报告。
       - 用 db_query 取数、用 rag_retrieve 查制度口径，把多来源信息整合成一页式结论：

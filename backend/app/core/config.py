@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     rag_service_username: str = "office-service"  # 注入 X-Username（须能在 RAG user 表解析）
     # db_query 工具护栏：强制 LIMIT 行数上限
     db_query_max_rows: int = 50
+    # read_document 工具：文档目录（工具只能读该目录内文件，防路径穿越）与单次返回字符上限
+    documents_dir: str = "data/upload"
+    doc_read_max_chars: int = 8000
 
     # ---- 连接层加固（p1.2a）----
     mysql_pool_size: int = 5

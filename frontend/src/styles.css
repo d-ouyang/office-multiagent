@@ -74,6 +74,20 @@ button:disabled {
   border-color: var(--err);
 }
 
+/* p5.2：当前回答 Agent 徽章 */
+.agent-now {
+  font-size: 13px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.badge.agent {
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 500;
+}
+
 .timeline {
   display: flex;
   flex-direction: column;

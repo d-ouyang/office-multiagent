@@ -117,6 +117,8 @@ async def demo_stream():
         yield em.observation("t1", "找到 3 条结果（此处为截断演示）", truncated=True, total=3)
         yield em.tool_call_end("t1", "web_search", success=True, duration_ms=120)
         yield em.status("planner", "running", subtask_id="sub-1")
+        # p5.2：业务 Agent 身份事件（前端"当前回答 Agent"徽章的数据源）
+        yield em.status("rag_retrieval", "running")
         yield em.content_delta("这是给用户的正文流。")
         yield em.artifact("a1", "excel", "http://localhost:8000/assets/a1.xlsx", "报表.xlsx")
         yield em.source("s1", "web_url", "ref-1", "参考资料", "http://example.com")

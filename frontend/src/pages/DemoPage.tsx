@@ -1,9 +1,11 @@
 // 演示页：拉 /api/v1/demo/stream（经网关白名单透传）渲染执行过程。
 import EventTimeline from '../components/EventTimeline';
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
+import { agentLabel, deriveCurrentAgent } from '../lib/derive';
 
 export function DemoPage() {
   const { events, status, error, start, stop } = useNdjsonStream('/api/v1/demo/stream');
+  const currentAgent = deriveCurrentAgent(events);
   return (
     <div className="page">
       <header>
@@ -18,6 +20,11 @@ export function DemoPage() {
           中断
         </button>
         <span className={`badge ${status}`}>{status}</span>
+        {currentAgent && (
+          <span className="agent-now">
+            当前回答：<span className="badge agent">{agentLabel(currentAgent.agent)}</span>
+          </span>
+        )}
       </div>
       {error && <div className="banner err">{error}</div>}
       <EventTimeline events={events} isStreaming={status === 'streaming'} />

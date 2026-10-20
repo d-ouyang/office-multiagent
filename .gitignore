@@ -31,3 +31,5 @@ chroma_data/
 # ---- 测试产物 ----
 .coverage
 htmlcov/
+.pytest_tmp/
+backend/data/

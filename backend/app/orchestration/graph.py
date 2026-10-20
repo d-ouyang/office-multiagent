@@ -116,6 +116,8 @@ def build_graph(
         # p5.1b：按 AgentSpec 装配（角色提示词 + 工具白名单）；无 key 回落 StubBrain（基线不变）
         spec = get_agent_spec(agent)
         spec_tools = build_registry_for_spec(spec, tools)
+        # p5.2：向流上暴露"当前是谁在回答"（前端 Agent 徽章的数据源）
+        emit(emitter.status(agent, "running"))
         brain = make_brain(
             spec_tools, fallback_answer=f"[{agent}] 处理完成", system_prompt=spec.system_prompt,
         )

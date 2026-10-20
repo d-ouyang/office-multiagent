@@ -21,6 +21,7 @@ from sqlalchemy.engine import Engine
 from ..core.config import settings
 from .tools import ToolRegistry
 from .tools_db import make_db_query_tool
+from .tools_doc import make_read_document_tool
 from .tools_rag import make_rag_retrieve_tool
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,17 @@ def build_default_registry(engine: Engine | None) -> ToolRegistry:
         description=(
             "检索公司知识库（制度/文档问答），返回答案与来源清单。参数: query（检索问题）。"
             "适用于查公司制度、流程、文档内容等非结构化知识。"
+        ),
+    )
+    reg.register(
+        "read_document",
+        make_read_document_tool(
+            base_dir=settings.documents_dir, max_chars=settings.doc_read_max_chars
+        ),
+        description=(
+            "读取文档目录内指定文件的全文（支持 .md/.txt/.pdf），返回文本内容与字数。"
+            "参数: file_name（文档目录内的文件名，如 handbooks/leave.md）。"
+            "适用于需要引用某份文档原文/做摘要的场景。"
         ),
     )
     return reg

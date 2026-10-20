@@ -5,6 +5,27 @@
 
 ---
 
+## v1.0.0-p5.2 — 文档读取工具 + Demo 页 Agent 身份徽章 + db_query 实库验证（2026-10-20）
+
+**类型**：能力（工具池补全 + 前端可视化）
+**Tag 提交**：见 `git show v1.0.0-p5.2`
+
+### 交付内容
+- `read_document` 工具：路径穿越护栏 + 格式白名单（.md/.txt/.pdf）+ 截断如实标注。
+- Demo 页"当前回答 Agent"徽章：single_node 发业务 Agent status 事件，前端 derive 派生 + 中文映射。
+- compose backend 挂只读文档卷；pytest basetemp 固化项目内。
+
+### 验证状态
+- ✅ pytest 113 passed / 3 skipped；前端 vitest 21 passed + tsc + vite build。
+- ✅ 真 LLM 端到端：读文档任务 → Brain 调 read_document → 总结要点；徽章事件真流验证。
+- ✅ db_query 实库（容器内真 MySQL）：user 表真实结构与种子行、DROP 被拒、错列名如实上抛。
+- ✅ 容器内 read_document 读挂载卷 ✅。
+
+### 下一步
+前端登录态 /tasks 打通；文档上传入口；multi 可视化细化。
+
+---
+
 ## v1.0.0-p5.1b — 业务 Agent 提示词化 + 真 LLM 端到端（2026-10-19，Phase 5）
 
 **类型**：能力（办公能力池 · Agent 层）
