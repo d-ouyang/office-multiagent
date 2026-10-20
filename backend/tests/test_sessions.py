@@ -118,3 +118,46 @@ def test_quota_endpoint(client):
 
 def test_quota_requires_token(client):
     assert client.get("/api/v1/quota").status_code == 401
+
+
+# ---------- p6.5 模型选择 ----------
+def test_update_session_model_flow(client):
+    sid = client.post("/api/v1/sessions", json={}, headers=_auth(_token())).json()["session_id"]
+    # 未知模型 → 400（fail-closed）
+    r = client.patch(f"/api/v1/sessions/{sid}", json={"model": "no-such"}, headers=_auth(_token()))
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "BAD_MODEL"
+    # 合法模型 → ok
+    r = client.patch(f"/api/v1/sessions/{sid}", json={"model": "qwen-plus"}, headers=_auth(_token()))
+    assert r.status_code == 200
+    from app.core.db import get_engine
+    from app.core.session_repo import SessionRepo
+
+    assert SessionRepo(get_engine()).get_session_model(sid) == "qwen-plus"
+
+
+def test_tasks_rejects_unknown_model(client):
+    r = client.post(
+        "/api/v1/tasks",
+        json={"text": "hi", "model": "no-such"},
+        headers=_auth(_token()),
+    )
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "BAD_MODEL"
+
+
+def test_run_task_passes_model_to_brain(monkeypatch):
+    # p6.5：run_task(model=...) 必须透传到 single_node 的 make_brain
+    import app.orchestration.graph as graph_mod
+    from app.orchestration.react import AgentResult
+
+    captured: dict = {}
+    real_make_brain = graph_mod.make_brain
+
+    def spy_make_brain(tools, **kwargs):
+        captured.update(kwargs)
+        return real_make_brain(tools, **kwargs)
+
+    monkeypatch.setattr(graph_mod, "make_brain", spy_make_brain)
+    monkeypatch.setattr(graph_mod, "build_default_registry", lambda engine: __import__("app.orchestration.tools", fromlist=["ToolRegistry"]).ToolRegistry())
+    result, events = graph_mod.run_task("查年假", model="qwen-plus")
+    assert captured.get("model_id") == "qwen-plus"
+    assert result["status"] == "done"
