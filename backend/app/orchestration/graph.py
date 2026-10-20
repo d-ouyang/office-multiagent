@@ -45,6 +45,7 @@ class TaskState(TypedDict, total=False):
     status: str
     tokens_used: int
     result: str
+    model: str | None            # p6.5：本次任务的对话模型（优先级：请求>会话>默认）
 
 
 def build_graph(
@@ -57,7 +58,7 @@ def build_graph(
     """构建编排图。token_pool 提供时前置 quota 门（reserve + 中断续跑）。"""
     tools = build_default_registry(get_engine())  # p5.1a：真实工具（db_query / rag_retrieve）
 
-    def spec_agent_runner(base):
+    def spec_agent_runner(base, state):
         """multi 的子任务执行器：按子任务 agent_type 取 AgentSpec（角色提示词+工具白名单）。"""
 
         def _run(st):
@@ -67,6 +68,7 @@ def build_graph(
                 spec_tools,
                 fallback_answer=f"[{st.agent_type}] 完成 {st.intent}",
                 system_prompt=spec.system_prompt,
+                model_id=state.get("model"),  # p6.5：子任务跟随任务级模型选择
                 stream=True,
                 on_content=lambda c: emit(emitter.content_delta(c)),
                 on_thought=lambda t: emit(emitter.thinking_delta(t)),
@@ -127,6 +129,7 @@ def build_graph(
         emit(emitter.status(agent, "running"))
         brain = make_brain(
             spec_tools, fallback_answer=f"[{agent}] 处理完成", system_prompt=spec.system_prompt,
+            model_id=state.get("model"),  # p6.5：用户选择的模型（None→settings 默认）
             stream=True,  # p6.3：LLM 输出逐字转发（自然语言终答边收边推）
             on_content=lambda c: emit(emitter.content_delta(c)),
             on_thought=lambda t: emit(emitter.thinking_delta(t)),
@@ -148,7 +151,7 @@ def build_graph(
                 for s in state.get("dag", {}).get("subtasks", [])
             ]
         )
-        results = run_dag(dag, emitter=emitter, emit=emit, agent_runner=spec_agent_runner(tools))
+        results = run_dag(dag, emitter=emitter, emit=emit, agent_runner=spec_agent_runner(tools, state))
         summary = "；".join(f"{k}:{v.final}" for k, v in results.items())
         emit(emitter.content_delta(f"多 Agent 汇总 → {summary}"))
         emit(emitter.status("orchestrator", "done"))
@@ -179,11 +182,13 @@ def run_task(
     estimate: int = 0,
     token_pool: TokenPool | None = None,
     sink: Callable[[Event], None] | None = None,
+    model: str | None = None,
 ) -> tuple[dict[str, Any], list[Event]]:
     """跑一次编排。带 token_pool+user_id 时前置 reserve；余额不足→quota_paused 中断。
 
     p6.3：`sink` 每产生一个事件同步回调一次（供 /tasks 实时转发队列）；
     不传则仅收集到返回的 events 列表（旧行为，测试依赖）。
+    p6.5：`model` 指定本次对话模型（None→settings.llm_brain_model）。
     """
     run_id = new_run_id()
     turn_id = new_run_id()
@@ -198,7 +203,7 @@ def run_task(
     checkpointer = MemorySaver() if token_pool is not None else None
     graph = build_graph(emitter, emit, token_pool=token_pool, checkpointer=checkpointer)
     cfg = {"configurable": {"thread_id": run_id}}
-    init: dict[str, Any] = {"text": text, "run_id": run_id, "turn_id": turn_id}
+    init: dict[str, Any] = {"text": text, "run_id": run_id, "turn_id": turn_id, "model": model}
     if user_id is not None:
         init["user_id"] = user_id
         init["estimate"] = estimate
@@ -245,7 +250,8 @@ def run_task(
     if token_pool is not None and user_id is not None:
         actual = int(state.get("tokens_used", 0))
         token_pool.settle(
-            user_id, estimate, actual, task_id=run_id, model=settings.llm_brain_model
+            user_id, estimate, actual, task_id=run_id,
+            model=state.get("model") or settings.llm_brain_model,  # p6.4/p6.5：落账记实际模型
         )
     emit(emitter.done(state.get("route", "single")))
     return (

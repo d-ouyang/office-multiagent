@@ -31,6 +31,20 @@ class SessionRepo:
             )
         return sid
 
+    def update_session_model(self, session_id: str, model: str | None) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(
+                text("UPDATE session SET model = :m WHERE id = :i"),
+                {"i": session_id, "m": model},
+            )
+
+    def get_session_model(self, session_id: str) -> str | None:
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT model FROM session WHERE id = :i"), {"i": session_id}
+            ).first()
+        return row[0] if row else None
+
     def session_belongs_to(self, session_id: str, user_id: int) -> bool:
         with self.engine.connect() as conn:
             row = conn.execute(
