@@ -121,6 +121,20 @@ def session_messages(session_id: str, authorization: str | None = Header(default
     return {"messages": repo.list_messages(session_id)}
 
 
+@router.get("/quota")
+def my_quota(authorization: str | None = Header(default=None)):
+    """p6.4：我的 token 余额 + 最近流水（§十四 两段式结算的账本）。"""
+    user = _current_user(authorization)
+    from ..core.db import get_engine
+    from ..core.token_pool import TokenPool
+
+    pool = TokenPool(get_engine())
+    return {
+        "balance": pool.balance(user["id"]),
+        "ledger": pool.recent(user["id"], limit=10),
+    }
+
+
 @router.post("/tasks")
 async def tasks_stream(body: TaskRequest, authorization: str | None = Header(default=None)):
     """跑一次编排并以 NDJSON 流式返回事件（planner→路由→Agent→done）。
@@ -153,15 +167,19 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
     else:
         session_id = repo.create_session(user["id"], body.model if hasattr(body, "model") else None)
 
-    pool = TokenPool(get_engine()) if body.user_id is not None else None
+    # p6.4：token 池真账——用户 id 取自登录身份（body.user_id 仅测试覆盖用），
+    # estimate 用默认门槛值（真实用量在 settle 时补差，§十四 两段式）
+    pool = TokenPool(get_engine())
+    effective_user_id = body.user_id if body.user_id is not None else user["id"]
+    estimate = body.estimate or settings.token_estimate_default
     q: _queue.Queue = _queue.Queue()
 
     def worker() -> None:
         try:
             result, _events = run_task(
                 body.text,
-                user_id=body.user_id,
-                estimate=body.estimate,
+                user_id=effective_user_id,
+                estimate=estimate,
                 token_pool=pool,
                 sink=q.put,
             )

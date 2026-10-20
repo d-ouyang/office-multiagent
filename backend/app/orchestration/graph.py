@@ -15,6 +15,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 from typing_extensions import TypedDict
 
+from ..core.config import settings
 from ..core.decomposer import DAG, Subtask, decompose
 from ..core.events import Event, RunEventEmitter, new_run_id
 from ..core.planner import Plan, plan as run_plan
@@ -243,7 +244,9 @@ def run_task(
     # 正常完成 → settle（actual=真实 LLM 用量；StubBrain 基线为 0，全额退回预扣）
     if token_pool is not None and user_id is not None:
         actual = int(state.get("tokens_used", 0))
-        token_pool.settle(user_id, estimate, actual, task_id=run_id)
+        token_pool.settle(
+            user_id, estimate, actual, task_id=run_id, model=settings.llm_brain_model
+        )
     emit(emitter.done(state.get("route", "single")))
     return (
         {

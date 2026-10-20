@@ -7,16 +7,23 @@ import ChatMessage, { type ChatMessageData } from '../components/ChatMessage';
 import ModelPicker from '../components/ModelPicker';
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import { deriveCurrentAgent, agentLabel } from '../lib/derive';
-import { authHeaders, clearToken, createSession, getMessages, listSessions } from '../lib/api';
+import { authHeaders, clearToken, createSession, getMessages, getQuota, listSessions } from '../lib/api';
 
 export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const { events, status, error, start, stop, reset } = useNdjsonStream('/api/v1/demo/stream');
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [currentId, setCurrentId] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
+  const [balance, setBalance] = useState<number | null>(null);
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const sealedRef = useRef(false);
+
+  const refreshQuota = useCallback(() => {
+    getQuota()
+      .then((q) => setBalance(q.balance))
+      .catch(() => {});
+  }, []);
 
   const ensureSession = useCallback(async (): Promise<string> => {
     if (currentId) return currentId;
@@ -29,6 +36,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
   // 初始加载会话列表；无会话则先建一个（避免用户第一句话才建）
   useEffect(() => {
     (async () => {
+      refreshQuota(); // p6.4：侧栏余额
       try {
         const list = await listSessions();
         if (!list.length) {
@@ -67,16 +75,17 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     }
   }, [status, stop, reset, onLogout]);
 
-  // 流结束 → 当前流已由后端落库；刷新列表标题即可，本地不再固化（防重复）
+  // 流结束 → 当前流已由后端落库；刷新列表标题 + 余额（p6.4）即可，本地不再固化（防重复）
   useEffect(() => {
     if (status === 'done' && events.length && !sealedRef.current) {
       sealedRef.current = true;
       listSessions()
         .then((list) => setSessions(list.map((s) => ({ id: s.session_id, title: s.title, updatedAt: Date.now() }))))
         .catch(() => {});
+      refreshQuota();
       reset();
     }
-  }, [status, events, reset]);
+  }, [status, events, reset, refreshQuota]);
 
   // 自动滚底
   useEffect(() => {
@@ -128,6 +137,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
   );
 
   const currentAgent = deriveCurrentAgent(events);
+  const quotaPaused = events.some((e) => e.type === 'quota_paused');
 
   return (
     <div className="app-shell">
@@ -137,6 +147,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
         onSelect={(id) => void selectSession(id)}
         onNew={() => void newChat()}
         user={user}
+        balance={balance}
         onLogout={() => {
           if (status === 'streaming') stop();
           onLogout();
@@ -162,6 +173,11 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
             <ChatMessage key={i} msg={m} />
           ))}
         </div>
+        {quotaPaused && (
+          <div className="banner warn">
+            token 余额不足，任务已暂停（充值后自动继续，或联系管理员）。
+          </div>
+        )}
         {error && <div className="banner err">{error}</div>}
         <footer className="input-bar">
           <ModelPicker />

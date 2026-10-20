@@ -78,6 +78,16 @@ export async function getMessages(sessionId: string): Promise<Array<{ role: stri
   return data.messages ?? [];
 }
 
+/** p6.4：我的 token 余额与流水。 */
+export async function getQuota(): Promise<{ balance: number; ledger: Array<Record<string, unknown>> }> {
+  const res = await fetch('/api/v1/quota', { headers: authHeaders() });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  return res.json();
+}
+
 /** 登录态检查（/auth/me）：有效返回用户，无效/未登录清 token 返回 null。 */
 export async function checkSession(): Promise<LoginUser | null> {
   const t = getToken();

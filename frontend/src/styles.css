@@ -513,3 +513,11 @@ button.ghost {
   padding: 8px 12px;
   font-size: 13px;
 }
+.banner.warn {
+  margin: 0 20px;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+}

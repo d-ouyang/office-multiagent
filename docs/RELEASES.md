@@ -5,6 +5,25 @@
 
 ---
 
+## v1.0.0-p6.4 — token 池真账 + /quota（2026-10-20）
+
+**类型**：功能（计费闭环）
+**Tag 提交**：见 `git show v1.0.0-p6.4`
+
+### 交付内容
+- /tasks 按登录身份 reserve/settle（estimate 默认门槛 2000 + settle 真实补差，§十四 两段式闭环）。
+- TokenPool.recent + GET /api/v1/quota（余额+流水，登录保护）；钱包种子 100000；settle 落账带 model。
+- 前端：侧栏余额展示 + done 刷新 + quota_paused 警告条。
+
+### 验证状态
+- ✅ pytest 129 passed / 3 skipped（+2）；前端全绿。
+- ✅ 真链路：100000 → 真 LLM 任务（真扣 3011）→ 96989，ledger 两行配对吻合。
+
+### 下一步
+p6.5 模型选择真正生效。
+
+---
+
 ## v1.0.0-p6.2c — 会话持久化 API + 身份解析（2026-10-20）
 
 **类型**：功能（会话层）

@@ -23,7 +23,10 @@ def engine():
         c.execute(text("CREATE TABLE session (id TEXT PRIMARY KEY, user_id INTEGER, model TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE task (id TEXT PRIMARY KEY, session_id TEXT, complexity INTEGER, status TEXT DEFAULT 'pending', text TEXT, result TEXT, tokens_used INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        c.execute(text("CREATE TABLE wallet (user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0)"))
+        c.execute(text("CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("INSERT INTO `user` (id, employee_id, username, role, model_pool_id) VALUES (1,'EMP001','dev','admin',3)"))
+        c.execute(text("INSERT INTO wallet (user_id, balance) VALUES (1, 100000)"))
     return eng
 
 
@@ -103,3 +106,15 @@ def test_session_messages_cross_user_404(client):
     other_sid = SessionRepo(get_engine()).create_session(2)
     r = client.get(f"/api/v1/sessions/{other_sid}/messages", headers=_auth(_token()))
     assert r.status_code == 404
+
+
+def test_quota_endpoint(client):
+    # p6.4：/quota 返回余额与流水（种子 100000，暂无流水）
+    r = client.get("/api/v1/quota", headers=_auth(_token()))
+    assert r.status_code == 200
+    assert r.json()["balance"] == 100000
+    assert r.json()["ledger"] == []
+
+
+def test_quota_requires_token(client):
+    assert client.get("/api/v1/quota").status_code == 401

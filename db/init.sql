@@ -149,3 +149,6 @@ INSERT IGNORE INTO `pool_model` (`pool_id`, `model_name`) VALUES
 -- dev 种子：密码 Office@2026（bcrypt cost12，仅本地开发；生产改密/换 hash）
 INSERT IGNORE INTO `user` (`id`, `employee_id`, `username`, `password_hash`, `role`, `model_pool_id`) VALUES
   (1, 'EMP001', 'dev', '$2b$12$bKWdpuPQGPIxCXoWyzhHaeVlvkE3eRXiiuH2Gqp6VOJDrFcVwrJrS', 'admin', 3);
+
+-- token 池种子（p6.4）：dev 用户初始额度 100000（生产按需调整）
+INSERT IGNORE INTO `wallet` (`user_id`, `balance`) VALUES (1, 100000);

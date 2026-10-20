@@ -31,6 +31,27 @@ class TokenPool:
             ).first()
             return int(row[0]) if row else 0
 
+    def recent(self, user_id: int, limit: int = 10) -> list[dict]:
+        """最近流水（p6.4 /quota 展示用）。"""
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, task_id, model, reserve, settle, created_at "
+                    "FROM token_ledger WHERE user_id=:u ORDER BY id DESC LIMIT :l"
+                ),
+                {"u": user_id, "l": limit},
+            ).mappings().all()
+        return [
+            {
+                "task_id": r["task_id"],
+                "model": r["model"],
+                "reserve": r["reserve"],
+                "settle": r["settle"],
+                "created_at": str(r["created_at"]),
+            }
+            for r in rows
+        ]
+
     def reserve(
         self,
         user_id: int,

@@ -17,6 +17,7 @@ export function AppSidebar(props: {
   onSelect: (id: string) => void;
   onNew: () => void;
   user: SessionUser;
+  balance?: number | null;   // p6.4：token 余额
   onLogout: () => void;
 }) {
   return (
@@ -47,6 +48,7 @@ export function AppSidebar(props: {
           <div className="user-name">{props.user.username}</div>
           <div className="user-meta">
             {props.user.employee_id} · {props.user.role}
+            {props.balance != null && <> · 余额 {props.balance.toLocaleString()}</>}
           </div>
         </div>
         <button className="logout" onClick={props.onLogout} title="退出登录">

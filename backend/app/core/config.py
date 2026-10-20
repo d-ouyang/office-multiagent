@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # read_document 工具：文档目录（工具只能读该目录内文件，防路径穿越）与单次返回字符上限
     documents_dir: str = "data/upload"
     doc_read_max_chars: int = 8000
+    # token 池（§十四）：/tasks 默认预扣估算（LLM 用量事前估不准，用门槛值兜底；
+    # settle 时按真实 usage 补差）
+    token_estimate_default: int = 2000
 
     # ---- 连接层加固（p1.2a）----
     mysql_pool_size: int = 5
