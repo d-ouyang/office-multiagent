@@ -45,9 +45,22 @@ CREATE TABLE IF NOT EXISTS `task` (
   `session_id`  VARCHAR(64) NOT NULL,
   `complexity`  TINYINT     NULL,
   `status`      VARCHAR(32) NOT NULL DEFAULT 'pending',  -- pending/running/paused_insufficient_quota/done/failed
+  `text`        MEDIUMTEXT  NULL,                        -- p6.2c：用户输入原文
+  `result`      MEDIUMTEXT  NULL,                        -- p6.2c：助手终答
+  `tokens_used` BIGINT      NULL,                        -- p6.2c：实际 token 用量
   `created_at`  DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   KEY `idx_task_session` (`session_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `message` (
+  `id`         BIGINT      NOT NULL AUTO_INCREMENT,
+  `session_id` VARCHAR(64) NOT NULL,
+  `role`       VARCHAR(16) NOT NULL,                    -- user/assistant
+  `content`    MEDIUMTEXT  NOT NULL,
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  KEY `idx_message_session` (`session_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `subtask` (

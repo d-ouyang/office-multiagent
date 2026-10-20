@@ -1,7 +1,9 @@
 """API 路由：/health 联动探测、/models 模型注册表、/plan 规划路由、/internal/auth/ping 内部鉴权自检、/demo/stream NDJSON 示例。"""
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from typing import Any
 
 from ..core import chroma_client, db, redis_client
 from ..core.config import settings
@@ -71,15 +73,63 @@ class TaskRequest(BaseModel):
     text: str
     user_id: int | None = None   # 提供则走 token 池 reserve/settle（§十四）
     estimate: int = 0            # 本次任务 token 预扣估算
+    session_id: str | None = None  # p6.2c：会话 id（不传则按登录身份自动新建）
+
+
+class CreateSessionRequest(BaseModel):
+    model: str | None = None     # p6.2c：会话默认模型（§十三，p6.5 生效）
+
+
+def _current_user(authorization: str | None) -> dict[str, Any]:
+    """p6.2c：从 Bearer token 解析身份；fail-closed 401。"""
+    from ..core.identity import resolve_user
+
+    user = resolve_user(authorization)
+    if user is None:
+        raise HTTPException(401, detail={"code": "UNAUTHORIZED", "message": "未登录或登录态无效"})
+    return user
+
+
+@router.post("/sessions")
+def create_session(body: CreateSessionRequest, authorization: str | None = Header(default=None)):
+    """建会话（按登录身份）。"""
+    user = _current_user(authorization)
+    from ..core.session_repo import SessionRepo
+
+    sid = SessionRepo().create_session(user["id"], body.model)
+    return {"session_id": sid}
+
+
+@router.get("/sessions")
+def list_sessions(authorization: str | None = Header(default=None)):
+    """我的会话列表（title=首条用户消息前 20 字）。"""
+    user = _current_user(authorization)
+    from ..core.session_repo import SessionRepo
+
+    return {"sessions": SessionRepo().list_sessions(user["id"])}
+
+
+@router.get("/sessions/{session_id}/messages")
+def session_messages(session_id: str, authorization: str | None = Header(default=None)):
+    """会话历史消息（归属校验：防越权读别人的会话）。"""
+    user = _current_user(authorization)
+    from ..core.session_repo import SessionRepo
+
+    repo = SessionRepo()
+    if not repo.session_belongs_to(session_id, user["id"]):
+        raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"})
+    return {"messages": repo.list_messages(session_id)}
 
 
 @router.post("/tasks")
-async def tasks_stream(body: TaskRequest):
+async def tasks_stream(body: TaskRequest, authorization: str | None = Header(default=None)):
     """跑一次编排并以 NDJSON 流式返回事件（planner→路由→Agent→done）。
 
     带 user_id 时前置 token 池 reserve（p4.2）：余额不足→quota_paused 中断；
     完成 settle。受网关 JWT 保护。
 
+    p6.2c：按登录身份落库——session（不传则自动新建）+ 本轮 user/assistant 消息
+    + task 记录（run_id/终答/用量）。
     p6.3 真流式管道：编排在 worker 线程里跑，事件经 sink 实时推 queue，
     同步 gen 从 queue 逐条 yield（Starlette 自动丢线程池消费，事件循环不阻塞）；
     LLM 的每个生成 chunk 即时变成 content_delta/thinking_delta 到前端（打字机）。
@@ -89,21 +139,42 @@ async def tasks_stream(body: TaskRequest):
     import threading
 
     from ..core.db import get_engine
+    from ..core.session_repo import SessionRepo
     from ..core.token_pool import TokenPool
     from ..orchestration.graph import run_task
 
     logger = logging.getLogger(__name__)
+    user = _current_user(authorization)  # fail-closed：无有效身份不跑任务
+    repo = SessionRepo(get_engine())
+    session_id = body.session_id
+    if session_id:
+        if not repo.session_belongs_to(session_id, user["id"]):
+            raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"})
+    else:
+        session_id = repo.create_session(user["id"], body.model if hasattr(body, "model") else None)
+
     pool = TokenPool(get_engine()) if body.user_id is not None else None
     q: _queue.Queue = _queue.Queue()
 
     def worker() -> None:
         try:
-            run_task(
+            result, _events = run_task(
                 body.text,
                 user_id=body.user_id,
                 estimate=body.estimate,
                 token_pool=pool,
                 sink=q.put,
+            )
+            # p6.2c：落库（user 消息 + assistant 终答 + task 记录）
+            repo.append_message(session_id, "user", body.text)
+            repo.append_message(session_id, "assistant", result.get("result", ""))
+            repo.record_task(
+                result.get("run_id", ""),
+                session_id,
+                body.text,
+                result.get("result", ""),
+                int(result.get("tokens_used", 0)),
+                str(result.get("status", "done")),
             )
         except Exception:  # noqa: BLE001 - worker 兜底：流以 None 收尾，异常进日志
             logger.exception("run_task worker 异常")

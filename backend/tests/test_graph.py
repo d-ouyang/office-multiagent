@@ -36,10 +36,35 @@ def test_events_roundtrip_through_ndjson():
         assert parse_line(__import__("json").dumps(ev.model_dump(mode="json"))) is not None
 
 
-def test_tasks_endpoint_streams_ndjson():
+def test_tasks_endpoint_streams_ndjson(monkeypatch):
     # 真实 HTTP 层回归：/tasks 必须逐行吐出 NDJSON（曾漏 import encode_line 被实跑抓到）
+    # p6.2c：/tasks 强制登录身份（落库需要 user.id）——这里自签 token + sqlite 内存库
+    import jwt as pyjwt
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.pool import StaticPool
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "jwt_secret", "test-secret-p62c")
+    eng = create_engine(
+        "sqlite:///:memory:", poolclass=StaticPool, connect_args={"check_same_thread": False}
+    )
+    with eng.begin() as c:
+        c.execute(text("CREATE TABLE user (id INTEGER PRIMARY KEY, employee_id TEXT, username TEXT, role TEXT, model_pool_id INTEGER)"))
+        c.execute(text("CREATE TABLE session (id TEXT PRIMARY KEY, user_id INTEGER, model TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        c.execute(text("CREATE TABLE task (id TEXT PRIMARY KEY, session_id TEXT, complexity INTEGER, status TEXT DEFAULT 'pending', text TEXT, result TEXT, tokens_used INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        c.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        c.execute(text("INSERT INTO user (id, employee_id, username, role) VALUES (1,'EMP001','dev','admin')"))
+    for mod in ("app.core.db", "app.core.identity", "app.core.session_repo"):
+        monkeypatch.setattr(f"{mod}.get_engine", lambda: eng)
+
+    token = pyjwt.encode({"sub": "EMP001"}, "test-secret-p62c", algorithm="HS256")
     c = TestClient(app)
-    r = c.post("/api/v1/tasks", json={"text": "先清洗，再分析，再出报表"})
+    r = c.post(
+        "/api/v1/tasks",
+        json={"text": "先清洗，再分析，再出报表"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
     assert r.status_code == 200
     assert "ndjson" in r.headers["content-type"]
     events = [parse_line(l) for l in r.text.splitlines() if l.strip()]

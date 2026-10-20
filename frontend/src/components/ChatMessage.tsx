@@ -8,6 +8,7 @@ import { StepsPanel, ThinkingPanel } from './FoldPanels';
 export interface ChatMessageData {
   role: 'user' | 'assistant';
   text?: string; // user 消息文本
+  content?: string; // assistant 历史终答（p6.2c：历史只存终答，无事件流）
   events?: StreamEvent[]; // assistant 事件流（当前流或已固化）
   streaming?: boolean;
 }
@@ -20,7 +21,17 @@ export function ChatMessage({ msg }: { msg: ChatMessageData }) {
       </div>
     );
   }
-  const events = msg.events ?? [];
+  // 历史消息（无事件流）：直接渲染终答 markdown
+  if (!msg.events) {
+    return (
+      <div className="msg-row assistant">
+        <div className="assistant-block">
+          <MarkdownView text={msg.content ?? ''} streaming={false} />
+        </div>
+      </div>
+    );
+  }
+  const events = msg.events;
   const thinking = deriveThinking(events);
   const toolCalls: ToolCall[] = deriveToolCalls(events);
   const content = deriveContent(events);

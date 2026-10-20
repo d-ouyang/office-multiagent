@@ -14,16 +14,25 @@ INIT_SQL = BACKEND.parent / "db" / "init.sql"
 MIG_FILE = MIG_DIR / "versions" / "0001_initial_baseline.py"
 
 
+_TABLE_RE = re.compile(
+    r"CREATE TABLE IF NOT EXISTS `(\w+)`"      # init.sql / 基线 execute 风格
+    r"|create_table\(\s*[\"'](\w+)[\"']"        # alembic op.create_table 风格
+)
+
+
 def _table_names(sql_text: str) -> set[str]:
-    return set(re.findall(r"CREATE TABLE IF NOT EXISTS `(\w+)`", sql_text))
+    return {m.group(1) or m.group(2) for m in _TABLE_RE.finditer(sql_text)}
 
 
 def test_baseline_matches_init_sql_tables():
     init_tables = _table_names(INIT_SQL.read_text(encoding="utf-8"))
-    mig_tables = _table_names(MIG_FILE.read_text(encoding="utf-8"))
+    # 漂移护栏升级（p6.2c）：init.sql 必须与【全部 migrations】（0001 基线 + 后续迁移）表集合一致
+    mig_tables: set[str] = set()
+    for mig in sorted((MIG_DIR / "versions").glob("*.py")):
+        mig_tables |= _table_names(mig.read_text(encoding="utf-8"))
     assert init_tables, "init.sql 没解析到表"
     assert init_tables == mig_tables, (
-        f"基线迁移与 init.sql 表不一致：多 {mig_tables - init_tables}，"
+        f"迁移与 init.sql 表不一致：多 {mig_tables - init_tables}，"
         f"少 {init_tables - mig_tables}"
     )
     assert len(init_tables) >= 12

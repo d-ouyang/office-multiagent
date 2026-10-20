@@ -9,6 +9,8 @@ RUN pip install --no-cache-dir -i https://mirrors.cloud.tencent.com/pypi/simple 
 COPY app/ ./app/
 COPY config/ ./config/
 COPY tests/ ./tests/
+COPY alembic.ini ./alembic.ini
+COPY migrations/ ./migrations/
 
 EXPOSE 8000
 

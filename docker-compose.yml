@@ -62,6 +62,8 @@ services:
       # 云端模型密钥（p5.1a Brain 真调用；从根 .env 注入，不入镜像不入仓）
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      # JWT_SECRET：与网关 GATEWAY_JWT_SECRET 同值（后端二次验签取身份，p6.2c）
+      JWT_SECRET: ${GATEWAY_JWT_SECRET:-}
       # RAG 检索工具（容器内 127.0.0.1 是自己，必须走宿主打到 RAG FastAPI）
       RAG_BASE_URL: ${RAG_BASE_URL:-http://host.docker.internal:8000}
     # 不发布宿主端口：①避开与 RAG 宿主进程(FastAPI 127.0.0.1:8000)冲突；②设计 §13.3 后端只内网可达，网关才是入口

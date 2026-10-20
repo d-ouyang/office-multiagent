@@ -5,6 +5,28 @@
 
 ---
 
+## v1.0.0-p6.2c — 会话持久化 API + 身份解析（2026-10-20）
+
+**类型**：功能（会话层）
+**Tag 提交**：见 `git show v1.0.0-p6.2c`
+
+### 交付内容
+- `core/identity.py`：Bearer token → PyJWT 二次验签（sub=employee_id）→ user 行；fail-closed。
+- `core/session_repo.py` + 迁移 0002：message 表 + task 记录列；sessions REST（建/列/历史，归属校验防越权）。
+- `/tasks`：session_id 支持（不传自动建）+ worker 落库（user/assistant 消息 + task 记录）+ 强制登录身份。
+- 前端：侧栏接真会话（初始加载/新建/切换历史）；ChatMessage 历史终答直渲染。
+- compose 注入 JWT_SECRET；Dockerfile 补 COPY alembic.ini/migrations。
+
+### 验证状态
+- ✅ pytest 127 passed / 3 skipped（+6）；前端 tsc/vitest/build 全绿。
+- ✅ 真链路四步：建会话 → 真 LLM 任务 → 历史回读 → 列表标题。
+- ⚠️ 踩坑记录：alembic 现有库需 stamp 0001 再 upgrade；Text(length) 与 DATETIME(6) 默认值的 ORM 渲染坑。
+
+### 下一步
+p6.4 token 池真账。
+
+---
+
 ## v1.0.0-p6.3 — 真流式管道（打字机）+ 编排异常体面收尾（2026-10-20）
 
 **类型**：体验/架构（流式管道）
