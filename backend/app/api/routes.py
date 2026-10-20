@@ -80,13 +80,19 @@ async def tasks_stream(body: TaskRequest):
     带 user_id 时前置 token 池 reserve（p4.2）：余额不足→quota_paused 中断；
     完成 settle。受网关 JWT 保护。
     """
+    from starlette.concurrency import run_in_threadpool
+
     from ..core.db import get_engine
     from ..core.token_pool import TokenPool
     from ..orchestration.graph import run_task
 
     pool = TokenPool(get_engine()) if body.user_id is not None else None
-    _result, events = run_task(
-        body.text, user_id=body.user_id, estimate=body.estimate, token_pool=pool
+    # ⚠️ run_task 是同步长任务（LangGraph + 同步 LLM 调用，可达分钟级）。
+    # p6.1 真修：必须丢线程池，否则整个事件循环被阻塞——表现为 /tasks 期间
+    # /health 一并超时、Docker healthcheck 打 unhealthy、后续请求全部排队卡死。
+    # （宿主单请求时侥幸只表现为"响应慢"，容器+客户端断开+重试堆积后必现卡死。）
+    _result, events = await run_in_threadpool(
+        run_task, body.text, user_id=body.user_id, estimate=body.estimate, token_pool=pool
     )
 
     def gen():

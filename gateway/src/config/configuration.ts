@@ -23,6 +23,12 @@ export interface GatewayConfig {
   proxyTimeoutMs: number;
   rateLimitMax: number;        // 每 IP 每窗口最大请求数；0=关闭
   rateLimitWindowMs: number;   // 限流窗口（毫秒）
+  // 登录用户源（office MySQL 的 user 表；网关是认证单点——签发与校验都在这层）
+  mysqlHost: string;
+  mysqlPort: number;
+  mysqlUser: string;
+  mysqlPassword: string;
+  mysqlDatabase: string;
   isProduction: boolean;
 }
 
@@ -78,6 +84,12 @@ export function loadGatewayConfig(): GatewayConfig {
     // 内存固定窗口限流（每 IP）；多副本下是每实例计数，严格全局限流需 Redis（文档标注）
     rateLimitMax: Number(process.env.GATEWAY_RATE_LIMIT_MAX ?? 600),
     rateLimitWindowMs: Number(process.env.GATEWAY_RATE_LIMIT_WINDOW_MS ?? 60_000),
+    // 登录用户源：compose 内走服务名 mysql；本机直跑 127.0.0.1
+    mysqlHost: process.env.GATEWAY_MYSQL_HOST ?? 'mysql',
+    mysqlPort: Number(process.env.GATEWAY_MYSQL_PORT ?? 3306),
+    mysqlUser: process.env.GATEWAY_MYSQL_USER ?? 'office',
+    mysqlPassword: process.env.GATEWAY_MYSQL_PASSWORD ?? 'office_pass',
+    mysqlDatabase: process.env.GATEWAY_MYSQL_DATABASE ?? 'office',
     isProduction,
   };
 }

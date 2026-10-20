@@ -13,7 +13,7 @@ export function DemoPage() {
         <p>多 Agent 执行过程可视化（NDJSON 流式，经网关透传）</p>
       </header>
       <div className="controls">
-        <button onClick={start} disabled={status === 'streaming'}>
+        <button onClick={() => void start()} disabled={status === 'streaming'}>
           开始演示
         </button>
         <button onClick={stop} disabled={status !== 'streaming'}>

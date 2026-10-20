@@ -7,13 +7,15 @@ USE office;
 
 CREATE TABLE IF NOT EXISTS `user` (
   `id`              BIGINT       NOT NULL AUTO_INCREMENT,
-  `username`        VARCHAR(64)  NOT NULL,
+  `employee_id`     VARCHAR(32)  NOT NULL,                 -- 身份键：工号，全局唯一永不复用（设计 §2.8），JWT sub
+  `username`        VARCHAR(64)  NOT NULL,                 -- 登录键：目录内唯一、可改
   `password_hash`   VARCHAR(255) NOT NULL,
-  `kb_role`         VARCHAR(32)  NOT NULL DEFAULT 'none',   -- none/ops/qa/dev/superadmin（绝不塞 user.role）
-  `model_pool_id`   BIGINT       NULL,
+  `role`            VARCHAR(16)  NOT NULL DEFAULT 'user',  -- 管理角色：user/admin
+  `model_pool_id`   BIGINT       NULL,                     -- 模型可见/池隔离（§十三）
   `created_at`      DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_username` (`username`)
+  UNIQUE KEY `uk_username` (`username`),
+  UNIQUE KEY `uk_employee_id` (`employee_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `model_pool` (
@@ -131,5 +133,6 @@ INSERT IGNORE INTO `pool_model` (`pool_id`, `model_name`) VALUES
   (2, 'deepseek-chat'), (2, 'qwen-plus'), (2, 'glm-4'), (2, 'deepseek-reasoner'),
   (3, 'deepseek-chat'), (3, 'qwen-plus'), (3, 'glm-4'), (3, 'kimi'), (3, 'deepseek-reasoner');
 
-INSERT IGNORE INTO `user` (`id`, `username`, `password_hash`, `kb_role`, `model_pool_id`) VALUES
-  (1, 'dev', '__CHANGE_ME__', 'superadmin', 3);
+-- dev 种子：密码 Office@2026（bcrypt cost12，仅本地开发；生产改密/换 hash）
+INSERT IGNORE INTO `user` (`id`, `employee_id`, `username`, `password_hash`, `role`, `model_pool_id`) VALUES
+  (1, 'EMP001', 'dev', '$2b$12$bKWdpuPQGPIxCXoWyzhHaeVlvkE3eRXiiuH2Gqp6VOJDrFcVwrJrS', 'admin', 3);
