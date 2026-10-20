@@ -67,6 +67,7 @@ services:
     # 不发布宿主端口：①避开与 RAG 宿主进程(FastAPI 127.0.0.1:8000)冲突；②设计 §13.3 后端只内网可达，网关才是入口
     volumes:
       - ./backend/data:/app/data:ro   # 文档目录（read_document 工具只读）
+      - ./backend/config:/app/config:ro   # 配置热更：models/planner/agents yaml 改完 recreate 即生效，无需重建镜像
     depends_on:
       mysql:
         condition: service_healthy

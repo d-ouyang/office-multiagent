@@ -56,6 +56,31 @@ models:
     cost_per_1k: 0.0008
     api_model: Qwen/Qwen2.5-72B-Instruct
 
+  # ---- 硅基流动渠道的 DeepSeek（与 DeepSeek 官方 key 额度独立，互为备份）----
+  - id: deepseek-v3-sf
+    name: DeepSeek V3（硅基流动）
+    provider: siliconflow
+    in_dialogue: true
+    multimodal_input: false
+    context_window: 65536
+    max_output: 8192
+    supports_reasoning: false
+    pool_ids: [default, staff, admin]
+    cost_per_1k: 0.001
+    api_model: deepseek-ai/DeepSeek-V3
+
+  - id: deepseek-r1-sf
+    name: DeepSeek R1（硅基流动）
+    provider: siliconflow
+    in_dialogue: true
+    multimodal_input: false
+    context_window: 65536
+    max_output: 16384
+    supports_reasoning: true
+    pool_ids: [staff, admin]
+    cost_per_1k: 0.002
+    api_model: deepseek-ai/DeepSeek-R1
+
   - id: glm-4
     name: 智谱 GLM-4
     provider: siliconflow
