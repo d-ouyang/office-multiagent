@@ -2,20 +2,24 @@ import { useEffect, useState } from 'react';
 
 import LoginPage from './pages/LoginPage';
 import WorkspacePage from './pages/WorkspacePage';
-import { checkSession } from './lib/api';
+import { checkSession, type LoginUser } from './lib/api';
 
 export default function App() {
-  const [authed, setAuthed] = useState<boolean | null>(null); // null=检查中
+  const [user, setUser] = useState<LoginUser | null>(null);
+  const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    checkSession().then(setAuthed);
+    checkSession().then((u) => {
+      setUser(u);
+      setChecking(false);
+    });
   }, []);
 
-  if (authed === null) {
+  if (checking) {
     return <div className="page">加载中…</div>;
   }
-  if (!authed) {
-    return <LoginPage onLoggedin={() => setAuthed(true)} />;
+  if (!user) {
+    return <LoginPage onLoggedin={setUser} />;
   }
-  return <WorkspacePage onLogout={() => setAuthed(false)} />;
+  return <WorkspacePage user={user} onLogout={() => setUser(null)} />;
 }

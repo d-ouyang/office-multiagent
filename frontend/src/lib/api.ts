@@ -39,18 +39,18 @@ export function authHeaders(): Record<string, string> {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-/** 登录态是否有效（/auth/me 验一下；401 清 token）。 */
-export async function checkSession(): Promise<boolean> {
+/** 登录态检查（/auth/me）：有效返回用户，无效/未登录清 token 返回 null。 */
+export async function checkSession(): Promise<LoginUser | null> {
   const t = getToken();
-  if (!t) return false;
+  if (!t) return null;
   try {
     const res = await fetch('/api/v1/auth/me', { headers: authHeaders() });
-    if (res.status === 401) {
-      clearToken();
-      return false;
+    if (!res.ok) {
+      if (res.status === 401) clearToken();
+      return null;
     }
-    return res.ok;
+    return (await res.json()) as LoginUser;
   } catch {
-    return false;
+    return null;
   }
 }

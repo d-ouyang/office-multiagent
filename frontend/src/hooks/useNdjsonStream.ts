@@ -58,5 +58,12 @@ export function useNdjsonStream(defaultUrl: string) {
     setStatus('idle');
   }, []);
 
-  return { events, status, error, start, stop };
+  /** 清空当前流（p6.2：消息固化/切会话时用）。 */
+  const reset = useCallback(() => {
+    setEvents([]);
+    setStatus('idle');
+    setError(null);
+  }, []);
+
+  return { events, status, error, start, stop, reset };
 }
