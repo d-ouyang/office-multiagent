@@ -5,6 +5,42 @@
 
 ---
 
+## v1.0.0-p6.6 — 文档上传入口（2026-10-20，五任务收口）
+
+**类型**：功能（文档链路闭环）
+**Tag 提交**：见 `git show v1.0.0-p6.6`
+
+### 交付内容
+- `POST /api/v1/documents`（multipart）：落 data/upload/<username>/，basename 拍平 + 格式白名单 + 10MB + 空文件拒；python-multipart 入依赖。
+- 前端输入条 📎 上传按钮（FormData，成功/失败提示）；read_document 描述补"不存在不重试"。
+- compose data 卷改 rw（上传写入；护栏不依赖卷权限）。
+
+### 验证状态
+- ✅ pytest 138 passed / 3 skipped（+6 上传用例）；前端全绿。
+- ✅ 真链路：上传 → read_document 逐字总结。
+- **五任务（1 流式 → 2 会话 → 4 token 真账 → 3 模型生效 → 5 上传）全部完成。**
+
+### 下一步
+改密端点+token_version、RAG employee_id 加列、管理端、Phase 7 部署。
+
+---
+
+## v1.0.0-p6.5 — 模型选择真正生效（2026-10-20）
+
+**类型**：功能（模型选择）
+**Tag 提交**：见 `git show v1.0.0-p6.5`
+
+### 交付内容
+- /tasks 收 `model`（优先级：请求 > 会话默认 > 服务端默认；未知模型 400 fail-closed）；`PATCH /sessions/{id}` 更新会话默认模型。
+- run_task(model=...) 透传 single/multi 的 brain（model_id）；settle 落账记实际模型。
+- 前端：ModelPicker 切换即 PATCH 会话默认 + 请求带 model（localStorage 持久）。
+
+### 验证状态
+- ✅ pytest 132 passed / 3 skipped（+3：PATCH 流程/未知模型 400/透传断言）；前端全绿。
+- ✅ 真链路：PATCH qwen-plus → 任务按它执行 → ledger 落账 model=qwen-plus。
+
+---
+
 ## v1.0.0-p6.4 — token 池真账 + /quota（2026-10-20）
 
 **类型**：功能（计费闭环）

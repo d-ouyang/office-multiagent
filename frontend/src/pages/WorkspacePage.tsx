@@ -15,6 +15,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
   const [currentId, setCurrentId] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
+  const [uploaded, setUploaded] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const sealedRef = useRef(false);
@@ -100,10 +101,11 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     try {
       const sid = await ensureSession();
       setMessages((prev) => [...prev, { role: 'user', text }]);
+      const model = localStorage.getItem('office_model') || undefined; // p6.5：请求级模型
       void start({
         url: '/api/v1/tasks',
         method: 'POST',
-        body: { text, session_id: sid },
+        body: { text, session_id: sid, model },
         headers: authHeaders(),
         on401: () => {
           clearToken();
@@ -112,6 +114,49 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
       });
     } catch (e) {
       if ((e as Error).message === 'UNAUTHORIZED') onLogout();
+    }
+  };
+
+  // p6.5：切换模型 → 更新当前会话默认模型（后端按会话默认执行）
+  const onModelChange = async (modelId: string) => {
+    if (!currentId) return;
+    try {
+      await fetch(`/api/v1/sessions/${encodeURIComponent(currentId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ model: modelId || null }),
+      });
+    } catch {
+      /* 静默：模型偏好已在 localStorage，下次请求仍按它带 */
+    }
+  };
+
+  // p6.6：上传文档到自己的目录（供 read_document 读取）
+  const onUpload = async (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res = await fetch('/api/v1/documents', {
+        method: 'POST',
+        headers: authHeaders(), // 不要设 Content-Type：浏览器自动带 multipart boundary
+        body: fd,
+      });
+      if (res.status === 401) {
+        clearToken();
+        onLogout();
+        return;
+      }
+      const data = await res.json();
+      if (res.ok) {
+        setUploaded(String(data.file_name));
+        setTimeout(() => setUploaded(null), 5000);
+      } else {
+        setUploaded(`上传失败：${data?.detail?.message ?? `HTTP ${res.status}`}`);
+        setTimeout(() => setUploaded(null), 5000);
+      }
+    } catch (e) {
+      setUploaded(`上传失败：${(e as Error).message}`);
+      setTimeout(() => setUploaded(null), 5000);
     }
   };
 
@@ -178,9 +223,23 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
             token 余额不足，任务已暂停（充值后自动继续，或联系管理员）。
           </div>
         )}
+        {uploaded && <div className="banner ok">已上传：{uploaded} —— 可以直接让我读取它</div>}
         {error && <div className="banner err">{error}</div>}
         <footer className="input-bar">
-          <ModelPicker />
+          <ModelPicker onChange={(m) => void onModelChange(m)} />
+          <label className="upload-btn" title="上传文档（.md/.txt/.pdf，≤10MB）">
+            📎
+            <input
+              type="file"
+              accept=".md,.txt,.pdf"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void onUpload(f);
+                e.target.value = '';
+              }}
+            />
+          </label>
           <input
             className="task-input"
             value={input}

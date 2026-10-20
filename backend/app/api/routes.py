@@ -1,5 +1,5 @@
 """API 路由：/health 联动探测、/models 模型注册表、/plan 规划路由、/internal/auth/ping 内部鉴权自检、/demo/stream NDJSON 示例。"""
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -74,10 +74,21 @@ class TaskRequest(BaseModel):
     user_id: int | None = None   # 提供则走 token 池 reserve/settle（§十四）
     estimate: int = 0            # 本次任务 token 预扣估算
     session_id: str | None = None  # p6.2c：会话 id（不传则按登录身份自动新建）
+    model: str | None = None     # p6.5：本次任务使用的对话模型（注册表 id；不传用会话/默认）
+
+
+class UpdateSessionRequest(BaseModel):
+    model: str | None = None     # p6.5：更新会话默认模型
 
 
 class CreateSessionRequest(BaseModel):
-    model: str | None = None     # p6.2c：会话默认模型（§十三，p6.5 生效）
+    model: str | None = None     # p6.2c/p6.5：会话默认模型
+
+
+def _known_model_ids() -> set[str]:
+    from ..core.model_registry import get_dialogue_models
+
+    return {m["id"] for m in get_dialogue_models()}
 
 
 def _current_user(authorization: str | None) -> dict[str, Any]:
@@ -121,6 +132,21 @@ def session_messages(session_id: str, authorization: str | None = Header(default
     return {"messages": repo.list_messages(session_id)}
 
 
+@router.patch("/sessions/{session_id}")
+def update_session(session_id: str, body: UpdateSessionRequest, authorization: str | None = Header(default=None)):
+    """p6.5：更新会话默认模型（归属校验）。"""
+    user = _current_user(authorization)
+    if body.model is not None and body.model not in _known_model_ids():
+        raise HTTPException(400, detail={"code": "BAD_MODEL", "message": f"未知模型：{body.model}"})
+    from ..core.session_repo import SessionRepo
+
+    repo = SessionRepo()
+    if not repo.session_belongs_to(session_id, user["id"]):
+        raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"})
+    repo.update_session_model(session_id, body.model)
+    return {"ok": True}
+
+
 @router.get("/quota")
 def my_quota(authorization: str | None = Header(default=None)):
     """p6.4：我的 token 余额 + 最近流水（§十四 两段式结算的账本）。"""
@@ -133,6 +159,34 @@ def my_quota(authorization: str | None = Header(default=None)):
         "balance": pool.balance(user["id"]),
         "ledger": pool.recent(user["id"], limit=10),
     }
+
+
+@router.post("/documents")
+async def upload_document(file: UploadFile = File(...), authorization: str | None = Header(default=None)):
+    """p6.6：上传文档到自己的目录（data/upload/<username>/），供 read_document 工具读取。
+
+    护栏：只取 basename（防路径穿越）、格式白名单（.md/.txt/.pdf）、大小上限 10MB、
+    按登录用户分目录（身份隔离）。失败一律 4xx 如实说明。
+    """
+    from pathlib import Path as _Path
+
+    user = _current_user(authorization)
+    name = _Path(file.filename or "").name  # 只取 basename：../、绝对路径全部拍平
+    if not name:
+        raise HTTPException(400, detail={"code": "EMPTY_FILENAME", "message": "文件名为空"})
+    if not name.lower().endswith((".md", ".txt", ".pdf")):
+        raise HTTPException(
+            400, detail={"code": "BAD_FORMAT", "message": "仅支持 .md/.txt/.pdf"}
+        )
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(400, detail={"code": "TOO_LARGE", "message": "文件超过 10MB 上限"})
+    if not content:
+        raise HTTPException(400, detail={"code": "EMPTY_FILE", "message": "文件内容为空"})
+    dest = _Path(settings.documents_dir) / str(user["username"]) / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(content)
+    return {"file_name": f"{user['username']}/{name}", "size": len(content)}
 
 
 @router.post("/tasks")
@@ -172,6 +226,12 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
     pool = TokenPool(get_engine())
     effective_user_id = body.user_id if body.user_id is not None else user["id"]
     estimate = body.estimate or settings.token_estimate_default
+    # p6.5：模型选择优先级 = 请求显式 > 会话默认 > 服务端默认；未知模型 400（fail-closed）
+    effective_model = body.model
+    if effective_model is not None and effective_model not in _known_model_ids():
+        raise HTTPException(400, detail={"code": "BAD_MODEL", "message": f"未知模型：{effective_model}"})
+    if effective_model is None and session_id:
+        effective_model = repo.get_session_model(session_id)
     q: _queue.Queue = _queue.Queue()
 
     def worker() -> None:
@@ -182,6 +242,7 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
                 estimate=estimate,
                 token_pool=pool,
                 sink=q.put,
+                model=effective_model,
             )
             # p6.2c：落库（user 消息 + assistant 终答 + task 记录）
             repo.append_message(session_id, "user", body.text)

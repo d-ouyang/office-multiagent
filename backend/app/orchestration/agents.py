@@ -69,8 +69,10 @@ def build_default_registry(engine: Engine | None) -> ToolRegistry:
         ),
         description=(
             "读取文档目录内指定文件的全文（支持 .md/.txt/.pdf），返回文本内容与字数。"
-            "参数: file_name（文档目录内的文件名，如 handbooks/leave.md）。"
+            "参数: file_name（文档目录内的相对路径；当前登录用户上传的文件在 "
+            "'<用户名>/' 子目录下，例如 dev/handbook.md）。"
             "适用于需要引用某份文档原文/做摘要的场景。"
+            "注意：文件不存在时不要反复重试，直接如实告知用户文件名可能不对。"
         ),
     )
     return reg
