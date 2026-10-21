@@ -138,6 +138,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* p6.12c：滚动条贴侧栏最右缘——负 margin 抵消 .sidebar 右 padding，内容用 padding-right 让位 */
+  margin-right: -10px;
+  padding-right: 10px;
 }
 .session-item {
   display: flex;
@@ -171,20 +174,29 @@ body {
   font-size: 11px;
   flex-shrink: 0;
 }
-/* p6.12：会话列表"查看更多"入口（默认折叠 10 条） */
+/* p6.12c：会话列表分页展开——"查看更多 (剩余N) | 收起"同行，全部展示完只剩"收起" */
+.session-more-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 2px;
+}
 .session-more {
   border: none;
   background: transparent;
   color: var(--muted);
   text-align: left;
-  padding: 8px 10px;
+  padding: 4px 0;
   font-size: 12px;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 .session-more:hover {
-  background: var(--card2);
   color: var(--text);
+}
+.more-divider {
+  color: var(--border);
+  font-size: 11px;
 }
 /* p6.12：附件 chip（输入条上方可删除；消息气泡内静态展示） */
 .attach-row {

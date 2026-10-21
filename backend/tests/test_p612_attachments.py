@@ -52,14 +52,26 @@ def test_list_sessions_updated_at_is_last_message_time(engine):
 
     out = SessionRepo(engine).list_sessions(1)
     assert [s["session_id"] for s in out] == ["s-old", "s-new"]  # 按最后活跃排
-    assert out[0]["updated_at"] == "2026-01-01 10:00:00"  # 最后一条消息时间
-    assert out[1]["updated_at"] == "2026-01-01 09:00:00"  # 无消息回落 created_at
+    assert out[0]["updated_at"] == "2026-01-01T10:00:00Z"  # 最后一条消息时间（str 分支不带微秒，带 UTC 标记）
+    assert out[1]["updated_at"] == "2026-01-01T09:00:00Z"  # 无消息回落 created_at
 
 
 def test_list_sessions_no_message_falls_back_to_created_at(engine):
     _add_session(engine, "s-empty", created_at="2026-02-03 12:30:00")
     out = SessionRepo(engine).list_sessions(1)
-    assert out[0]["updated_at"] == "2026-02-03 12:30:00"
+    assert out[0]["updated_at"] == "2026-02-03T12:30:00Z"
+
+
+# ---------- _iso_utc：时间字段带 UTC 标记（p6.12c 修差 8 小时） ----------
+
+def test_iso_utc_variants():
+    from app.core.session_repo import _iso_utc
+    from datetime import datetime as _dt
+
+    assert _iso_utc(_dt(2026, 10, 21, 13, 40, 13, 380547)) == "2026-10-21T13:40:13.380547Z"  # MySQL datetime
+    assert _iso_utc("2026-01-01 08:00:00") == "2026-01-01T08:00:00Z"  # SQLite str
+    assert _iso_utc("2026-01-01T08:00:00Z") == "2026-01-01T08:00:00Z"  # 已带标记不重复
+    assert _iso_utc(None) == "" and _iso_utc("") == ""
 
 
 # ---------- 附件校验（fail-closed） ----------

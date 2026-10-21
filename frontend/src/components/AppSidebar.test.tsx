@@ -39,26 +39,57 @@ describe('formatSessionTime（p6.12 显示规则）', () => {
   });
 });
 
-describe('AppSidebar 会话折叠（p6.12）', () => {
-  it('≤10 条全部显示，无"查看更多"', () => {
+describe('AppSidebar 会话分页展开（p6.12c：每次 10 条）', () => {
+  it('≤10 条全部显示，无"查看更多/收起"', () => {
     render(<AppSidebar sessions={mkSessions(10)} currentId="s-0" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => {}} />);
     expect(screen.getByText('会话 9')).toBeInTheDocument();
     expect(screen.queryByText(/查看更多/)).toBeNull();
+    expect(screen.queryByText('收起')).toBeNull();
   });
 
-  it('>10 条默认只显示 10 条，"查看更多 (N)"显示全部条数', () => {
+  it('>10 条默认只显示 10 条，"查看更多 (剩余N)"显示未展开条数', () => {
     render(<AppSidebar sessions={mkSessions(23)} currentId="s-0" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => {}} />);
     expect(screen.getByText('会话 9')).toBeInTheDocument();
     expect(screen.queryByText('会话 10')).toBeNull(); // 第 11 条被折叠
-    expect(screen.getByText('查看更多 (23)')).toBeInTheDocument();
+    expect(screen.getByText('查看更多 (13)')).toBeInTheDocument(); // 剩余 13 条
+    expect(screen.queryByText('收起')).toBeNull(); // 初始折叠态无收起
   });
 
-  it('点击"查看更多"展开全部', () => {
+  it('点击"查看更多"加载下一条 10 条，未完显示"查看更多 (3) | 收起"', () => {
     render(<AppSidebar sessions={mkSessions(23)} currentId="s-0" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => {}} />);
     act(() => {
-      fireEvent.click(screen.getByText('查看更多 (23)'));
+      fireEvent.click(screen.getByText('查看更多 (13)'));
+    });
+    expect(screen.getByText('会话 19')).toBeInTheDocument(); // 第二页最后一条
+    expect(screen.queryByText('会话 20')).toBeNull();
+    expect(screen.getByText('查看更多 (3)')).toBeInTheDocument();
+    expect(screen.getByText('收起')).toBeInTheDocument();
+  });
+
+  it('再次点击全部展示完毕 → 只剩"收起"', () => {
+    render(<AppSidebar sessions={mkSessions(23)} currentId="s-0" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => {}} />);
+    act(() => {
+      fireEvent.click(screen.getByText('查看更多 (13)'));
+    });
+    act(() => {
+      fireEvent.click(screen.getByText('查看更多 (3)'));
     });
     expect(screen.getByText('会话 22')).toBeInTheDocument(); // 最后一条可见
     expect(screen.queryByText(/查看更多/)).toBeNull();
+    expect(screen.getByText('收起')).toBeInTheDocument();
+  });
+
+  it('收起恢复默认 10 条', () => {
+    render(<AppSidebar sessions={mkSessions(23)} currentId="s-0" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => {}} />);
+    act(() => {
+      fireEvent.click(screen.getByText('查看更多 (13)'));
+    });
+    act(() => {
+      fireEvent.click(screen.getByText('收起'));
+    });
+    expect(screen.getByText('会话 9')).toBeInTheDocument();
+    expect(screen.queryByText('会话 10')).toBeNull();
+    expect(screen.getByText('查看更多 (13)')).toBeInTheDocument();
+    expect(screen.queryByText('收起')).toBeNull();
   });
 });

@@ -38,7 +38,7 @@ export function formatSessionTime(ts: number, now: number = Date.now()): string 
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-const VISIBLE_LIMIT = 10; // p6.12：默认最多显示 10 条，超出"查看更多 (N)"展开全部
+const PAGE_SIZE = 10; // p6.12c：分页展开——默认 10 条，每次"查看更多"加载下一条
 
 export function AppSidebar(props: {
   sessions: SessionMeta[];
@@ -51,9 +51,9 @@ export function AppSidebar(props: {
   onLogout: () => void;
 }) {
   const [showLedger, setShowLedger] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const visible = expanded ? props.sessions : props.sessions.slice(0, VISIBLE_LIMIT);
-  const hidden = props.sessions.length - visible.length;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const visible = props.sessions.slice(0, visibleCount);
+  const remaining = props.sessions.length - visible.length;
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -74,10 +74,24 @@ export function AppSidebar(props: {
             <span className="session-time">{formatSessionTime(s.updatedAt)}</span>
           </button>
         ))}
-        {hidden > 0 && (
-          <button className="session-more" onClick={() => setExpanded(true)}>
-            查看更多 ({props.sessions.length})
-          </button>
+        {/* p6.12c：未展开完 → "查看更多 (剩余N) | 收起"；全部展示完 → 只剩"收起" */}
+        {(remaining > 0 || visibleCount > PAGE_SIZE) && (
+          <div className="session-more-row">
+            {remaining > 0 && (
+              <button
+                className="session-more"
+                onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+              >
+                查看更多 ({remaining})
+              </button>
+            )}
+            {remaining > 0 && visibleCount > PAGE_SIZE && <span className="more-divider">|</span>}
+            {visibleCount > PAGE_SIZE && (
+              <button className="session-more" onClick={() => setVisibleCount(PAGE_SIZE)}>
+                收起
+              </button>
+            )}
+          </div>
         )}
       </div>
       <div className="sidebar-user">

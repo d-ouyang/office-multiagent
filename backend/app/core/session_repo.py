@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -16,6 +17,21 @@ from .db import get_engine
 
 def new_session_id() -> str:
     return f"s-{secrets.token_hex(8)}"
+
+
+def _iso_utc(v: Any) -> str:
+    """时间字段统一输出带 UTC 标记的 ISO（如 '2026-10-21T13:40:13.380547Z'）。
+
+    库内统一存 UTC（MySQL/SQLite 的 CURRENT_TIMESTAMP 都是 UTC）——p6.12c 修"差 8 小时"：
+    旧实现裸字符串无时区，前端 new Date() 按本地时间解析，UTC 时间被当成本地时间（差 8h）。
+    带上 Z 后前端 Date 自动转本地显示；兼容 datetime（MySQL）与 str（SQLite）两种返回类型。
+    """
+    if isinstance(v, datetime):
+        return v.isoformat(sep="T", timespec="microseconds") + "Z"
+    s = str(v or "")
+    if not s or s.endswith("Z"):
+        return s
+    return s.replace(" ", "T", 1) + "Z"
 
 
 class SessionRepo:
@@ -77,8 +93,8 @@ class SessionRepo:
         for r in rows:
             d = dict(r)
             d["title"] = (d.get("title") or "新会话").strip() or "新会话"
-            d["created_at"] = str(d.get("created_at") or "")
-            d["updated_at"] = str(d.get("updated_at") or "")
+            d["created_at"] = _iso_utc(d.get("created_at"))
+            d["updated_at"] = _iso_utc(d.get("updated_at"))
             out.append(d)
         return out
 
@@ -103,7 +119,7 @@ class SessionRepo:
                 "role": r["role"],
                 "content": r["content"],
                 "trace": r["trace"],  # p6.7：过程事件 JSON（assistant 消息有；user 消息为 None）
-                "created_at": str(r["created_at"]),
+                "created_at": _iso_utc(r["created_at"]),  # p6.12c：带 UTC 标记
             }
             for r in rows
         ]
