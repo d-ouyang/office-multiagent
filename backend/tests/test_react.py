@@ -63,11 +63,18 @@ def test_tool_error_becomes_observation_not_crash():
 def test_observation_summary_truncates_dict_content():
     from app.orchestration.react import _summarize_observation
 
-    big = {"file_name": "dev/a.md", "total_chars": 20965, "content": "x" * 20965}
+    # p6.9：read_document max_chars=50000、摘要 content 截 24000——
+    # 2 万字文档全量进上下文（通读）；超 24000 才截断并标注
+    big = {"file_name": "dev/a.md", "total_chars": 60000, "content": "x" * 60000}
     s = _summarize_observation(big)
     assert "file_name=dev/a.md" in s
     assert "已截断展示" in s
-    assert len(s) < 3000  # 进 LLM 上下文的是摘要，不是 2 万字全文
+    assert len(s) < 50000  # 24000 上限 + 字段摘要
+
+    full = {"file_name": "dev/b.md", "total_chars": 20965, "content": "y" * 20965}
+    s2 = _summarize_observation(full)
+    assert "已截断展示" not in s2  # 2 万字文档不再截断（通读）
+    assert s2.count("y") == 20965
 
 
 def test_invalid_action_streak_forces_honest_finish():

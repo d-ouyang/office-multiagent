@@ -171,8 +171,10 @@ class LlmBrain:
             if st.action:
                 line += f" | 动作：{st.action}({json.dumps(st.action_input, ensure_ascii=False)})"
             if st.observation is not None:
-                obs = st.observation[:400]
-                line += f" | 观察：{obs}{'…' if len(st.observation) > 400 else ''}"
+                # p6.9：400 → 24000——原 400 字截断让 LLM"通读"时只看到文档开头
+                # （真跑见证：2 万字文档读到"一句话价值"即断，LLM 以为工具只返回片段）
+                obs = st.observation[:24000]
+                line += f" | 观察：{obs}{'…（已截断）' if len(st.observation) > 24000 else ''}"
             lines.append(line)
         return "\n".join(lines)
 

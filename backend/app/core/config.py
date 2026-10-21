@@ -59,9 +59,10 @@ class Settings(BaseSettings):
     rag_service_username: str = "office-service"  # 注入 X-Username（须能在 RAG user 表解析）
     # db_query 工具护栏：强制 LIMIT 行数上限
     db_query_max_rows: int = 50
-    # read_document 工具：文档目录（工具只能读该目录内文件，防路径穿越）与单次返回字符上限
+    # read_document 工具：文档目录（工具只能读该目录内文件，防路径穿越）与单次返回字符上限。
+    # p6.9：8000 → 50000——"通读整篇"场景 2 万字文档一次拿全（1M 上下文模型/128K 模型都装得下）
     documents_dir: str = "data/upload"
-    doc_read_max_chars: int = 8000
+    doc_read_max_chars: int = 50000
     # token 池（§十四）：/tasks 默认预扣估算（LLM 用量事前估不准，用门槛值兜底；
     # settle 时按真实 usage 补差）
     token_estimate_default: int = 2000

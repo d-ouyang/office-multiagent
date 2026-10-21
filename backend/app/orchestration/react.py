@@ -24,8 +24,10 @@ class Step:
     chunked: bool = False           # p6.7：终答需由 run_react 切片推（JSON 包装的 final）
 
 
-def _summarize_observation(obs: Any, *, max_chars: int = 1200) -> str:
+def _summarize_observation(obs: Any, *, max_chars: int = 24000) -> str:
     """p6.7：工具结果进 LLM 上下文的可读摘要——不是 str(dict) 全文。
+    p6.9：content 截断 1200 → 24000（read_document max_chars 同步 50000，
+    "通读整篇"场景 2 万字文档全量进上下文；deepseek-chat 128K 装得下）。
 
     原实现把含 8000 字 content 的 dict repr 原样塞进 history，LLM 下一轮上下文
     被垃圾撑爆（真跑见证：read_document 成功后 LLM 幻觉出 action="none"）。
@@ -139,7 +141,8 @@ def run_react(
         res: ToolResult = tools.call(name, **step.action_input)
         obs = res.output if res.ok else (res.error or "工具调用失败")
         if emitter is not None:
-            _emit(emitter.observation(name, str(obs)[:500]))
+            # 前端步骤面板展示口径（p6.9：500 → 2000，用户能看到更多过程细节）
+            _emit(emitter.observation(name, str(obs)[:2000]))
             _emit(
                 emitter.tool_call_end(
                     name, name, success=res.ok, error=None if res.ok else (res.error or "")
