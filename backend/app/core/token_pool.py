@@ -94,12 +94,23 @@ class TokenPool:
         task_id: str | None = None,
         model: str | None = None,
     ) -> int:
-        """结算：把 (reserved - actual) 补回余额，落 ledger；返回最新余额。"""
+        """结算：把 (reserved - actual) 补回余额，落 ledger；返回最新余额。
+
+        下限保护（p6.11）：actual 可能超过 reserved（如长文档通读 token 暴涨），
+        此时 refund 为负，若直接 `balance + refund` 会把余额穿成负数——而 reserve 只保证
+        预扣那一刻余额够，不保证实际用量不超过预扣。用 CASE 把余额钳在 0，杜绝负余额
+        （负余额会破坏 /quota 展示与后续 reserve 的 `balance>=a` 判定）。
+        ledger 仍如实记录 actual，余额只表示"可消费额度"。
+        """
         refund = reserved - actual
         with self.engine.begin() as conn:
             if refund:
                 conn.execute(
-                    text("UPDATE wallet SET balance = balance + :r WHERE user_id=:u"),
+                    text(
+                        "UPDATE wallet SET balance = CASE "
+                        "WHEN balance + :r < 0 THEN 0 ELSE balance + :r END "
+                        "WHERE user_id=:u"
+                    ),
                     {"r": refund, "u": user_id},
                 )
             conn.execute(
