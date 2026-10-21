@@ -229,6 +229,38 @@ body {
 .attach-chip.static {
   cursor: default;
 }
+/* p6.12b：失败/暂停专门展示（quota 暂停橙、error 红；持久化在消息里，刷新不丢） */
+.msg-failure {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.msg-failure .failure-icon {
+  flex-shrink: 0;
+  font-size: 15px;
+}
+.msg-failure.quota {
+  background: rgba(255, 159, 10, 0.12);
+  border: 1px solid rgba(255, 159, 10, 0.45);
+  color: var(--text);
+}
+.msg-failure.error {
+  background: rgba(255, 69, 58, 0.10);
+  border: 1px solid rgba(255, 69, 58, 0.40);
+  color: var(--text);
+}
+/* p6.12b：附件 tag 收进输入条内部（控件行上方），整体支持换行 */
+.input-bar {
+  flex-wrap: wrap;
+}
+.attach-row.inside {
+  width: 100%;
+  padding: 0 0 8px;
+}
 .sidebar-user {
   border-top: 1px solid var(--border);
   padding-top: 10px;

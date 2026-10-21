@@ -227,7 +227,6 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
   );
 
   const currentAgent = deriveCurrentAgent(events);
-  const quotaPaused = events.some((e) => e.type === 'quota_paused');
 
   return (
     <div className="app-shell">
@@ -268,28 +267,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
             />
           ))}
         </div>
-        {quotaPaused && (
-          <div className="banner warn">
-            token 余额不足，任务已暂停（充值后自动继续，或联系管理员）。
-          </div>
-        )}
         {uploadError && <div className="banner warn">{uploadError}</div>}
-        {attachments.length > 0 && (
-          <div className="attach-row">
-            {attachments.map((a) => (
-              <span key={a.path} className="attach-chip" title={a.path}>
-                📎 {a.name}
-                <button
-                  className="attach-remove"
-                  title="移除附件"
-                  onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
         {modelInfo && (
           <div className="model-info" title={modelInfo.description}>
             当前模型：{modelInfo.id} · 上下文 {modelInfo.context_window >= 1_000_000 ? `${Math.round(modelInfo.context_window / 1_000_000)}M` : `${Math.round(modelInfo.context_window / 1000)}K`} —— {modelInfo.description}
@@ -305,6 +283,23 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
             if (f) void onUpload(f);
           }}
         >
+          {/* p6.12b：附件 tag 在输入框内部上方展示；hover 显示完整路径（即随消息发给后端的引用路径） */}
+          {attachments.length > 0 && (
+            <div className="attach-row inside">
+              {attachments.map((a) => (
+                <span key={a.path} className="attach-chip" title={`路径（随消息发送给助手）：${a.path}`}>
+                  📎 {a.name}
+                  <button
+                    className="attach-remove"
+                    title="移除附件"
+                    onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <ModelPicker onChange={(m) => void onModelChange(m)} />
           <label className="upload-btn" title="上传文档（.md/.txt/.pdf，≤10MB），也可直接拖拽文件到输入条">
             📎

@@ -105,3 +105,46 @@ export function deriveCurrentAgent(events: StreamEvent[]): { agent: string; stat
   }
   return current;
 }
+
+export interface FailureInfo {
+  kind: 'quota' | 'error';
+  title: string;
+  reason: string;
+  balance?: number;
+  needed?: number;
+  code?: string;
+}
+
+/** p6.12b：失败/暂停专门展示——quota_paused / error / done(paused_*|error) 归一为一个可渲染对象。
+ *  之前 quota_paused 只在流式期间有临时 banner，done 后 reset() 事件被清、界面无任何痕迹（病根同 p6.7b）。 */
+export function deriveFailure(events: StreamEvent[]): FailureInfo | null {
+  for (const ev of events) {
+    if (ev.type === 'quota_paused') {
+      return {
+        kind: 'quota',
+        title: '余额不足，任务已暂停',
+        reason: String(ev.data.reason ?? '余额不足'),
+        balance: typeof ev.data.balance === 'number' ? ev.data.balance : undefined,
+        needed: typeof ev.data.needed === 'number' ? ev.data.needed : undefined,
+      };
+    }
+    if (ev.type === 'error') {
+      return {
+        kind: 'error',
+        title: '任务失败',
+        reason: String(ev.data.message ?? '未知错误'),
+        code: ev.data.code ? String(ev.data.code) : undefined,
+      };
+    }
+  }
+  // 兜底：quota_paused/error 事件缺失时看 done 状态
+  const done = events.find((e) => e.type === 'done');
+  const st = done ? String(done.data.status ?? 'done') : 'done';
+  if (st.startsWith('paused')) {
+    return { kind: 'quota', title: '余额不足，任务已暂停', reason: st };
+  }
+  if (st === 'error' || st === 'failed') {
+    return { kind: 'error', title: '任务失败', reason: st };
+  }
+  return null;
+}

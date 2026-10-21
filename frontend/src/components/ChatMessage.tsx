@@ -5,7 +5,7 @@ import { useState } from 'react';
 
 import type { StreamEvent } from '../types';
 import type { ToolCall } from '../lib/derive';
-import { deriveContent, deriveThinking, deriveToolCalls } from '../lib/derive';
+import { deriveContent, deriveFailure, deriveThinking, deriveToolCalls } from '../lib/derive';
 import MarkdownView from './MarkdownView';
 import { StepsPanel, ThinkingPanel } from './FoldPanels';
 
@@ -85,13 +85,27 @@ export function ChatMessage({ msg, onEdit }: { msg: ChatMessageData; onEdit?: (t
   const thinking = deriveThinking(events);
   const toolCalls: ToolCall[] = deriveToolCalls(events);
   const content = deriveContent(events);
+  const failure = deriveFailure(events); // p6.12b：失败/暂停专门展示（持久化——events 已随消息固化）
   return (
     <div className="msg-row assistant">
       <div className="assistant-block">
         <ThinkingPanel text={thinking} streaming={!!msg.streaming} />
         <StepsPanel toolCalls={toolCalls} streaming={!!msg.streaming} />
+        {failure && (
+          <div className={`msg-failure ${failure.kind}`}>
+            <span className="failure-icon">{failure.kind === 'quota' ? '⏸' : '⚠'}</span>
+            <span>
+              <b>{failure.title}</b>：{failure.reason}
+              {failure.kind === 'quota' && failure.balance != null && (
+                <>（当前余额 {failure.balance.toLocaleString()}，本次需要 {failure.needed != null ? failure.needed.toLocaleString() : '-'}）</>
+              )}
+              {failure.kind === 'quota' && <>——充值/恢复余额后重新发送即可</>}
+              {failure.kind === 'error' && failure.code && <>（code: {failure.code}）</>}
+            </span>
+          </div>
+        )}
         {content && <MarkdownView text={content} streaming={msg.streaming} />}
-        {msg.streaming && !content && <div className="typing">正在思考…</div>}
+        {msg.streaming && !content && !failure && <div className="typing">正在思考…</div>}
         {!msg.streaming && content && (
           <span className="msg-actions">
             <CopyButton getText={() => content} />

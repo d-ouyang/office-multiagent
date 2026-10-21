@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   agentLabel,
+  deriveFailure,
   deriveArtifacts,
   deriveContent,
   deriveCurrentAgent,
@@ -90,5 +91,37 @@ describe('deriveCurrentAgent（p5.2 当前回答者徽章）', () => {
   it('agentLabel 中文映射；未知类型原样返回', () => {
     expect(agentLabel('rag_retrieval')).toBe('知识库问答 Agent');
     expect(agentLabel('no_such')).toBe('no_such');
+  });
+});
+
+describe('deriveFailure（p6.12b 失败/暂停专门展示）', () => {
+  const ev = (type: string, data: Record<string, unknown>) =>
+    ({ type, run_id: 'r', turn_id: 't', seq: 1, ts: 0, data }) as never;
+
+  it('quota_paused → quota 暂停（带余额/所需）', () => {
+    const f = deriveFailure([
+      ev('quota_paused', { reason: '余额不足，已暂停', balance: -37798, needed: 2000 }),
+      ev('done', { status: 'paused_insufficient_quota' }),
+    ]);
+    expect(f?.kind).toBe('quota');
+    expect(f?.title).toBe('余额不足，任务已暂停');
+    expect(f?.balance).toBe(-37798);
+    expect(f?.needed).toBe(2000);
+  });
+
+  it('error 事件 → error（带 code）', () => {
+    const f = deriveFailure([ev('error', { message: '网关超时', code: 'GATEWAY_TIMEOUT' })]);
+    expect(f?.kind).toBe('error');
+    expect(f?.reason).toBe('网关超时');
+    expect(f?.code).toBe('GATEWAY_TIMEOUT');
+  });
+
+  it('仅 done(paused_*) 兜底 → quota', () => {
+    const f = deriveFailure([ev('done', { status: 'paused_insufficient_quota' })]);
+    expect(f?.kind).toBe('quota');
+  });
+
+  it('正常完成无失败 → null', () => {
+    expect(deriveFailure([ev('content_delta', { delta: 'hi' }), ev('done', { status: 'done' })])).toBeNull();
   });
 });
