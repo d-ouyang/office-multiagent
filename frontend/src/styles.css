@@ -171,6 +171,64 @@ body {
   font-size: 11px;
   flex-shrink: 0;
 }
+/* p6.12：会话列表"查看更多"入口（默认折叠 10 条） */
+.session-more {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.session-more:hover {
+  background: var(--card2);
+  color: var(--text);
+}
+/* p6.12：附件 chip（输入条上方可删除；消息气泡内静态展示） */
+.attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 20px 8px;
+}
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card2);
+  color: var(--text);
+  font-size: 12px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-remove {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.attach-remove:hover {
+  color: var(--text);
+}
+.msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.attach-chip.static {
+  cursor: default;
+}
 .sidebar-user {
   border-top: 1px solid var(--border);
   padding-top: 10px;

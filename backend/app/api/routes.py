@@ -75,6 +75,7 @@ class TaskRequest(BaseModel):
     estimate: int = 0            # 本次任务 token 预扣估算
     session_id: str | None = None  # p6.2c：会话 id（不传则按登录身份自动新建）
     model: str | None = None     # p6.5：本次任务使用的对话模型（注册表 id；不传用会话/默认）
+    attachments: list[str] | None = None  # p6.12：随消息附件（文档目录内相对路径，如 "dev/报告.md"）
 
 
 class UpdateSessionRequest(BaseModel):
@@ -99,6 +100,47 @@ def _current_user(authorization: str | None) -> dict[str, Any]:
     if user is None:
         raise HTTPException(401, detail={"code": "UNAUTHORIZED", "message": "未登录或登录态无效"})
     return user
+
+
+def _validate_attachments(paths: list[str] | None, username: str) -> list[str]:
+    """p6.12：校验随消息附件（fail-closed）——只允许引用**自己目录内**且真实存在的文件。
+
+    basename 拍平（`../`、绝对路径全部拒绝）→ 限定 data/upload/<username>/ 内 → 必须存在。
+    返回规范化路径列表（"<username>/<basename>"）。
+    """
+    if not paths:
+        return []
+    from pathlib import Path as _P
+
+    base = _P(settings.documents_dir).resolve()
+    own = (base / username).resolve()
+    out: list[str] = []
+    for raw in paths:
+        name = _P(str(raw or "")).name  # 只取 basename：路径穿越/越权引用他人文件全部拍平
+        if not name:
+            raise HTTPException(400, detail={"code": "BAD_ATTACHMENT", "message": "附件名为空"})
+        target = (own / name).resolve()
+        if not target.is_relative_to(own):
+            raise HTTPException(400, detail={"code": "BAD_ATTACHMENT", "message": "非法附件路径"})
+        if not target.is_file():
+            raise HTTPException(
+                400, detail={"code": "BAD_ATTACHMENT", "message": f"附件不存在：{name}"}
+            )
+        out.append(f"{username}/{name}")
+    return out
+
+
+def _validate_attachment(path: str | None, username: str) -> list[str]:
+    """单附件便捷版（返回列表，空输入返回空列表）。"""
+    return _validate_attachments([path] if path else [], username)
+
+
+def _compose_task_text(text: str, attachments: list[str]) -> str:
+    """p6.12：附件以 prompt 前缀注入（不动正文），告知 LLM 有哪些文件可读。"""
+    if not attachments:
+        return text
+    names = "、".join(a.split("/", 1)[1] for a in attachments)
+    return f"[用户随消息上传了附件：{names}。可用 read_document 按文件名读取；如需基于附件内容回答，请先读取再作答。]\n\n{text}"
 
 
 @router.post("/sessions")
@@ -232,12 +274,15 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
         raise HTTPException(400, detail={"code": "BAD_MODEL", "message": f"未知模型：{effective_model}"})
     if effective_model is None and session_id:
         effective_model = repo.get_session_model(session_id)
+    # p6.12：随消息附件——fail-closed 校验（自己目录内且存在），以 prompt 前缀注入任务文本
+    validated_attachments = _validate_attachments(body.attachments, str(user["username"]))
+    effective_text = _compose_task_text(body.text, validated_attachments)
     q: _queue.Queue = _queue.Queue()
 
     def worker() -> None:
         try:
             result, events = run_task(
-                body.text,
+                effective_text,
                 user_id=effective_user_id,
                 estimate=estimate,
                 token_pool=pool,
@@ -253,7 +298,14 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
                 trace = _json.dumps(
                     [_json.loads(ev.model_dump_json()) for ev in events], ensure_ascii=False
                 )
-                repo.append_message(session_id, "user", body.text)
+                # p6.12：user 消息 trace 存附件列表（历史重建时前端渲染附件 chip）；
+                # 正文仍存原始输入（不混入 prompt 前缀）。
+                user_trace = (
+                    _json.dumps({"attachments": validated_attachments}, ensure_ascii=False)
+                    if validated_attachments
+                    else None
+                )
+                repo.append_message(session_id, "user", body.text, trace=user_trace)
                 repo.append_message(session_id, "assistant", result.get("result", ""), trace=trace)
                 repo.record_task(
                     result.get("run_id", ""),

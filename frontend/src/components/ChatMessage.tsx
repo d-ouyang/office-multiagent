@@ -12,6 +12,7 @@ import { StepsPanel, ThinkingPanel } from './FoldPanels';
 export interface ChatMessageData {
   role: 'user' | 'assistant';
   text?: string; // user 消息文本
+  attachments?: string[]; // p6.12：随消息附件名（显示 chip；后端已单独注入 prompt）
   content?: string; // assistant 历史终答（p6.2c：历史只存终答，无事件流）
   events?: StreamEvent[]; // assistant 事件流（当前流或已固化）
   streaming?: boolean;
@@ -43,6 +44,15 @@ export function ChatMessage({ msg, onEdit }: { msg: ChatMessageData; onEdit?: (t
     return (
       <div className="msg-row user">
         <div className="bubble user-bubble">
+          {msg.attachments && msg.attachments.length > 0 && (
+            <div className="msg-attachments">
+              {msg.attachments.map((n) => (
+                <span key={n} className="attach-chip static">
+                  📎 {n}
+                </span>
+              ))}
+            </div>
+          )}
           {msg.text}
           {!msg.streaming && (
             <span className="msg-actions">

@@ -54,16 +54,22 @@ class SessionRepo:
         return row is not None
 
     def list_sessions(self, user_id: int, limit: int = 50) -> list[dict[str, Any]]:
-        """会话列表：title 取首条 user 消息前 20 字（无消息则"新会话"）。"""
+        """会话列表：title 取首条 user 消息前 20 字（无消息则"新会话"）。
+
+        p6.12：updated_at = 最后一条消息时间（无消息回落 session.created_at），
+        按 updated_at 倒序——侧栏时间显示"最后一次问答时间"，不再全是加载时刻。
+        """
         with self.engine.connect() as conn:
             rows = conn.execute(
                 text(
                     "SELECT s.id AS session_id, "
                     "  (SELECT SUBSTRING(content, 1, 20) FROM message m "
                     "   WHERE m.session_id = s.id AND m.role = 'user' ORDER BY m.id LIMIT 1) AS title, "
-                    "  s.created_at "
+                    "  s.created_at AS created_at, "
+                    "  COALESCE((SELECT MAX(m2.created_at) FROM message m2 "
+                    "     WHERE m2.session_id = s.id), s.created_at) AS updated_at "
                     "FROM session s WHERE s.user_id = :u "
-                    "ORDER BY s.created_at DESC LIMIT :l"
+                    "ORDER BY updated_at DESC LIMIT :l"
                 ),
                 {"u": user_id, "l": limit},
             ).mappings().all()
@@ -72,6 +78,7 @@ class SessionRepo:
             d = dict(r)
             d["title"] = (d.get("title") or "新会话").strip() or "新会话"
             d["created_at"] = str(d.get("created_at") or "")
+            d["updated_at"] = str(d.get("updated_at") or "")
             out.append(d)
         return out
 

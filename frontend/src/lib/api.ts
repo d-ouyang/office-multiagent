@@ -39,8 +39,8 @@ export function authHeaders(): Record<string, string> {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-/** p6.2c：我的会话列表（title=首条用户消息前 20 字）。 */
-export async function listSessions(): Promise<Array<{ session_id: string; title: string; created_at: string }>> {
+/** p6.2c：我的会话列表（title=首条用户消息前 20 字；p6.12 起 updated_at=最后一次问答时间）。 */
+export async function listSessions(): Promise<Array<{ session_id: string; title: string; created_at: string; updated_at: string }>> {
   const res = await fetch('/api/v1/sessions', { headers: authHeaders() });
   if (res.status === 401) {
     clearToken();

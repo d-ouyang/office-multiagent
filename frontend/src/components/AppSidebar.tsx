@@ -1,10 +1,10 @@
-// 应用侧栏（p6.2→p6.10，参考 RAG AppSidebar）：会话列表 + 底部用户信息（点用户名展开最近用量）/退出。
+// 应用侧栏（p6.2→p6.12，参考 RAG AppSidebar / WorkBuddy）：会话列表（相对时间 + 超出 10 条折叠）+ 底部用户信息（点用户名展开最近用量）/退出。
 import { useState } from 'react';
 
 export interface SessionMeta {
   id: string;
   title: string;
-  updatedAt: number;
+  updatedAt: number; // 毫秒时间戳（后端 updated_at=最后一次问答时间）
 }
 
 export interface SessionUser {
@@ -12,6 +12,33 @@ export interface SessionUser {
   username: string;
   role: string;
 }
+
+const MIN = 60_000;
+const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
+
+/** p6.12：会话时间显示规则——1 分钟内 HH:MM；超 1 分钟 XX分钟前；XX小时前；XX天前；超 7 天 MM月DD日。 */
+export function formatSessionTime(ts: number, now: number = Date.now()): string {
+  if (!Number.isFinite(ts) || ts <= 0) return '';
+  const diff = now - ts;
+  if (diff < MIN) {
+    return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  }
+  if (diff < HOUR) {
+    return `${Math.floor(diff / MIN)}分钟前`;
+  }
+  if (diff < DAY) {
+    return `${Math.floor(diff / HOUR)}小时前`;
+  }
+  if (diff < WEEK) {
+    return `${Math.floor(diff / DAY)}天前`;
+  }
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+const VISIBLE_LIMIT = 10; // p6.12：默认最多显示 10 条，超出"查看更多 (N)"展开全部
 
 export function AppSidebar(props: {
   sessions: SessionMeta[];
@@ -24,6 +51,9 @@ export function AppSidebar(props: {
   onLogout: () => void;
 }) {
   const [showLedger, setShowLedger] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? props.sessions : props.sessions.slice(0, VISIBLE_LIMIT);
+  const hidden = props.sessions.length - visible.length;
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -34,18 +64,21 @@ export function AppSidebar(props: {
         ＋ 新会话
       </button>
       <div className="session-list">
-        {props.sessions.map((s) => (
+        {visible.map((s) => (
           <button
             key={s.id}
             className={`session-item ${s.id === props.currentId ? 'active' : ''}`}
             onClick={() => props.onSelect(s.id)}
           >
             <span className="session-title">{s.title}</span>
-            <span className="session-time">
-              {new Date(s.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-            </span>
+            <span className="session-time">{formatSessionTime(s.updatedAt)}</span>
           </button>
         ))}
+        {hidden > 0 && (
+          <button className="session-more" onClick={() => setExpanded(true)}>
+            查看更多 ({props.sessions.length})
+          </button>
+        )}
       </div>
       <div className="sidebar-user">
         <div className="user-info">
