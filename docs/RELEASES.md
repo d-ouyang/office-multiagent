@@ -5,6 +5,55 @@
 
 ---
 
+## v1.0.0-p6.10 — 打字机队列 + 复制/编辑 + 用量明细（2026-10-21）
+
+**类型**：体验/功能补全（用户四问：token 消耗/用量入库/复制编辑/打字机渲染）
+**Tag 提交**：见 `git show v1.0.0-p6.10`
+
+### 交付内容
+- **用量明细**：侧栏余额徽章点击展开最近 8 笔流水（token_ledger 数据 p6.4 已入库，本轮只补前端展示）。
+- **复制/编辑**（对齐 RAG）：user hover 编辑回填/复制；assistant hover 复制 md 原文；历史消息（trace 重建）同样可用。
+- **打字机正解=缓冲队列+rAF 匀速播放**：delta 只更新 textRef 不渲染，rAF 60fps 每帧推进 `step=ceil(剩余/8)`——渲染频率与 delta 率解耦（LLM 出字 ~5ms 快于帧率 16.7ms 时"到达即渲染"必跳字）。
+- **token 消耗实测**：普通 1.1-2.1K；通读 2 万字 25.1K（大 observation 多轮重复携带）。优化路径（前缀缓存/滑动窗口/同文件去重）写入文档待点单。
+
+### 验证状态
+- ✅ 前端 tsc + vitest 21 + build 全绿；后端 146 passed 无涉。
+- ✅ 真链路 smoke 108 delta 正常。
+
+---
+
+## v1.0.0-p6.9 — 文档通读 + 打字机逐字感修复（2026-10-21）
+
+**类型**：缺陷修复/体验（"只读到开头"+ 打字机不明显）
+**Tag 提交**：见 `git show v1.0.0-p6.9`
+
+### 交付内容
+- **文档截断四层链路全放大**：read_document 8000→50000 / _summarize_observation 1200→24000 / brain._render_history **400→24000（最后一层瓶颈，p4.1 遗留）** / 前端 500→2000。实测 LLM 答出 2 万字文档最后一章标题。
+- **打字机**：后端 delta 本就 5ms 级，真凶=前端 MarkdownView 80ms 渲染节流合并——改自适应（短文本每 delta 直渲），后由 p6.10 队列方案统一取代。
+- 顺手发现钱包 settle 穿 0 bug（→ p6.11 修复）。
+
+### 验证状态
+- ✅ pytest 146 passed / 3 skipped（observation 摘要断言改"2 万字不截断、6 万字截断"双口径）。
+
+---
+
+## v1.0.0-p6.8 — 模型列表重构 + 模型信息展示（2026-10-21，含 p6.8b 参数修正）
+
+**类型**：功能/体验（模型注册表重构）
+**Tag 提交**：见 `git show v1.0.0-p6.8` / `git show v1.0.0-p6.8b`
+
+### 交付内容
+- 默认模型=deepseek-chat（DeepSeek 官方 V3）；8 个对话模型按渠道 optgroup 分组：DeepSeek 官方（chat/reasoner）+ 硅基流动（V3/R1/V4.1-Flash 1M 思考·视觉/V4-Flash/GLM-5.3-Flash/Qwen3.5-9B），名字不带 org 前缀；下线 qwen-plus/glm-4/kimi。
+- ModelEntry.description + /models 返回 + 前端下拉信息条。
+- **p6.8b 修正**（用户按硅基流动模型页纠正）：GLM-5.3-Flash 128K→1M；V4-Flash 262K+视觉→1M 无视觉；V3(sf)/R1(sf) 65K→128K。
+- 坑：config 卷改 yaml ≠ 生效——load_registry 有 lru_cache，需 `docker compose restart backend`。
+
+### 验证状态
+- ✅ pytest 146 passed / 3 skipped；V4.1-Flash 真调通过（126 tokens）。
+- ✅ /models 硅基流动组 1M/131K 全部正确。
+
+---
+
 ## v1.0.0-p6.11 — 钱包负余额保护（settle 下限保护）（2026-10-21）
 
 **类型**：缺陷修复（账务正确性）
