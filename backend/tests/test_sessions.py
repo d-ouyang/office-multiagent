@@ -22,7 +22,7 @@ def engine():
         c.execute(text("CREATE TABLE `user` (id INTEGER PRIMARY KEY, employee_id TEXT UNIQUE, username TEXT, password_hash TEXT, role TEXT, model_pool_id INTEGER, created_at TEXT)"))
         c.execute(text("CREATE TABLE session (id TEXT PRIMARY KEY, user_id INTEGER, model TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE task (id TEXT PRIMARY KEY, session_id TEXT, complexity INTEGER, status TEXT DEFAULT 'pending', text TEXT, result TEXT, tokens_used INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
-        c.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        c.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, trace TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE wallet (user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0)"))
         c.execute(text("CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("INSERT INTO `user` (id, employee_id, username, role, model_pool_id) VALUES (1,'EMP001','dev','admin',3)"))
@@ -161,3 +161,45 @@ def test_run_task_passes_model_to_brain(monkeypatch):
     result, events = graph_mod.run_task("查年假", model="qwen-plus")
     assert captured.get("model_id") == "qwen-plus"
     assert result["status"] == "done"
+
+
+# ---------- p6.7 trace 过程落库 ----------
+def test_trace_persisted_and_readable(client):
+    # assistant 消息带 trace：落库后历史回读能重建过程事件
+    from app.core.db import get_engine
+    from app.core.session_repo import SessionRepo
+    import json as _json
+
+    sid = client.post("/api/v1/sessions", json={}, headers=_auth(_token())).json()["session_id"]
+    trace = _json.dumps(
+        [
+            {"type": "thinking_delta", "data": {"delta": "想"}},
+            {"type": "content_delta", "data": {"delta": "答"}},
+        ],
+        ensure_ascii=False,
+    )
+    SessionRepo(get_engine()).append_message(sid, "assistant", "答", trace=trace)
+    msgs = client.get(f"/api/v1/sessions/{sid}/messages", headers=_auth(_token())).json()["messages"]
+    assert msgs[-1]["trace"] is not None
+    assert _json.loads(msgs[-1]["trace"])[0]["type"] == "thinking_delta"
+
+
+# ---------- p6.7 trace 过程落库 ----------
+def test_trace_persisted_and_readable(client):
+    # assistant 消息带 trace：落库后历史回读能重建过程事件
+    from app.core.db import get_engine
+    from app.core.session_repo import SessionRepo
+    import json as _json
+
+    sid = client.post("/api/v1/sessions", json={}, headers=_auth(_token())).json()["session_id"]
+    trace = _json.dumps(
+        [
+            {"type": "thinking_delta", "data": {"delta": "想"}},
+            {"type": "content_delta", "data": {"delta": "答"}},
+        ],
+        ensure_ascii=False,
+    )
+    SessionRepo(get_engine()).append_message(sid, "assistant", "答", trace=trace)
+    msgs = client.get(f"/api/v1/sessions/{sid}/messages", headers=_auth(_token())).json()["messages"]
+    assert msgs[-1]["trace"] is not None
+    assert _json.loads(msgs[-1]["trace"])[0]["type"] == "thinking_delta"

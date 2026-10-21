@@ -65,8 +65,8 @@ export async function createSession(model?: string): Promise<string> {
   return String(data.session_id);
 }
 
-/** p6.2c：会话历史消息（user/assistant 终答）。 */
-export async function getMessages(sessionId: string): Promise<Array<{ role: string; content: string; created_at: string }>> {
+/** p6.2c/p6.7：会话历史消息（user/assistant 终答 + assistant 的 trace 过程事件 JSON）。 */
+export async function getMessages(sessionId: string): Promise<Array<{ role: string; content: string; trace?: string | null; created_at: string }>> {
   const res = await fetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`, {
     headers: authHeaders(),
   });

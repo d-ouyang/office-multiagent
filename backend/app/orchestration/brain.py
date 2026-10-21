@@ -36,10 +36,13 @@ def looks_like_json(text: str) -> bool:
 
 #: ReAct 输出协议（§四.4）——**统一在这里保证**，不写进各 Agent 的角色提示词（避免漂移）。
 #: p6.3 流式：完成态改为"直接写自然语言终答"（不包 JSON），使 LLM 输出可逐字流式转发。
+#: p6.7：显式禁止 action=none/无效名（真跑见证 LLM 幻觉 "none" 导致空转终止）。
 _PROTOCOL_TMPL = """你的每一步【只能二选一输出】：
   A. 需要调用工具：输出一个 JSON 对象（除此之外不要有任何文字）：
      {{"thought": "你的思考", "action": "工具名", "action_input": {{...}}}}
+     action 只能是上面工具清单里的名字，禁止使用 "none" 或任何不存在的工具名。
   B. 任务已完成：直接写面向用户的最终回答（自然语言，中文，可直接使用；不要包 JSON、不要复述结构）
+     总结/分析/问答/整理类任务不需要调用任何工具——直接把答案写给用户。
 
 可用工具（名字必须完全一致）：
 {tools}
@@ -47,6 +50,7 @@ _PROTOCOL_TMPL = """你的每一步【只能二选一输出】：
 纪律：
   · 工具不存在/调用失败/观察结果为空时，在最终回答里【如实说明】，绝不编造数据或结论。
   · 尽快给出最终回答，通常不超过 {max_steps} 步。
+  · 绝不允许出现 "action": "none" / "action": null——想结束就按 B 直接写答案。
 """
 
 
@@ -245,14 +249,19 @@ class LlmBrain:
     def _step_from_json(data: dict[str, Any], *, thought_streamed: bool) -> Step:
         thought = "" if thought_streamed else str(data.get("thought", ""))
         if data.get("final") is not None:
-            return Step(thought=thought, final=str(data["final"]))
+            final = str(data["final"])
+            # p6.7：LLM 偶尔仍用 JSON 包装终答——按 5 字/块切片推（视觉等同打字机，
+            # 避免"思考半天答案整段蹦出来"；自然语言路径本就是真 chunk 流）
+            return Step(thought=thought, final=final, streamed=True, chunked=True)
         action = data.get("action")
-        if not action:
-            return Step(thought=thought, final="模型未给出有效动作或结论，已停止本次任务。")
+        action_str = str(action).strip() if action is not None else ""
+        if not action_str or action_str.lower() in ("none", "null"):
+            # 无效 action：标记 invalid_action 让 run_react 纠错（不空转停止）
+            return Step(thought=thought or "（模型给出了无效动作）", invalid_action=True)
         action_input = data.get("action_input")
         if not isinstance(action_input, dict):
             action_input = {"input": action_input}
-        return Step(thought=thought, action=str(action), action_input=action_input)
+        return Step(thought=thought, action=action_str, action_input=action_input)
 
 
 def make_brain(

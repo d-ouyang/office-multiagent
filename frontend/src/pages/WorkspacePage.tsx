@@ -6,6 +6,7 @@ import AppSidebar, { type SessionMeta, type SessionUser } from '../components/Ap
 import ChatMessage, { type ChatMessageData } from '../components/ChatMessage';
 import ModelPicker from '../components/ModelPicker';
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
+import type { StreamEvent } from '../types';
 import { deriveCurrentAgent, agentLabel } from '../lib/derive';
 import { authHeaders, clearToken, createSession, getMessages, getQuota, listSessions } from '../lib/api';
 
@@ -48,6 +49,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
         }
         setSessions(list.map((s) => ({ id: s.session_id, title: s.title, updatedAt: Date.now() })));
         setCurrentId(list[0].session_id);
+        await selectSession(list[0].session_id); // p6.7：初始也加载最近会话的历史+过程
       } catch (e) {
         if ((e as Error).message === 'UNAUTHORIZED') onLogout();
       }
@@ -55,7 +57,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 切换会话：拉历史消息
+  // 切换会话：拉历史消息（p6.7：assistant 消息带 trace 过程事件，重建完整渲染）
   const selectSession = useCallback(async (sid: string) => {
     if (status === 'streaming') stop();
     sealedRef.current = true; // 切走不固化当前流（后端已按 session 落库）
@@ -65,11 +67,20 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     try {
       const msgs = await getMessages(sid);
       setMessages(
-        msgs.map((m) =>
-          m.role === 'user'
-            ? { role: 'user' as const, text: m.content }
-            : { role: 'assistant' as const, content: m.content },
-        ),
+        msgs.map((m) => {
+          if (m.role === 'user') return { role: 'user' as const, text: m.content };
+          let events: StreamEvent[] | undefined;
+          if (m.trace) {
+            try {
+              events = JSON.parse(m.trace) as StreamEvent[];
+            } catch {
+              events = undefined;
+            }
+          }
+          return events
+            ? { role: 'assistant' as const, events, streaming: false }
+            : { role: 'assistant' as const, content: m.content };
+        }),
       );
     } catch (e) {
       if ((e as Error).message === 'UNAUTHORIZED') onLogout();

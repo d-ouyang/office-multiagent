@@ -75,24 +75,29 @@ class SessionRepo:
             out.append(d)
         return out
 
-    def append_message(self, session_id: str, role: str, content: str) -> None:
+    def append_message(self, session_id: str, role: str, content: str, trace: str | None = None) -> None:
         with self.engine.begin() as conn:
             conn.execute(
-                text("INSERT INTO message (session_id, role, content) VALUES (:s, :r, :c)"),
-                {"s": session_id, "r": role, "c": content},
+                text("INSERT INTO message (session_id, role, content, trace) VALUES (:s, :r, :c, :t)"),
+                {"s": session_id, "r": role, "c": content, "t": trace},
             )
 
     def list_messages(self, session_id: str, limit: int = 200) -> list[dict[str, Any]]:
         with self.engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT role, content, created_at FROM message "
+                    "SELECT role, content, trace, created_at FROM message "
                     "WHERE session_id = :s ORDER BY id LIMIT :l"
                 ),
                 {"s": session_id, "l": limit},
             ).mappings().all()
         return [
-            {"role": r["role"], "content": r["content"], "created_at": str(r["created_at"])}
+            {
+                "role": r["role"],
+                "content": r["content"],
+                "trace": r["trace"],  # p6.7：过程事件 JSON（assistant 消息有；user 消息为 None）
+                "created_at": str(r["created_at"]),
+            }
             for r in rows
         ]
 

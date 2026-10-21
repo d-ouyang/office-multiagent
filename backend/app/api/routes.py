@@ -236,7 +236,7 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
 
     def worker() -> None:
         try:
-            result, _events = run_task(
+            result, events = run_task(
                 body.text,
                 user_id=effective_user_id,
                 estimate=estimate,
@@ -244,17 +244,27 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
                 sink=q.put,
                 model=effective_model,
             )
-            # p6.2c：落库（user 消息 + assistant 终答 + task 记录）
-            repo.append_message(session_id, "user", body.text)
-            repo.append_message(session_id, "assistant", result.get("result", ""))
-            repo.record_task(
-                result.get("run_id", ""),
-                session_id,
-                body.text,
-                result.get("result", ""),
-                int(result.get("tokens_used", 0)),
-                str(result.get("status", "done")),
-            )
+            # p6.2c/p6.7：落库（user 消息 + assistant 终答+过程事件 trace + task 记录）。
+            # 落库失败不影响已完成的流（任务结果已推给用户），但必须 ERROR 级可见
+            # ——p6.7 教训：异常只进 debug 日志等于"失败不可见"。
+            try:
+                import json as _json
+
+                trace = _json.dumps(
+                    [_json.loads(ev.model_dump_json()) for ev in events], ensure_ascii=False
+                )
+                repo.append_message(session_id, "user", body.text)
+                repo.append_message(session_id, "assistant", result.get("result", ""), trace=trace)
+                repo.record_task(
+                    result.get("run_id", ""),
+                    session_id,
+                    body.text,
+                    result.get("result", ""),
+                    int(result.get("tokens_used", 0)),
+                    str(result.get("status", "done")),
+                )
+            except Exception:  # noqa: BLE001 - 落库失败：ERROR 级记录，流照常结束
+                logger.exception("会话落库失败 session_id=%s（任务结果已推给用户，但历史将缺失）", session_id)
         except Exception:  # noqa: BLE001 - worker 兜底：流以 None 收尾，异常进日志
             logger.exception("run_task worker 异常")
         finally:
