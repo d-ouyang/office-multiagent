@@ -529,6 +529,18 @@ button.ghost {
   padding: 8px 12px;
   font-size: 13px;
 }
+.model-info {
+  margin: 0 20px;
+  padding: 6px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 12px;
+  border-radius: 0 8px 8px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .upload-btn {
   display: inline-flex;
   align-items: center;

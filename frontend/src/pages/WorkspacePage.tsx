@@ -17,6 +17,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
+  const [modelInfo, setModelInfo] = useState<{ id: string; description: string; context_window: number } | null>(null);
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const sealedRef = useRef(false);
@@ -132,14 +133,15 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     }
   };
 
-  // p6.5：切换模型 → 更新当前会话默认模型（后端按会话默认执行）
-  const onModelChange = async (modelId: string) => {
+  // p6.5/p6.8：切换模型 → 更新当前会话默认模型 + 信息条
+  const onModelChange = async (m: { id: string; description: string; context_window: number } | null) => {
+    setModelInfo(m);
     if (!currentId) return;
     try {
       await fetch(`/api/v1/sessions/${encodeURIComponent(currentId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ model: modelId || null }),
+        body: JSON.stringify({ model: m?.id || null }),
       });
     } catch {
       /* 静默：模型偏好已在 localStorage，下次请求仍按它带 */
@@ -239,6 +241,11 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
           </div>
         )}
         {uploaded && <div className="banner ok">已上传：{uploaded} —— 可以直接让我读取它</div>}
+        {modelInfo && (
+          <div className="model-info" title={modelInfo.description}>
+            当前模型：{modelInfo.id} · 上下文 {modelInfo.context_window >= 1_000_000 ? `${Math.round(modelInfo.context_window / 1_000_000)}M` : `${Math.round(modelInfo.context_window / 1000)}K`} —— {modelInfo.description}
+          </div>
+        )}
         {error && <div className="banner err">{error}</div>}
         <footer className="input-bar">
           <ModelPicker onChange={(m) => void onModelChange(m)} />

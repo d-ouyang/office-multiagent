@@ -126,13 +126,13 @@ def test_update_session_model_flow(client):
     # 未知模型 → 400（fail-closed）
     r = client.patch(f"/api/v1/sessions/{sid}", json={"model": "no-such"}, headers=_auth(_token()))
     assert r.status_code == 400 and r.json()["detail"]["code"] == "BAD_MODEL"
-    # 合法模型 → ok
-    r = client.patch(f"/api/v1/sessions/{sid}", json={"model": "qwen-plus"}, headers=_auth(_token()))
+    # 合法模型 → ok（p6.8 模型列表重构后用现存 id）
+    r = client.patch(f"/api/v1/sessions/{sid}", json={"model": "deepseek-chat"}, headers=_auth(_token()))
     assert r.status_code == 200
     from app.core.db import get_engine
     from app.core.session_repo import SessionRepo
 
-    assert SessionRepo(get_engine()).get_session_model(sid) == "qwen-plus"
+    assert SessionRepo(get_engine()).get_session_model(sid) == "deepseek-chat"
 
 
 def test_tasks_rejects_unknown_model(client):

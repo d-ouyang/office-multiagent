@@ -19,7 +19,8 @@ llm_providers:
     api_key_env: SILICONFLOW_API_KEY
 
 models:
-  # ---------- 对话用大模型（云端，进下拉） ----------
+  # ---------- 对话用大模型（云端，进下拉；前端按 provider 分组：DeepSeek 官方 / 硅基流动） ----------
+  # DeepSeek 官方渠道（api.deepseek.com，走 DEEPSEEK_API_KEY 余额）
   - id: deepseek-chat
     name: DeepSeek V3
     provider: deepseek
@@ -31,34 +32,24 @@ models:
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.001
     api_model: deepseek-chat
+    description: DeepSeek 官方 V3，通用对话与工具调用，速度快（默认模型）
 
   - id: deepseek-reasoner
     name: DeepSeek R1
     provider: deepseek
     in_dialogue: true
     multimodal_input: false
-    context_window: 64000
+    context_window: 128000
     max_output: 8192
     supports_reasoning: true
     pool_ids: [staff, admin]
     cost_per_1k: 0.005
     api_model: deepseek-reasoner
+    description: DeepSeek 官方 R1 深度推理，适合复杂分析（较慢）
 
-  - id: qwen-plus
-    name: 通义千问 Plus
-    provider: siliconflow
-    in_dialogue: true
-    multimodal_input: false
-    context_window: 131072
-    max_output: 8192
-    supports_reasoning: false
-    pool_ids: [default, staff, admin]
-    cost_per_1k: 0.0008
-    api_model: Qwen/Qwen2.5-72B-Instruct
-
-  # ---- 硅基流动渠道的 DeepSeek（与 DeepSeek 官方 key 额度独立，互为备份）----
+  # 硅基流动渠道（api.siliconflow.cn，走 SILICONFLOW_API_KEY 余额，与官方额度独立）
   - id: deepseek-v3-sf
-    name: DeepSeek V3（硅基流动）
+    name: DeepSeek V3
     provider: siliconflow
     in_dialogue: true
     multimodal_input: false
@@ -68,9 +59,10 @@ models:
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.001
     api_model: deepseek-ai/DeepSeek-V3
+    description: DeepSeek V3（硅基流动渠道），与官方额度独立互为备份
 
   - id: deepseek-r1-sf
-    name: DeepSeek R1（硅基流动）
+    name: DeepSeek R1
     provider: siliconflow
     in_dialogue: true
     multimodal_input: false
@@ -80,30 +72,59 @@ models:
     pool_ids: [staff, admin]
     cost_per_1k: 0.002
     api_model: deepseek-ai/DeepSeek-R1
+    description: DeepSeek R1 深度推理（硅基流动渠道）
 
-  - id: glm-4
-    name: 智谱 GLM-4
+  - id: deepseek-v4.1-flash-sf
+    name: DeepSeek V4.1-Flash
     provider: siliconflow
     in_dialogue: true
     multimodal_input: true
-    context_window: 128000
-    max_output: 8192
-    supports_reasoning: false
-    pool_ids: [staff, admin]
-    cost_per_1k: 0.001
-    api_model: GLM-4
+    context_window: 1048576
+    max_output: 16384
+    supports_reasoning: true
+    pool_ids: [default, staff, admin]
+    cost_per_1k: 0.002
+    api_model: deepseek-ai/DeepSeek-V4.1-Flash
+    description: 多模态混合专家模型，原生支持图像与文本，1M 上下文，擅长编程/深度推理/智能体
 
-  - id: kimi
-    name: Kimi (Moonshot)
+  - id: deepseek-v4-flash-sf
+    name: DeepSeek V4-Flash
+    provider: siliconflow
+    in_dialogue: true
+    multimodal_input: true
+    context_window: 262144
+    max_output: 16384
+    supports_reasoning: true
+    pool_ids: [default, staff, admin]
+    cost_per_1k: 0.001
+    api_model: deepseek-ai/DeepSeek-V4-Flash
+    description: V4 系轻量 Flash 版，速度快成本低，支持视觉与工具调用
+
+  - id: glm-5.3-flash-sf
+    name: GLM-5.3-Flash
     provider: siliconflow
     in_dialogue: true
     multimodal_input: false
-    context_window: 200000
+    context_window: 128000
     max_output: 8192
     supports_reasoning: false
-    pool_ids: [admin]
-    cost_per_1k: 0.002
-    api_model: moonshot-v1-8k
+    pool_ids: [default, staff, admin]
+    cost_per_1k: 0.0005
+    api_model: zai-org/GLM-5.3-Flash
+    description: 智谱 GLM-5.3 Flash，免费/低价档，通用对话与轻量任务
+
+  - id: qwen3.5-9b-sf
+    name: Qwen3.5-9B
+    provider: siliconflow
+    in_dialogue: true
+    multimodal_input: false
+    context_window: 131072
+    max_output: 8192
+    supports_reasoning: false
+    pool_ids: [default, staff, admin]
+    cost_per_1k: 0.0002
+    api_model: Qwen/Qwen3.5-9B
+    description: 通义千问 3.5 9B 轻量模型，极速响应，适合简单问答
 
   # ---------- 逻辑用小模型（云端，不进对话列表） ----------
   - id: bge-m3

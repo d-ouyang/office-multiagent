@@ -33,6 +33,7 @@ class ModelEntry(BaseModel):
     api_model: str = ""  # 实际调用名（provider 的模型 id）
     base_url: str | None = None
     api_key_env: str | None = None
+    description: str = ""  # p6.8：模型描述（前端下拉展示）
 
 
 class ProviderEntry(BaseModel):
@@ -89,6 +90,7 @@ def get_dialogue_models(pool_ids: list[str] | None = None) -> list[dict[str, Any
                 "supports_reasoning": m.supports_reasoning,
                 "pool_ids": m.pool_ids,
                 "cost_per_1k": m.cost_per_1k,
+                "description": m.description,
             }
         )
     return out
