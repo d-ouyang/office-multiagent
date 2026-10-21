@@ -138,3 +138,77 @@ def test_chat_stream_non_200_raises(monkeypatch):
                 lambda req: httpx.Response(500, stream=_IterStream([b"boom"]))
             ),
         )
+
+
+# ---------- p6.7b 网络重试 ----------
+def test_chat_retries_transient_then_succeeds(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise httpx.ConnectError("Name or service not known")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": 1}})
+
+    res = chat("deepseek-chat", [{"role": "user", "content": "hi"}], transport=httpx.MockTransport(handler))
+    assert res.content == "ok"
+    assert calls["n"] == 3  # 失败 2 次 + 成功 1 次
+
+
+def test_chat_no_retry_on_4xx(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        return httpx.Response(401, json={"error": "bad key"})
+
+    with pytest.raises(LlmError, match="401"):
+        chat("deepseek-chat", [{"role": "user", "content": "hi"}], transport=httpx.MockTransport(handler))
+    assert calls["n"] == 1  # 鉴权错误不重试
+
+
+def test_chat_stream_retry_before_first_chunk(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("Connection refused")
+        return _sse(['{"choices":[{"delta":{"content":"你好"}}]}', "[DONE]"])
+
+    got: list[str] = []
+    res = chat_stream(
+        "deepseek-chat", [{"role": "user", "content": "hi"}], on_chunk=got.append,
+        transport=httpx.MockTransport(handler),
+    )
+    assert got == ["你好"]  # 首块前失败重试成功，无重复输出
+    assert calls["n"] == 2
+
+
+class _BrokenAfterChunk(httpx.SyncByteStream):
+    """先吐一个 chunk 再断流——模拟"已出字后连接中断"。"""
+
+    def __iter__(self):
+        yield b'data: {"choices":[{"delta":{"content":"chunk1"}}]}\n\n'
+        raise httpx.ReadError("connection reset by peer")
+
+
+def test_chat_stream_no_retry_after_emitting(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=_BrokenAfterChunk())
+
+    got: list[str] = []
+    with pytest.raises(LlmError):
+        chat_stream(
+            "deepseek-chat", [{"role": "user", "content": "hi"}], on_chunk=got.append,
+            transport=httpx.MockTransport(handler),
+        )
+    assert got == ["chunk1"]  # 已出字不重试（防重复输出）
+    assert calls["n"] == 1

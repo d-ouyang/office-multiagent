@@ -87,14 +87,18 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     }
   }, [status, stop, reset, onLogout]);
 
-  // 流结束 → 当前流已由后端落库；刷新列表标题 + 余额（p6.4）即可，本地不再固化（防重复）
+  // 流结束/中断 → 把当前流固化进本地消息（后端已按 session 落库，trace 刷新可回读）。
+  // ⚠️ p6.7b 修：此前 done 时只 reset() 未固化——正文从界面瞬间消失，刷新后才回来。
   useEffect(() => {
-    if (status === 'done' && events.length && !sealedRef.current) {
+    if ((status === 'done' || status === 'error') && events.length && !sealedRef.current) {
       sealedRef.current = true;
-      listSessions()
-        .then((list) => setSessions(list.map((s) => ({ id: s.session_id, title: s.title, updatedAt: Date.now() }))))
-        .catch(() => {});
-      refreshQuota();
+      setMessages((prev) => [...prev, { role: 'assistant', events, streaming: false }]);
+      if (status === 'done') {
+        listSessions()
+          .then((list) => setSessions(list.map((s) => ({ id: s.session_id, title: s.title, updatedAt: Date.now() }))))
+          .catch(() => {});
+        refreshQuota();
+      }
       reset();
     }
   }, [status, events, reset, refreshQuota]);

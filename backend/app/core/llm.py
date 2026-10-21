@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -76,7 +77,37 @@ def chat(
     temperature: float = 0.2,
     transport: httpx.BaseTransport | None = None,
 ) -> LlmResult:
-    """调一次 /chat/completions（非流式）。任何失败抛 LlmError（含 LlmNotConfigured）。"""
+    """调一次 /chat/completions（非流式，网络类失败自动重试 2 次）。
+
+    任何失败抛 LlmError（含 LlmNotConfigured）。
+    """
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            return _chat_once(model_id, messages, timeout=timeout, temperature=temperature, transport=transport)
+        except LlmError as e:
+            last_err = e
+            # 只重试网络类瞬时错误；4xx（鉴权/参数）重试无意义
+            if not _is_transient(e) or attempt == 2:
+                raise
+            time.sleep(0.8 * (attempt + 1))
+    raise last_err  # pragma: no cover - 循环必 return/raise
+
+
+def _is_transient(e: LlmError) -> bool:
+    """网络类瞬时错误（DNS/连接/超时/5xx）才值得重试。"""
+    msg = str(e)
+    return any(k in msg for k in ("ConnectError", "Timeout", "timed out", "Name or service", "Connection", " 502", " 503", " 504"))
+
+
+def _chat_once(
+    model_id: str,
+    messages: list[dict[str, str]],
+    *,
+    timeout: float | None = None,
+    temperature: float = 0.2,
+    transport: httpx.BaseTransport | None = None,
+) -> LlmResult:
     base_url, api_key, api_model = resolve_model(model_id)
     url = base_url.rstrip("/") + "/chat/completions"
     payload = {
@@ -122,7 +153,8 @@ def chat_stream(
     - 每个正文 chunk 立即回调 `on_chunk`（前端打字机的数据源）；
     - DeepSeek R1 等模型的思考内容（reasoning_content）回调 `on_thought`；
     - usage 从流式末块取（stream_options.include_usage），token 结算不受影响；
-    - 任何失败抛 LlmError（含 LlmNotConfigured），调用方如实告知，不编。
+    - **首个 chunk 到达前**的网络类失败自动重试 2 次（已出字后失败不重试——重复输出
+      比失败更糟）；任何最终失败抛 LlmError，调用方如实告知。
     """
     base_url, api_key, api_model = resolve_model(model_id)
     url = base_url.rstrip("/") + "/chat/completions"
@@ -136,39 +168,54 @@ def chat_stream(
     headers = {"Authorization": f"Bearer {api_key}"}
     parts: list[str] = []
     usage: dict[str, Any] = {}
-    try:
-        with httpx.Client(timeout=timeout or settings.llm_timeout, transport=transport) as client:
-            with client.stream("POST", url, json=payload, headers=headers) as resp:
-                if resp.status_code != 200:
-                    raise LlmError(f"LLM 返回 {resp.status_code}: {resp.read().decode('utf-8', 'replace')[:200]}")
-                for line in resp.iter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        obj = json.loads(data)
-                    except ValueError:
-                        continue
-                    if obj.get("usage"):
-                        usage = obj["usage"]
-                    for choice in obj.get("choices") or []:
-                        delta = (choice.get("delta") or {}) if isinstance(choice, dict) else {}
-                        piece = delta.get("content") or ""
-                        if piece:
-                            parts.append(piece)
-                            if on_chunk is not None:
-                                on_chunk(piece)
-                        thought = delta.get("reasoning_content") or ""
-                        if thought and on_thought is not None:
-                            on_thought(thought)
-    except httpx.HTTPError as e:
-        raise LlmError(f"LLM 请求失败：{type(e).__name__}: {e}") from e
-    return LlmResult(
-        content="".join(parts),
-        prompt_tokens=int(usage.get("prompt_tokens", 0)),
-        completion_tokens=int(usage.get("completion_tokens", 0)),
-        total_tokens=int(usage.get("total_tokens", 0)),
-        model=api_model,
-    )
+    last_err: Exception | None = None
+    emitted_any = False  # 已向用户吐过任何内容（正文/思考）：重试会重复输出，只能如实终止
+    for attempt in range(3):
+        parts.clear()
+        usage = {}
+        try:
+            with httpx.Client(timeout=timeout or settings.llm_timeout, transport=transport) as client:
+                with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    if resp.status_code != 200:
+                        raise LlmError(
+                            f"LLM 返回 {resp.status_code}: {resp.read().decode('utf-8', 'replace')[:200]}"
+                        )
+                    for line in resp.iter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data)
+                        except ValueError:
+                            continue
+                        if obj.get("usage"):
+                            usage = obj["usage"]
+                        for choice in obj.get("choices") or []:
+                            delta = (choice.get("delta") or {}) if isinstance(choice, dict) else {}
+                            piece = delta.get("content") or ""
+                            if piece:
+                                emitted_any = True
+                                parts.append(piece)
+                                if on_chunk is not None:
+                                    on_chunk(piece)
+                            thought = delta.get("reasoning_content") or ""
+                            if thought and on_thought is not None:
+                                emitted_any = True
+                                on_thought(thought)
+            return LlmResult(
+                content="".join(parts),
+                prompt_tokens=int(usage.get("prompt_tokens", 0)),
+                completion_tokens=int(usage.get("completion_tokens", 0)),
+                total_tokens=int(usage.get("total_tokens", 0)),
+                model=api_model,
+            )
+        except (httpx.HTTPError, LlmError) as e:
+            last_err = e if isinstance(e, LlmError) else LlmError(f"LLM 请求失败：{type(e).__name__}: {e}")
+            if emitted_any:
+                raise last_err from e  # 已出字：重试会重复输出，如实终止
+            if not _is_transient(last_err) or attempt == 2:
+                raise last_err from e
+            time.sleep(0.8 * (attempt + 1))
+    raise last_err  # pragma: no cover
