@@ -53,7 +53,7 @@ models:
     provider: siliconflow
     in_dialogue: true
     multimodal_input: false
-    context_window: 65536
+    context_window: 131072
     max_output: 8192
     supports_reasoning: false
     pool_ids: [default, staff, admin]
@@ -66,7 +66,7 @@ models:
     provider: siliconflow
     in_dialogue: true
     multimodal_input: false
-    context_window: 65536
+    context_window: 131072
     max_output: 16384
     supports_reasoning: true
     pool_ids: [staff, admin]
@@ -91,21 +91,21 @@ models:
     name: DeepSeek V4-Flash
     provider: siliconflow
     in_dialogue: true
-    multimodal_input: true
-    context_window: 262144
+    multimodal_input: false
+    context_window: 1048576
     max_output: 16384
     supports_reasoning: true
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.001
     api_model: deepseek-ai/DeepSeek-V4-Flash
-    description: V4 系轻量 Flash 版，速度快成本低，支持视觉与工具调用
+    description: V4 系轻量 Flash 版，1M 上下文，速度快成本低，支持思考与工具调用
 
   - id: glm-5.3-flash-sf
     name: GLM-5.3-Flash
     provider: siliconflow
     in_dialogue: true
     multimodal_input: false
-    context_window: 128000
+    context_window: 1048576
     max_output: 8192
     supports_reasoning: false
     pool_ids: [default, staff, admin]
