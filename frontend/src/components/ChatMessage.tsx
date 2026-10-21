@@ -1,4 +1,8 @@
-// 聊天消息气泡（p6.2）：用户右侧短气泡；助手左侧 = 深度思考折叠 + 步骤折叠 + markdown 正文（打字机）。
+// 聊天消息气泡（p6.2→p6.10）：用户右侧短气泡（hover 可编辑/复制）；助手左侧 =
+// 深度思考折叠 + 步骤折叠 + markdown 正文（打字机）+ hover 复制。
+// 交互对齐 RAG：user 消息编辑→回填输入框重发；assistant 复制→剪贴板 markdown 原文。
+import { useState } from 'react';
+
 import type { StreamEvent } from '../types';
 import type { ToolCall } from '../lib/derive';
 import { deriveContent, deriveThinking, deriveToolCalls } from '../lib/derive';
@@ -13,11 +17,44 @@ export interface ChatMessageData {
   streaming?: boolean;
 }
 
-export function ChatMessage({ msg }: { msg: ChatMessageData }) {
+function CopyButton({ getText, label = '复制' }: { getText: () => string; label?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      className="msg-action"
+      title={label}
+      onClick={() => {
+        navigator.clipboard
+          .writeText(getText())
+          .then(() => {
+            setDone(true);
+            setTimeout(() => setDone(false), 1500);
+          })
+          .catch(() => {});
+      }}
+    >
+      {done ? '已复制' : label}
+    </button>
+  );
+}
+
+export function ChatMessage({ msg, onEdit }: { msg: ChatMessageData; onEdit?: (text: string) => void }) {
   if (msg.role === 'user') {
     return (
       <div className="msg-row user">
-        <div className="bubble user-bubble">{msg.text}</div>
+        <div className="bubble user-bubble">
+          {msg.text}
+          {!msg.streaming && (
+            <span className="msg-actions">
+              {onEdit && (
+                <button className="msg-action" title="编辑并重新发送" onClick={() => onEdit(msg.text ?? '')}>
+                  编辑
+                </button>
+              )}
+              <CopyButton getText={() => msg.text ?? ''} />
+            </span>
+          )}
+        </div>
       </div>
     );
   }
@@ -27,6 +64,9 @@ export function ChatMessage({ msg }: { msg: ChatMessageData }) {
       <div className="msg-row assistant">
         <div className="assistant-block">
           <MarkdownView text={msg.content ?? ''} streaming={false} />
+          <span className="msg-actions">
+            <CopyButton getText={() => msg.content ?? ''} />
+          </span>
         </div>
       </div>
     );
@@ -42,6 +82,11 @@ export function ChatMessage({ msg }: { msg: ChatMessageData }) {
         <StepsPanel toolCalls={toolCalls} streaming={!!msg.streaming} />
         {content && <MarkdownView text={content} streaming={msg.streaming} />}
         {msg.streaming && !content && <div className="typing">正在思考…</div>}
+        {!msg.streaming && content && (
+          <span className="msg-actions">
+            <CopyButton getText={() => content} />
+          </span>
+        )}
       </div>
     </div>
   );

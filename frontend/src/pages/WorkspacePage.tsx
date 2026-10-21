@@ -16,6 +16,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
   const [currentId, setCurrentId] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
+  const [ledger, setLedger] = useState<Array<Record<string, unknown>>>([]);
   const [uploaded, setUploaded] = useState<string | null>(null);
   const [modelInfo, setModelInfo] = useState<{ id: string; description: string; context_window: number } | null>(null);
   const [input, setInput] = useState('');
@@ -24,7 +25,10 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
 
   const refreshQuota = useCallback(() => {
     getQuota()
-      .then((q) => setBalance(q.balance))
+      .then((q) => {
+        setBalance(q.balance);
+        setLedger(q.ledger as Array<Record<string, unknown>>);
+      })
       .catch(() => {});
   }, []);
 
@@ -210,6 +214,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
         onNew={() => void newChat()}
         user={user}
         balance={balance}
+        ledger={ledger}
         onLogout={() => {
           if (status === 'streaming') stop();
           onLogout();
@@ -232,7 +237,11 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
             </div>
           )}
           {liveMessages.map((m, i) => (
-            <ChatMessage key={i} msg={m} />
+            <ChatMessage
+              key={i}
+              msg={m}
+              onEdit={(t) => setInput(t)} // p6.10：编辑用户消息 → 回填输入框
+            />
           ))}
         </div>
         {quotaPaused && (
