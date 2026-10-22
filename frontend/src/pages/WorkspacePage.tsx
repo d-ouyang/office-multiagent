@@ -1,14 +1,39 @@
-// 工作台（p6.2a/p6.2c）：参考 RAG ChatView 布局 —— 侧栏(会话/用户) + 聊天流 + 底部输入条(模型切换)。
-// p6.2c：会话接真后端（创建/列表/历史/落库）；当前进行中的流式回答本地实时渲染，done 后已由后端落库。
+// 工作台：侧栏 + 聊天流 + 底部 PromptBar（发送 / 停止 / 上传 / 模型）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Attachment01Icon } from '@hugeicons/core-free-icons';
 
 import AppSidebar, { type SessionMeta, type SessionUser } from '../components/AppSidebar';
 import ChatMessage, { type ChatMessageData } from '../components/ChatMessage';
-import ModelPicker from '../components/ModelPicker';
+import FilePreview from '../components/FilePreview';
+import PromptBar, { type PromptBarModel } from '../components/bits/PromptBar';
+import { toPromptModel, type DialogueModel } from '../components/ModelPicker';
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import type { StreamEvent } from '../types';
 import { deriveCurrentAgent, agentLabel } from '../lib/derive';
 import { authHeaders, clearToken, createSession, getMessages, getQuota, listSessions } from '../lib/api';
+
+const EFFORTS = ['低', '高', '最大'] as const;
+const EFFORT_API: Record<string, string> = { 低: 'low', 高: 'high', 最大: 'max' };
+
+const SOURCES = [
+  {
+    key: 'files',
+    name: '上传文档',
+    description: '.md / .txt / .pdf，不超过 10MB',
+    icon: Attachment01Icon,
+    attach: true,
+  },
+];
+
+function basename(path: string): string {
+  return path.split('/').pop() || path;
+}
+
+function parseCreatedAt(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = Date.parse(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const { events, status, error, start, stop, reset } = useNdjsonStream('/api/v1/demo/stream');
@@ -16,35 +41,85 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
   const [currentId, setCurrentId] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
-  const [ledger, setLedger] = useState<Array<Record<string, unknown>>>([]);
-  const [attachments, setAttachments] = useState<Array<{ name: string; path: string }>>([]); // p6.12：随消息附件 chip
+  const [usage, setUsage] = useState<{ month_tokens: number; month_count: number; total_tokens: number; total_count: number } | null>(null);
+  const [modelName, setModelName] = useState('DeepSeek V3');
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [modelInfo, setModelInfo] = useState<{ id: string; description: string; context_window: number } | null>(null);
-  const [input, setInput] = useState('');
+  const [models, setModels] = useState<DialogueModel[]>([]);
+  const [incoming, setIncoming] = useState<{ id: number; files: string[] } | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sealedRef = useRef(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const fileWait = useRef<((file: File | null) => void) | null>(null);
+  const pathByLabel = useRef(new Map<string, string>());
+  const currentIdRef = useRef(currentId);
+  currentIdRef.current = currentId;
 
   const refreshQuota = useCallback(() => {
     getQuota()
       .then((q) => {
         setBalance(q.balance);
-        setLedger(q.ledger as Array<Record<string, unknown>>);
+        setUsage(q.usage ?? null);
       })
       .catch(() => {});
   }, []);
 
   const ensureSession = useCallback(async (): Promise<string> => {
-    if (currentId) return currentId;
+    if (currentIdRef.current) return currentIdRef.current;
     const sid = await createSession();
     setCurrentId(sid);
+    currentIdRef.current = sid;
     setSessions((prev) => [{ id: sid, title: '新会话', updatedAt: Date.now() }, ...prev]);
     return sid;
-  }, [currentId]);
+  }, []);
 
-  // 初始加载会话列表；无会话则先建一个（避免用户第一句话才建）
+  const remember = useCallback((path: string): string => {
+    const base = basename(path);
+    const taken = pathByLabel.current.get(base);
+    const label = taken && taken !== path ? path : base;
+    pathByLabel.current.set(label, path);
+    return label;
+  }, []);
+
+  const uploadFile = useCallback(async (file: File): Promise<string | null> => {
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res = await fetch('/api/v1/documents', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: fd,
+      });
+      if (res.status === 401) {
+        clearToken();
+        onLogout();
+        return null;
+      }
+      const data = await res.json();
+      if (!res.ok) {
+        setUploadError(`上传失败：${data?.detail?.message ?? `HTTP ${res.status}`}`);
+        setTimeout(() => setUploadError(null), 5000);
+        return null;
+      }
+      return String(data.file_name);
+    } catch (e) {
+      setUploadError(`上传失败：${(e as Error).message}`);
+      setTimeout(() => setUploadError(null), 5000);
+      return null;
+    }
+  }, [onLogout]);
+
+  useEffect(() => {
+    fetch('/api/v1/models')
+      .then((r) => r.json())
+      .then((d) => setModels(d.models ?? []))
+      .catch(() => setModels([]));
+  }, []);
+
   useEffect(() => {
     (async () => {
-      refreshQuota(); // p6.4：侧栏余额
+      refreshQuota();
       try {
         const list = await listSessions();
         if (!list.length) {
@@ -53,10 +128,9 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
           setSessions([{ id: sid, title: '新会话', updatedAt: Date.now() }]);
           return;
         }
-        // p6.12：updatedAt=后端最后活跃时间（最后一次问答），侧栏相对时间不再全是加载时刻
         setSessions(list.map((s) => ({ id: s.session_id, title: s.title, updatedAt: new Date(s.updated_at).getTime() || Date.now() })));
         setCurrentId(list[0].session_id);
-        await selectSession(list[0].session_id); // p6.7：初始也加载最近会话的历史+过程
+        await selectSession(list[0].session_id);
       } catch (e) {
         if ((e as Error).message === 'UNAUTHORIZED') onLogout();
       }
@@ -64,10 +138,9 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 切换会话：拉历史消息（p6.7：assistant 消息带 trace 过程事件，重建完整渲染）
   const selectSession = useCallback(async (sid: string) => {
     if (status === 'streaming') stop();
-    sealedRef.current = true; // 切走不固化当前流（后端已按 session 落库）
+    sealedRef.current = true;
     reset();
     setCurrentId(sid);
     setMessages([]);
@@ -75,30 +148,36 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
       const msgs = await getMessages(sid);
       setMessages(
         msgs.map((m) => {
+          const createdAt = parseCreatedAt(m.created_at);
           if (m.role === 'user') {
-            // p6.12：user 消息 trace 存附件列表（{"attachments":["dev/a.md"]}）——历史重建附件 chip
-            let atts: string[] | undefined;
+            let paths: string[] | undefined;
             if (m.trace) {
               try {
                 const parsed = JSON.parse(m.trace) as { attachments?: string[] };
-                atts = parsed.attachments?.map((p) => p.split('/')[1] ?? p);
+                paths = parsed.attachments;
               } catch {
-                atts = undefined; // 非 JSON trace（旧数据）忽略
+                paths = undefined;
               }
             }
-            return { role: 'user' as const, text: m.content, attachments: atts };
+            return {
+              role: 'user' as const,
+              text: m.content,
+              attachments: paths?.map(basename),
+              attachmentPaths: paths,
+              createdAt,
+            };
           }
-          let events: StreamEvent[] | undefined;
+          let evs: StreamEvent[] | undefined;
           if (m.trace) {
             try {
-              events = JSON.parse(m.trace) as StreamEvent[];
+              evs = JSON.parse(m.trace) as StreamEvent[];
             } catch {
-              events = undefined;
+              evs = undefined;
             }
           }
-          return events
-            ? { role: 'assistant' as const, events, streaming: false }
-            : { role: 'assistant' as const, content: m.content };
+            return evs
+            ? { role: 'assistant' as const, events: evs, streaming: false, createdAt, model: m.model ?? undefined, tokens: m.tokens ?? undefined }
+            : { role: 'assistant' as const, content: m.content, createdAt, model: m.model ?? undefined, tokens: m.tokens ?? undefined };
         }),
       );
     } catch (e) {
@@ -106,12 +185,10 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     }
   }, [status, stop, reset, onLogout]);
 
-  // 流结束/中断 → 把当前流固化进本地消息（后端已按 session 落库，trace 刷新可回读）。
-  // ⚠️ p6.7b 修：此前 done 时只 reset() 未固化——正文从界面瞬间消失，刷新后才回来。
   useEffect(() => {
     if ((status === 'done' || status === 'error') && events.length && !sealedRef.current) {
       sealedRef.current = true;
-      setMessages((prev) => [...prev, { role: 'assistant', events, streaming: false }]);
+      setMessages((prev) => [...prev, { role: 'assistant', events, streaming: false, createdAt: Date.now() }]);
       if (status === 'done') {
         listSessions()
           .then((list) => setSessions(list.map((s) => ({ id: s.session_id, title: s.title, updatedAt: new Date(s.updated_at).getTime() || Date.now() }))))
@@ -122,33 +199,36 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     }
   }, [status, events, reset, refreshQuota]);
 
-  // 自动滚底
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages.length, events.length, status]);
 
-  const sendTask = async () => {
-    const text = input.trim();
-    if (!text || status === 'streaming') return;
+  const dispatchTask = async (text: string, paths: string[], modelId?: string, force = false, effort?: string) => {
+    const trimmed = text.trim();
+    if ((!trimmed && paths.length === 0) || (status === 'streaming' && !force)) return;
     sealedRef.current = false;
-    setInput('');
-    const atts = attachments; // p6.12：随消息发出并清空 chip
-    setAttachments([]);
     try {
       const sid = await ensureSession();
       setMessages((prev) => [
         ...prev,
-        { role: 'user', text, attachments: atts.length ? atts.map((a) => a.name) : undefined },
+        {
+          role: 'user',
+          text: trimmed,
+          attachments: paths.length ? paths.map(basename) : undefined,
+          attachmentPaths: paths.length ? paths : undefined,
+          createdAt: Date.now(),
+        },
       ]);
-      const model = localStorage.getItem('office_model') || undefined; // p6.5：请求级模型
+      const model = modelId || localStorage.getItem('office_model') || undefined;
       void start({
         url: '/api/v1/tasks',
         method: 'POST',
         body: {
-          text,
+          text: trimmed,
           session_id: sid,
           model,
-          ...(atts.length ? { attachments: atts.map((a) => a.path) } : {}),
+          ...(effort ? { effort } : {}),
+          ...(paths.length ? { attachments: paths } : {}),
         },
         headers: authHeaders(),
         on401: () => {
@@ -161,48 +241,87 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     }
   };
 
-  // p6.5/p6.8：切换模型 → 更新当前会话默认模型 + 信息条
-  const onModelChange = async (m: { id: string; description: string; context_window: number } | null) => {
-    setModelInfo(m);
-    if (!currentId) return;
+  const onModelChange = async (m: PromptBarModel) => {
+    localStorage.setItem('office_model', m.key);
+    setModelName(m.name);
+    const sid = currentIdRef.current;
+    if (!sid) return;
     try {
-      await fetch(`/api/v1/sessions/${encodeURIComponent(currentId)}`, {
+      await fetch(`/api/v1/sessions/${encodeURIComponent(sid)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ model: m?.id || null }),
+        body: JSON.stringify({ model: m.key }),
       });
     } catch {
-      /* 静默：模型偏好已在 localStorage，下次请求仍按它带 */
+      /* 模型偏好已在 localStorage，下次请求仍会带上 */
     }
   };
 
-  // p6.6/p6.12：上传文档到自己的目录（供 read_document 读取）；成功进附件 chip，失败 banner 提示
-  const onUpload = async (file: File) => {
-    const fd = new FormData();
-    fd.append('file', file);
-    try {
-      const res = await fetch('/api/v1/documents', {
+  const pickFile = () =>
+    new Promise<File | null>((resolve) => {
+      const input = fileRef.current;
+      if (!input) {
+        resolve(null);
+        return;
+      }
+      let settled = false;
+      const finish = (file: File | null) => {
+        if (settled) return;
+        settled = true;
+        fileWait.current = null;
+        input.removeEventListener('cancel', onCancel);
+        resolve(file);
+      };
+      const onCancel = () => finish(null);
+      fileWait.current = finish;
+      input.addEventListener('cancel', onCancel, { once: true });
+      input.click();
+    });
+
+  const onAttach = async () => {
+    const file = await pickFile();
+    if (!file) return;
+    const path = await uploadFile(file);
+    if (!path) return;
+    return remember(path);
+  };
+
+  const onDropFiles = async (files: FileList) => {
+    const labels: string[] = [];
+    for (const file of Array.from(files)) {
+      const path = await uploadFile(file);
+      if (path) labels.push(remember(path));
+    }
+    if (labels.length) setIncoming({ id: Date.now(), files: labels });
+  };
+
+  const onEditSubmit = async (index: number, text: string, paths: string[]): Promise<boolean> => {
+    if (status === 'streaming') {
+      sealedRef.current = true;
+      stop();
+      reset();
+    }
+    const sid = currentIdRef.current;
+    if (sid) {
+      const res = await fetch(`/api/v1/sessions/${encodeURIComponent(sid)}/rewind`, {
         method: 'POST',
-        headers: authHeaders(), // 不要设 Content-Type：浏览器自动带 multipart boundary
-        body: fd,
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ keep: index }),
       });
       if (res.status === 401) {
         clearToken();
         onLogout();
-        return;
+        return false;
       }
-      const data = await res.json();
-      if (res.ok) {
-        const path = String(data.file_name);
-        setAttachments((prev) => [...prev.filter((a) => a.path !== path), { name: path.split('/')[1] ?? path, path }]);
-      } else {
-        setUploadError(`上传失败：${data?.detail?.message ?? `HTTP ${res.status}`}`);
+      if (!res.ok) {
+        setUploadError('无法从这条消息重新开始，请稍后再试');
         setTimeout(() => setUploadError(null), 5000);
+        return false;
       }
-    } catch (e) {
-      setUploadError(`上传失败：${(e as Error).message}`);
-      setTimeout(() => setUploadError(null), 5000);
     }
+    setMessages((prev) => prev.slice(0, index));
+    await dispatchTask(text, paths, localStorage.getItem('office_model') || undefined, true);
+    return true;
   };
 
   const newChat = async () => {
@@ -226,6 +345,8 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     [messages, events, status],
   );
 
+  const promptModels = useMemo(() => models.map(toPromptModel), [models]);
+  const defaultModel = localStorage.getItem('office_model') || 'deepseek-chat';
   const currentAgent = deriveCurrentAgent(events);
 
   return (
@@ -237,7 +358,8 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
         onNew={() => void newChat()}
         user={user}
         balance={balance}
-        ledger={ledger}
+        usage={usage}
+        modelName={modelName}
         onLogout={() => {
           if (status === 'streaming') stop();
           onLogout();
@@ -262,75 +384,68 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
           {liveMessages.map((m, i) => (
             <ChatMessage
               key={i}
+              index={i}
               msg={m}
-              onEdit={(t) => setInput(t)} // p6.10：编辑用户消息 → 回填输入框
+              onEditSubmit={(idx, text, paths) => void onEditSubmit(idx, text, paths)}
+              onPreview={setPreviewPath}
             />
           ))}
         </div>
         {uploadError && <div className="banner warn">{uploadError}</div>}
-        {modelInfo && (
-          <div className="model-info" title={modelInfo.description}>
-            当前模型：{modelInfo.id} · 上下文 {modelInfo.context_window >= 1_000_000 ? `${Math.round(modelInfo.context_window / 1_000_000)}M` : `${Math.round(modelInfo.context_window / 1000)}K`} —— {modelInfo.description}
-          </div>
-        )}
         {error && <div className="banner err">{error}</div>}
-        <footer
-          className="input-bar"
-          onDragOver={(e) => e.preventDefault()}
+        <div
+          className={`composer-wrap${dragOver ? ' drag' : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
           onDrop={(e) => {
             e.preventDefault();
-            const f = e.dataTransfer.files?.[0];
-            if (f) void onUpload(f);
+            setDragOver(false);
+            if (e.dataTransfer.files?.length) void onDropFiles(e.dataTransfer.files);
           }}
         >
-          {/* p6.12b：附件 tag 在输入框内部上方展示；hover 显示完整路径（即随消息发给后端的引用路径） */}
-          {attachments.length > 0 && (
-            <div className="attach-row inside">
-              {attachments.map((a) => (
-                <span key={a.path} className="attach-chip" title={`路径（随消息发送给助手）：${a.path}`}>
-                  📎 {a.name}
-                  <button
-                    className="attach-remove"
-                    title="移除附件"
-                    onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          <ModelPicker onChange={(m) => void onModelChange(m)} />
-          <label className="upload-btn" title="上传文档（.md/.txt/.pdf，≤10MB），也可直接拖拽文件到输入条">
-            📎
-            <input
-              type="file"
-              accept=".md,.txt,.pdf"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void onUpload(f);
-                e.target.value = '';
-              }}
-            />
-          </label>
-          <input
-            className="task-input"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
+          <PromptBar
             placeholder="输入任务，回车发送…（可拖拽文件上传）"
-            onKeyDown={(e) => e.key === 'Enter' && sendTask()}
-            disabled={status === 'streaming'}
+            sources={SOURCES}
+            commands={[]}
+            models={promptModels}
+            defaultModel={defaultModel}
+            efforts={[...EFFORTS]}
+            defaultEffort="高"
+            busy={status === 'streaming'}
+            onOpenFile={(label) => setPreviewPath(pathByLabel.current.get(label) ?? label)}
+            onSend={(text, detail) => {
+              const paths = detail.attachments.map((label) => pathByLabel.current.get(label) ?? label);
+              const effort = detail.effort ? EFFORT_API[detail.effort] : undefined;
+              void dispatchTask(text, paths, detail.model?.key, false, effort);
+            }}
+            onStop={stop}
+            onAttach={onAttach}
+            onModelChange={(m) => void onModelChange(m)}
+            incoming={incoming}
+            background="#1a1f27"
+            color="#e6e9ef"
+            menuBackground="#222834"
+            sparkColor="#58a6ff"
+            width={1200}
+            radius={16}
+            maxRows={5}
           />
-          <button className="send" onClick={() => void sendTask()} disabled={status === 'streaming' || !input.trim()}>
-            发送
-          </button>
-          {status === 'streaming' && (
-            <button className="ghost" onClick={stop}>
-              停止
-            </button>
-          )}
-        </footer>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".md,.txt,.pdf"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0] ?? null;
+              e.target.value = '';
+              fileWait.current?.(file);
+            }}
+          />
+        </div>
+        {previewPath && <FilePreview path={previewPath} onClose={() => setPreviewPath(null)} />}
       </main>
     </div>
   );

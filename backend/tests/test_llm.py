@@ -212,3 +212,28 @@ def test_chat_stream_no_retry_after_emitting(monkeypatch):
         )
     assert got == ["chunk1"]  # 已出字不重试（防重复输出）
     assert calls["n"] == 1
+
+
+def test_chat_includes_reasoning_effort_only_when_set(monkeypatch):
+    import json
+
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_OK_BODY)
+
+    chat(
+        "deepseek-chat",
+        [{"role": "user", "content": "hi"}],
+        reasoning_effort="max",
+        transport=httpx.MockTransport(handler),
+    )
+    assert seen["body"]["reasoning_effort"] == "max"
+    chat(
+        "deepseek-chat",
+        [{"role": "user", "content": "hi"}],
+        transport=httpx.MockTransport(handler),
+    )
+    assert "reasoning_effort" not in seen["body"]

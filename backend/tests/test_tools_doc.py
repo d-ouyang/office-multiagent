@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from pypdf import PdfWriter
 
-from app.orchestration.tools_doc import check_inside_base, make_read_document_tool
+from app.orchestration.tools_doc import check_inside_base, make_read_document_tool, normalize_doc_name
 
 
 @pytest.fixture
@@ -86,3 +86,41 @@ def test_check_inside_base_allows_nested(doc_dir):
     (doc_dir / "sub").mkdir()
     p = check_inside_base(doc_dir, "sub/leave.md")
     assert p.name == "leave.md"
+
+
+def test_owner_dir_accepts_basename_and_prefixed_name(doc_dir):
+    """工具根目录已是用户目录时，文件名和「用户名/文件名」都能读到同一份文件。"""
+    user = doc_dir / "dev"
+    user.mkdir()
+    (user / "指南.md").write_text("备案要点", encoding="utf-8")
+    tool = make_read_document_tool(base_dir=str(user), owner="dev")
+    assert tool("指南.md")["content"] == "备案要点"
+    assert tool("dev/指南.md")["content"] == "备案要点"
+    with pytest.raises(ValueError, match="非法路径"):
+        tool("../leave.md")
+
+
+def test_normalize_strips_only_owner_prefix():
+    assert normalize_doc_name("dev/指南.pdf", "dev") == "指南.pdf"
+    assert normalize_doc_name("指南.pdf", "dev") == "指南.pdf"
+    assert normalize_doc_name("dev/指南.pdf", None) == "dev/指南.pdf"
+    assert normalize_doc_name("/etc/passwd", "dev") == "/etc/passwd"
+
+
+def test_registry_scopes_read_to_username(tmp_path, monkeypatch):
+    from app.core.config import settings
+    from app.orchestration.agents import build_default_registry
+
+    base = tmp_path / "upload"
+    (base / "dev").mkdir(parents=True)
+    (base / "other").mkdir()
+    (base / "dev" / "指南.md").write_text("本人的文件", encoding="utf-8")
+    (base / "other" / "指南.md").write_text("别人的文件", encoding="utf-8")
+    monkeypatch.setattr(settings, "documents_dir", str(base))
+    reg = build_default_registry(None, username="dev")
+    own = reg.call("read_document", file_name="指南.md", max_retries=0)
+    assert own.ok and own.output["content"] == "本人的文件"
+    prefixed = reg.call("read_document", file_name="dev/指南.md", max_retries=0)
+    assert prefixed.ok and prefixed.output["content"] == "本人的文件"
+    escaped = reg.call("read_document", file_name="../other/指南.md", max_retries=0)
+    assert escaped.ok is False

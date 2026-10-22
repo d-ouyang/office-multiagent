@@ -16,6 +16,7 @@ export interface AuthenticatedUser {
   userId: string | number;
   username: string;
   role: string;
+  tv: number;
 }
 
 @Injectable()
@@ -38,6 +39,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       userId: payload.sub ?? payload.userId ?? '',
       username: payload.username ?? '',
       role: payload.role ?? 'user',
+      tv: Number(payload.tv ?? 0),
     };
   }
 }

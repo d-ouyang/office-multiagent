@@ -127,6 +127,7 @@ class LlmBrain:
         stream: bool = False,
         on_content: Callable[[str], None] | None = None,
         on_thought: Callable[[str], None] | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
         self.model_id = model_id
         self._tools = tools
@@ -134,11 +135,11 @@ class LlmBrain:
         self._chat_stream: ChatStreamFn = chat_stream_fn or default_chat_stream
         self._timeout = timeout
         self._max_steps_hint = max_steps_hint
-        # p5.1b：AgentSpec 的角色指令（config/agents.yaml）；None 用通用角色
         self._custom_system = (system_prompt or "").strip() or None
         self._stream = stream
         self._on_content = on_content
         self._on_thought = on_thought
+        self._effort = reasoning_effort or None
         self.usage: dict[str, int] = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -189,7 +190,12 @@ class LlmBrain:
         if self._stream:
             return self._next_step_streaming(messages)
         try:
-            res = self._chat(self.model_id, messages, timeout=self._timeout)
+            res = self._chat(
+                self.model_id,
+                messages,
+                timeout=self._timeout,
+                reasoning_effort=self._effort,
+            )
         except LlmError as e:
             logger.warning("LLM brain 调用失败，如实给阶段结论 | %s", e)
             return Step(thought="模型调用失败", final=f"模型暂不可用，无法继续完成该任务：{e}")
@@ -228,6 +234,7 @@ class LlmBrain:
                 on_chunk=_on_chunk,
                 on_thought=_on_thought,
                 timeout=self._timeout,
+                reasoning_effort=self._effort,
             )
         except LlmError as e:
             logger.warning("LLM brain 流式调用失败，如实给阶段结论 | %s", e)
@@ -276,6 +283,7 @@ def make_brain(
     stream: bool = False,
     on_content: Callable[[str], None] | None = None,
     on_thought: Callable[[str], None] | None = None,
+    reasoning_effort: str | None = None,
 ) -> Brain:
     """配置驱动的 Brain 工厂：模型+密钥就绪 → LlmBrain；否则回落 StubBrain（可测基线）。"""
     mid = model_id or settings.llm_brain_model
@@ -293,4 +301,5 @@ def make_brain(
         stream=stream,
         on_content=on_content,
         on_thought=on_thought,
+        reasoning_effort=reasoning_effort,
     )

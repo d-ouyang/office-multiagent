@@ -9,7 +9,7 @@ import { UserRepo } from './user-repo';
 // init.sql 种子 dev 的真实 bcrypt hash（明文 Office@2026，cost 12）
 const DEV_HASH = '$2b$12$bKWdpuPQGPIxCXoWyzhHaeVlvkE3eRXiiuH2Gqp6VOJDrFcVwrJrS';
 const DEV_ROW = {
-  id: 1, employee_id: 'EMP001', username: 'dev', password_hash: DEV_HASH, role: 'admin',
+  id: 1, employee_id: 'EMP001', username: 'dev', password_hash: DEV_HASH, role: 'admin', token_version: 0,
 };
 
 async function makeController(repo: Partial<UserRepo>) {
@@ -40,8 +40,8 @@ describe('AuthController.login（p6.1）', () => {
     const res = await controller.login({ username: 'dev', password: 'Office@2026' });
     expect(res.access_token).toBe('test-token');
     expect(res.user).toEqual({ employee_id: 'EMP001', username: 'dev', role: 'admin' });
-    expect(getPayload()!['sub']).toBe('EMP001'); // §2.8：身份键=工号
-    expect(getPayload()!['username']).toBe('dev');
+    expect(getPayload()!['sub']).toBe('EMP001');
+    expect(getPayload()!['tv']).toBe(0);
   });
 
   it('用户不存在 → 401 BAD_CREDENTIALS（与密码错误同一错误，不泄露账号存在性）', async () => {
@@ -76,5 +76,48 @@ describe('AuthController.login（p6.1）', () => {
     const { controller } = await makeController({});
     expect(controller.me({ user: { userId: 'EMP001', username: 'dev', role: 'admin' } } as never))
       .toEqual({ employee_id: 'EMP001', username: 'dev', role: 'admin' });
+  });
+});
+
+describe('AuthController.changePassword', () => {
+  const row = { ...DEV_ROW, token_version: 0, id: 1 };
+
+  it('旧密码正确：更新并签发带新 tv 的 token', async () => {
+    const updatePassword = jest.fn(async () => 1);
+    const { controller, getPayload } = await makeController({
+      findByEmployeeId: jest.fn(async () => row),
+      updatePassword,
+    });
+    const res = await controller.changePassword(
+      { old_password: 'Office@2026', new_password: 'Office@2027' },
+      { user: { userId: 'EMP001', tv: 0 } } as never,
+    );
+    expect(res.access_token).toBe('test-token');
+    expect(updatePassword).toHaveBeenCalled();
+    expect(getPayload()!['tv']).toBe(1);
+  });
+
+  it('token_version 不一致 → 401', async () => {
+    const { controller } = await makeController({
+      findByEmployeeId: jest.fn(async () => ({ ...row, token_version: 2 })),
+    });
+    await expect(
+      controller.changePassword(
+        { old_password: 'Office@2026', new_password: 'Office@2027' },
+        { user: { userId: 'EMP001', tv: 0 } } as never,
+      ),
+    ).rejects.toMatchObject({ status: 401, response: { code: 'TOKEN_REVOKED' } });
+  });
+
+  it('新密码太短 → 400', async () => {
+    const { controller } = await makeController({
+      findByEmployeeId: jest.fn(async () => row),
+    });
+    await expect(
+      controller.changePassword(
+        { old_password: 'Office@2026', new_password: 'short' },
+        { user: { userId: 'EMP001', tv: 0 } } as never,
+      ),
+    ).rejects.toMatchObject({ status: 400, response: { code: 'WEAK_PASSWORD' } });
   });
 });

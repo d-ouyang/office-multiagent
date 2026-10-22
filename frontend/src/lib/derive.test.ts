@@ -6,6 +6,7 @@ import {
   deriveArtifacts,
   deriveContent,
   deriveCurrentAgent,
+  deriveReplyMeta,
   deriveSources,
   deriveThinking,
   deriveToolCalls,
@@ -123,5 +124,21 @@ describe('deriveFailure（p6.12b 失败/暂停专门展示）', () => {
 
   it('正常完成无失败 → null', () => {
     expect(deriveFailure([ev('content_delta', { delta: 'hi' }), ev('done', { status: 'done' })])).toBeNull();
+  });
+});
+
+describe('deriveReplyMeta', () => {
+  it('从 done 取用量和模型，耗时为首尾事件差', () => {
+    const meta = deriveReplyMeta([
+      { ...ev('content_delta', { delta: '答' }, 1), ts: 1000 },
+      { ...ev('done', { status: 'single', tokens_used: 3011, model: 'deepseek-chat' }, 2), ts: 4200 },
+    ]);
+    expect(meta).toEqual({ tokens: 3011, model: 'deepseek-chat', durationMs: 3200, endedAt: 4200 });
+  });
+
+  it('没有用量字段时不把 0 当成真实消耗', () => {
+    const meta = deriveReplyMeta([ev('done', { status: 'done' })]);
+    expect(meta.tokens).toBeUndefined();
+    expect(meta.model).toBeUndefined();
   });
 });

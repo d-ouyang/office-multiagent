@@ -1,5 +1,8 @@
 // 应用侧栏（p6.2→p6.12，参考 RAG AppSidebar / WorkBuddy）：会话列表（相对时间 + 超出 10 条折叠）+ 底部用户信息（点用户名展开最近用量）/退出。
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
+import { APP_BLURB, APP_VERSION } from '../version';
+import { AccountPanel, type UsageSummary } from './AccountPanel';
 
 export interface SessionMeta {
   id: string;
@@ -46,19 +49,34 @@ export function AppSidebar(props: {
   onSelect: (id: string) => void;
   onNew: () => void;
   user: SessionUser;
-  balance?: number | null;   // p6.4：token 余额
-  ledger?: Array<{ task_id?: string; model?: string; reserve?: number; settle?: number; created_at?: string }>; // p6.10：最近流水
+  balance?: number | null;
+  usage?: UsageSummary | null;
+  modelName?: string;
   onLogout: () => void;
 }) {
-  const [showLedger, setShowLedger] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
   const visible = props.sessions.slice(0, visibleCount);
   const remaining = props.sessions.length - visible.length;
+
+  useEffect(() => {
+    if (!accountOpen) return undefined;
+    const onDown = (e: PointerEvent) => {
+      if (!accountRef.current?.contains(e.target as Node)) setAccountOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [accountOpen]);
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
         <span className="brand-dot" />
-        office-multiagent
+        <div className="brand-copy">
+          <div className="brand-name">office-multiagent</div>
+          <div className="brand-blurb">{APP_BLURB}</div>
+          <div className="brand-version">{APP_VERSION}</div>
+        </div>
       </div>
       <button className="new-chat" onClick={props.onNew}>
         ＋ 新会话
@@ -94,37 +112,23 @@ export function AppSidebar(props: {
           </div>
         )}
       </div>
-      <div className="sidebar-user">
-        <div className="user-info">
-          <div
-            className="user-name clickable"
-            title="点击展开最近用量"
-            onClick={() => setShowLedger((v) => !v)}
-          >
-            {props.user.username}
-            {props.balance != null && (
-              <span className="balance-badge">{props.balance.toLocaleString()}</span>
-            )}
-          </div>
-          <div className="user-meta">
-            {props.user.employee_id} · {props.user.role}
-          </div>
-          {showLedger && props.ledger && props.ledger.length > 0 && (
-            <div className="ledger-list">
-              {props.ledger
-                .filter((l) => l.settle != null)
-                .slice(0, 8)
-                .map((l, i) => (
-                  <div key={i} className="ledger-row">
-                    <span className="ledger-model">{l.model || '-'}</span>
-                    <span className="ledger-tokens">-{(l.settle ?? 0).toLocaleString()}</span>
-                  </div>
-                ))}
-            </div>
-          )}
-        </div>
-        <button className="logout" onClick={props.onLogout} title="退出登录">
-          退出
+      <div className="sidebar-user" ref={accountRef}>
+        {accountOpen && (
+          <AccountPanel
+            user={props.user}
+            balance={props.balance ?? null}
+            usage={props.usage ?? null}
+            modelName={props.modelName || 'DeepSeek V3'}
+            onClose={() => setAccountOpen(false)}
+            onLogout={props.onLogout}
+          />
+        )}
+        <button type="button" className="user-chip" onClick={() => setAccountOpen((v) => !v)} aria-expanded={accountOpen}>
+          <span className="account-avatar sm" aria-hidden="true">{(props.user.username || '?').slice(0, 1).toUpperCase()}</span>
+          <span className="user-info">
+            <span className="user-name">{props.user.username}</span>
+            <span className="user-meta">{props.user.employee_id} · {props.user.role}</span>
+          </span>
         </button>
       </div>
     </aside>

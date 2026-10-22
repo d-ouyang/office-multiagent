@@ -75,6 +75,7 @@ def chat(
     *,
     timeout: float | None = None,
     temperature: float = 0.2,
+    reasoning_effort: str | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> LlmResult:
     """调一次 /chat/completions（非流式，网络类失败自动重试 2 次）。
@@ -84,7 +85,14 @@ def chat(
     last_err: Exception | None = None
     for attempt in range(3):
         try:
-            return _chat_once(model_id, messages, timeout=timeout, temperature=temperature, transport=transport)
+            return _chat_once(
+                model_id,
+                messages,
+                timeout=timeout,
+                temperature=temperature,
+                reasoning_effort=reasoning_effort,
+                transport=transport,
+            )
         except LlmError as e:
             last_err = e
             # 只重试网络类瞬时错误；4xx（鉴权/参数）重试无意义
@@ -106,15 +114,18 @@ def _chat_once(
     *,
     timeout: float | None = None,
     temperature: float = 0.2,
+    reasoning_effort: str | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> LlmResult:
     base_url, api_key, api_model = resolve_model(model_id)
     url = base_url.rstrip("/") + "/chat/completions"
-    payload = {
+    payload: dict[str, Any] = {
         "model": api_model,
         "messages": messages,
         "temperature": temperature,
     }
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
     headers = {"Authorization": f"Bearer {api_key}"}
     try:
         with httpx.Client(timeout=timeout or settings.llm_timeout, transport=transport) as client:
@@ -146,6 +157,7 @@ def chat_stream(
     on_thought: Callable[[str], None] | None = None,
     timeout: float | None = None,
     temperature: float = 0.2,
+    reasoning_effort: str | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> LlmResult:
     """流式 /chat/completions（p6.3 真流式管道）。
@@ -158,13 +170,15 @@ def chat_stream(
     """
     base_url, api_key, api_model = resolve_model(model_id)
     url = base_url.rstrip("/") + "/chat/completions"
-    payload = {
+    payload: dict[str, Any] = {
         "model": api_model,
         "messages": messages,
         "temperature": temperature,
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
     headers = {"Authorization": f"Bearer {api_key}"}
     parts: list[str] = []
     usage: dict[str, Any] = {}

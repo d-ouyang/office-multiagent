@@ -99,3 +99,14 @@ def test_demo_stream_endpoint_ndjson():
     for must in (EventType.TOOL_CALL_START, EventType.OBSERVATION, EventType.ARTIFACT,
                  EventType.SOURCE, EventType.TASK_SUMMARY):
         assert must in types
+
+
+def test_done_carries_optional_usage():
+    em = RunEventEmitter("r", "t")
+    ev = em.done("single", tokens_used=12, model="deepseek-chat")
+    assert ev.data["status"] == "single"
+    assert ev.data["tokens_used"] == 12
+    assert ev.data["model"] == "deepseek-chat"
+    bare = em.done()
+    assert "tokens_used" not in bare.data
+    assert "model" not in bare.data

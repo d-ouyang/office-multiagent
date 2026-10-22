@@ -148,3 +148,33 @@ export function deriveFailure(events: StreamEvent[]): FailureInfo | null {
   }
   return null;
 }
+
+export interface ReplyMeta {
+  tokens?: number;
+  model?: string;
+  durationMs?: number;
+  endedAt?: number;
+}
+
+/** 回复行：done 事件上的用量/模型，以及首尾事件时间差。 */
+export function deriveReplyMeta(events: StreamEvent[]): ReplyMeta {
+  let tokens: number | undefined;
+  let model: string | undefined;
+  let first = 0;
+  let last = 0;
+  for (const ev of events) {
+    if (typeof ev.ts === 'number' && ev.ts > 0) {
+      if (!first) first = ev.ts;
+      last = ev.ts;
+    }
+    if (ev.type !== 'done') continue;
+    if (typeof ev.data.tokens_used === 'number') tokens = ev.data.tokens_used;
+    if (ev.data.model) model = String(ev.data.model);
+  }
+  return {
+    tokens,
+    model,
+    durationMs: first > 0 && last >= first ? last - first : undefined,
+    endedAt: last || undefined,
+  };
+}

@@ -35,9 +35,22 @@ def resolve_user(authorization: str | None) -> dict[str, Any] | None:
     employee_id = str(payload.get("sub") or "")
     if not employee_id:
         return None
-    with get_engine().connect() as conn:
-        row = conn.execute(
-            text("SELECT id, employee_id, username, role, model_pool_id FROM `user` WHERE employee_id = :eid"),
-            {"eid": employee_id},
-        ).mappings().first()
-    return dict(row) if row else None
+    tv = int(payload.get("tv") or 0)
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT id, employee_id, username, role, model_pool_id, token_version "
+                    "FROM `user` WHERE employee_id = :eid"
+                ),
+                {"eid": employee_id},
+            ).mappings().first()
+    except Exception as e:  # noqa: BLE001 - 库不可用或列未迁移：fail-closed
+        logger.warning("身份查询失败：%s", e)
+        return None
+    if not row:
+        return None
+    if int(row.get("token_version") or 0) != tv:
+        logger.info("JWT token_version 不匹配，旧登录态已失效 employee_id=%s", employee_id)
+        return None
+    return dict(row)

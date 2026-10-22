@@ -28,6 +28,9 @@ class ModelEntry(BaseModel):
     context_window: int = 0
     max_output: int = 0
     supports_reasoning: bool = False
+    # 该模型真正生效的 reasoning_effort，从低到高。空列表表示不要下发该参数。
+    # 界面固定三档 low/high/max，少于三档时由 map_reasoning_effort 把较低档合并。
+    reasoning_efforts: list[str] = Field(default_factory=list)
     pool_ids: list[str] = Field(default_factory=list)
     cost_per_1k: float = 0.0
     api_model: str = ""  # 实际调用名（provider 的模型 id）
@@ -107,3 +110,39 @@ def get_logic_model(role: str) -> ModelEntry | None:
 
 def get_provider(name: str) -> ProviderEntry | None:
     return load_registry()["providers"].get(name)
+
+
+def supports_reasoning(model_id: str | None) -> bool:
+    """该对话模型是否会思考。未注册则否。"""
+    if not model_id:
+        return False
+    reg = load_registry()
+    entry = next((m for m in reg["models"] if m.id == model_id), None)
+    return bool(entry and entry.supports_reasoning)
+
+
+_EFFORT_ALIAS = {"minimal": "low", "medium": "high", "xhigh": "max"}
+
+
+def map_reasoning_effort(model_id: str | None, requested: str | None) -> str | None:
+    """把界面三档（low/high/max）收成该模型真正接受的档。
+
+    模型没有 reasoning_efforts 时返回 None（不下发，避免 400）。
+    两档模型：low 与 high 都落到较低那一档，只有 max 落到最高档。
+    三档模型：一一对应。
+    """
+    if not model_id or not requested:
+        return None
+    requested = _EFFORT_ALIAS.get(requested, requested)
+    if requested == "none":
+        return None
+    reg = load_registry()
+    entry = next((m for m in reg["models"] if m.id == model_id), None)
+    levels = [x for x in (entry.reasoning_efforts if entry else []) if x]
+    if not levels:
+        return None
+    if requested == "max":
+        return levels[-1]
+    if len(levels) >= 3 and requested in levels:
+        return requested
+    return levels[0]

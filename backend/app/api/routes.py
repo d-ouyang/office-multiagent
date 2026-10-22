@@ -76,6 +76,7 @@ class TaskRequest(BaseModel):
     session_id: str | None = None  # p6.2c：会话 id（不传则按登录身份自动新建）
     model: str | None = None     # p6.5：本次任务使用的对话模型（注册表 id；不传用会话/默认）
     attachments: list[str] | None = None  # p6.12：随消息附件（文档目录内相对路径，如 "dev/报告.md"）
+    effort: str | None = None    # low/medium/high/max；非推理模型忽略，不 400
 
 
 class UpdateSessionRequest(BaseModel):
@@ -84,6 +85,13 @@ class UpdateSessionRequest(BaseModel):
 
 class CreateSessionRequest(BaseModel):
     model: str | None = None     # p6.2c/p6.5：会话默认模型
+
+
+class RewindRequest(BaseModel):
+    keep: int  # 保留的消息条数（被编辑的用户消息下标；该条及其后全部删除）
+
+
+_EFFORTS = {"low", "medium", "high", "max"}
 
 
 def _known_model_ids() -> set[str]:
@@ -139,8 +147,12 @@ def _compose_task_text(text: str, attachments: list[str]) -> str:
     """p6.12：附件以 prompt 前缀注入（不动正文），告知 LLM 有哪些文件可读。"""
     if not attachments:
         return text
-    names = "、".join(a.split("/", 1)[1] for a in attachments)
-    return f"[用户随消息上传了附件：{names}。可用 read_document 按文件名读取；如需基于附件内容回答，请先读取再作答。]\n\n{text}"
+    names = "、".join(a.split("/", 1)[-1] for a in attachments)
+    return (
+        f"[用户随消息上传了这些文件，已放在当前用户的上传目录：{names}。"
+        f"请调用 read_document，file_name 只填文件名，不要加目录，也不要写本机路径。"
+        f"回答前先读取文件内容。]\n\n{text}"
+    )
 
 
 @router.post("/sessions")
@@ -189,6 +201,21 @@ def update_session(session_id: str, body: UpdateSessionRequest, authorization: s
     return {"ok": True}
 
 
+@router.post("/sessions/{session_id}/rewind")
+def rewind_session(session_id: str, body: RewindRequest, authorization: str | None = Header(default=None)):
+    """编辑重发：删掉第 keep 条（0 起）及其后的消息，对话从这里重新开始。"""
+    if body.keep < 0:
+        raise HTTPException(400, detail={"code": "BAD_KEEP", "message": "keep 不能为负"})
+    user = _current_user(authorization)
+    from ..core.session_repo import SessionRepo
+
+    repo = SessionRepo()
+    if not repo.session_belongs_to(session_id, user["id"]):
+        raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"})
+    deleted = repo.trim_messages_after(session_id, body.keep)
+    return {"deleted": deleted}
+
+
 @router.get("/quota")
 def my_quota(authorization: str | None = Header(default=None)):
     """p6.4：我的 token 余额 + 最近流水（§十四 两段式结算的账本）。"""
@@ -199,7 +226,8 @@ def my_quota(authorization: str | None = Header(default=None)):
     pool = TokenPool(get_engine())
     return {
         "balance": pool.balance(user["id"]),
-        "ledger": pool.recent(user["id"], limit=10),
+        "ledger": pool.recent(user["id"], limit=50),
+        "usage": pool.usage_summary(user["id"]),
     }
 
 
@@ -229,6 +257,25 @@ async def upload_document(file: UploadFile = File(...), authorization: str | Non
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(content)
     return {"file_name": f"{user['username']}/{name}", "size": len(content)}
+
+
+@router.get("/documents/content")
+def own_document(name: str, authorization: str | None = Header(default=None)):
+    """预览本人已上传的文件。只读自己的目录，路径穿越按 basename 拍平后仍必须落在该目录内。"""
+    from pathlib import Path as _Path
+
+    from fastapi.responses import FileResponse
+
+    user = _current_user(authorization)
+    stored = _validate_attachments([name], str(user["username"]))
+    filename = stored[0].split("/", 1)[1]
+    path = _Path(settings.documents_dir) / str(user["username"]) / filename
+    media = {
+        ".md": "text/markdown; charset=utf-8",
+        ".txt": "text/plain; charset=utf-8",
+        ".pdf": "application/pdf",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media, filename=filename, content_disposition_type="inline")
 
 
 @router.post("/tasks")
@@ -274,6 +321,8 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
         raise HTTPException(400, detail={"code": "BAD_MODEL", "message": f"未知模型：{effective_model}"})
     if effective_model is None and session_id:
         effective_model = repo.get_session_model(session_id)
+    if body.effort is not None and body.effort not in _EFFORTS:
+        raise HTTPException(400, detail={"code": "BAD_EFFORT", "message": f"未知力度：{body.effort}"})
     # p6.12：随消息附件——fail-closed 校验（自己目录内且存在），以 prompt 前缀注入任务文本
     validated_attachments = _validate_attachments(body.attachments, str(user["username"]))
     effective_text = _compose_task_text(body.text, validated_attachments)
@@ -288,6 +337,8 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
                 token_pool=pool,
                 sink=q.put,
                 model=effective_model,
+                effort=body.effort,
+                username=str(user["username"]),
             )
             # p6.2c/p6.7：落库（user 消息 + assistant 终答+过程事件 trace + task 记录）。
             # 落库失败不影响已完成的流（任务结果已推给用户），但必须 ERROR 级可见

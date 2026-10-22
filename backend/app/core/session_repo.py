@@ -114,15 +114,68 @@ class SessionRepo:
                 ),
                 {"s": session_id, "l": limit},
             ).mappings().all()
-        return [
+        out = [
             {
                 "role": r["role"],
                 "content": r["content"],
-                "trace": r["trace"],  # p6.7：过程事件 JSON（assistant 消息有；user 消息为 None）
-                "created_at": _iso_utc(r["created_at"]),  # p6.12c：带 UTC 标记
+                "trace": r["trace"],
+                "created_at": _iso_utc(r["created_at"]),
             }
             for r in rows
         ]
+        self._attach_turn_usage(session_id, out)
+        return out
+
+    def _attach_turn_usage(self, session_id: str, messages: list[dict[str, Any]]) -> None:
+        """给还没有模型信息的助手消息补上账本里的 model / tokens。
+
+        按时间尾部对齐：最近的结算对应最近的助手消息。trace 里已有的模型优先，这里只填空。
+        """
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT l.model AS model, l.settle AS settle FROM token_ledger l "
+                    "JOIN session s ON s.user_id = l.user_id "
+                    "WHERE s.id = :sid AND l.settle IS NOT NULL ORDER BY l.id"
+                ),
+                {"sid": session_id},
+            ).mappings().all()
+        assistants = [m for m in messages if m.get("role") == "assistant"]
+        n = min(len(rows), len(assistants))
+        for msg, row in zip(assistants[-n:], rows[-n:]):
+            if not msg.get("model") and row.get("model"):
+                msg["model"] = row["model"]
+            if msg.get("tokens") is None and row.get("settle") is not None:
+                msg["tokens"] = int(row["settle"])
+
+    def trim_messages_after(self, session_id: str, keep: int) -> int:
+        """保留按 id 排序的前 keep 条消息，删掉其后的。
+
+        编辑某条用户消息并重发时，keep = 该消息在列表中的下标（它自己以及之后的回复都删掉）。
+        """
+        if keep < 0:
+            keep = 0
+        with self.engine.begin() as conn:
+            rows = conn.execute(
+                text("SELECT id FROM message WHERE session_id = :s ORDER BY id"),
+                {"s": session_id},
+            ).all()
+            drop = [r[0] for r in rows[keep:]]
+            if not drop:
+                return 0
+            params: dict[str, Any] = {"s": session_id}
+            holders = []
+            for i, mid in enumerate(drop):
+                key = f"id{i}"
+                holders.append(f":{key}")
+                params[key] = mid
+            res = conn.execute(
+                text(
+                    f"DELETE FROM message WHERE session_id = :s AND id IN ({', '.join(holders)})"
+                ),
+                params,
+            )
+            return int(res.rowcount or 0)
 
     def record_task(
         self,

@@ -147,8 +147,20 @@ class RunEventEmitter:
     def task_summary(self, artifacts: list[dict[str, Any]], sources: list[dict[str, Any]]) -> Event:
         return self.emit(EventType.TASK_SUMMARY, artifacts=artifacts, sources=sources)
 
-    def done(self, status: str = "done") -> Event:
-        return self.emit(EventType.DONE, status=status)
+    def done(
+        self,
+        status: str = "done",
+        *,
+        tokens_used: int | None = None,
+        model: str | None = None,
+    ) -> Event:
+        """收尾。tokens_used / model 可选，供前端回复行展示；不传则不进 data。"""
+        extra: dict[str, Any] = {}
+        if tokens_used is not None:
+            extra["tokens_used"] = int(tokens_used)
+        if model:
+            extra["model"] = model
+        return self.emit(EventType.DONE, status=status, **extra)
 
 
 # ---- 序列化 / 反序列化 ----

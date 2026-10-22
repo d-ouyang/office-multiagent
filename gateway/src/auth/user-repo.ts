@@ -14,6 +14,7 @@ export interface UserRow {
   username: string;
   password_hash: string;
   role: string;
+  token_version: number;
 }
 
 export interface UserRepoConfig {
@@ -39,9 +40,27 @@ export class UserRepo {
 
   async findByUsername(username: string): Promise<UserRow | null> {
     const [rows] = await this.pool_.execute(
-      'SELECT id, employee_id, username, password_hash, role FROM `user` WHERE username = ? LIMIT 1',
+      'SELECT id, employee_id, username, password_hash, role, token_version FROM `user` WHERE username = ? LIMIT 1',
       [username],
     );
     return (rows as UserRow[])[0] ?? null;
+  }
+
+  async findByEmployeeId(employeeId: string): Promise<UserRow | null> {
+    const [rows] = await this.pool_.execute(
+      'SELECT id, employee_id, username, password_hash, role, token_version FROM `user` WHERE employee_id = ? LIMIT 1',
+      [employeeId],
+    );
+    return (rows as UserRow[])[0] ?? null;
+  }
+
+  /** 更新密码并把 token_version +1，返回新版本。旧 JWT 因此失效。 */
+  async updatePassword(employeeId: string, passwordHash: string): Promise<number> {
+    await this.pool_.execute(
+      'UPDATE `user` SET password_hash = ?, token_version = token_version + 1 WHERE employee_id = ?',
+      [passwordHash, employeeId],
+    );
+    const row = await this.findByEmployeeId(employeeId);
+    return Number(row?.token_version ?? 0);
   }
 }

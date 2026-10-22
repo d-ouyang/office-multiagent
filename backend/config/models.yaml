@@ -82,6 +82,7 @@ models:
     context_window: 1048576
     max_output: 16384
     supports_reasoning: true
+    reasoning_efforts: [low, high, max]
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.002
     api_model: deepseek-ai/DeepSeek-V4.1-Flash
@@ -95,6 +96,7 @@ models:
     context_window: 1048576
     max_output: 16384
     supports_reasoning: true
+    reasoning_efforts: [high, max]
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.001
     api_model: deepseek-ai/DeepSeek-V4-Flash

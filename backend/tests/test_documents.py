@@ -19,7 +19,7 @@ def client(tmp_path, monkeypatch):
         "sqlite:///:memory:", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
     with eng.begin() as c:
-        c.execute(text("CREATE TABLE user (id INTEGER PRIMARY KEY, employee_id TEXT, username TEXT, role TEXT, model_pool_id INTEGER)"))
+        c.execute(text("CREATE TABLE user (id INTEGER PRIMARY KEY, employee_id TEXT, username TEXT, role TEXT, model_pool_id INTEGER, token_version INTEGER NOT NULL DEFAULT 0)"))
         c.execute(text("CREATE TABLE session (id TEXT PRIMARY KEY, user_id INTEGER, model TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE wallet (user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0)"))
@@ -90,4 +90,29 @@ def test_upload_empty_rejected(client):
 
 def test_upload_requires_token(client):
     r = client.post("/api/v1/documents", files={"file": ("a.md", b"x")})
+    assert r.status_code == 401
+
+
+def test_preview_own_file(client):
+    client.post(
+        "/api/v1/documents",
+        files={"file": ("笔记.md", "# 标题\n正文".encode())},
+        headers=_auth(),
+    )
+    r = client.get("/api/v1/documents/content", params={"name": "dev/笔记.md"}, headers=_auth())
+    assert r.status_code == 200
+    assert "正文" in r.text
+    assert "inline" in r.headers["content-disposition"]
+
+
+def test_preview_other_user_file_not_found(client, tmp_path):
+    other = tmp_path / "upload" / "other"
+    other.mkdir(parents=True)
+    (other / "secret.md").write_text("机密", encoding="utf-8")
+    r = client.get("/api/v1/documents/content", params={"name": "other/secret.md"}, headers=_auth())
+    assert r.status_code == 400
+
+
+def test_preview_requires_token(client):
+    r = client.get("/api/v1/documents/content", params={"name": "a.md"})
     assert r.status_code == 401

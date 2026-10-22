@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS `user` (
   `password_hash`   VARCHAR(255) NOT NULL,
   `role`            VARCHAR(16)  NOT NULL DEFAULT 'user',  -- 管理角色：user/admin
   `model_pool_id`   BIGINT       NULL,                     -- 模型可见/池隔离（§十三）
+  `token_version`   INT          NOT NULL DEFAULT 0,      -- 改密后 +1，旧 JWT 失效
   `created_at`      DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_username` (`username`),

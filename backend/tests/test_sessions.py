@@ -19,7 +19,7 @@ def engine():
         "sqlite:///:memory:", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
     with eng.begin() as c:
-        c.execute(text("CREATE TABLE `user` (id INTEGER PRIMARY KEY, employee_id TEXT UNIQUE, username TEXT, password_hash TEXT, role TEXT, model_pool_id INTEGER, created_at TEXT)"))
+        c.execute(text("CREATE TABLE `user` (id INTEGER PRIMARY KEY, employee_id TEXT UNIQUE, username TEXT, password_hash TEXT, role TEXT, model_pool_id INTEGER, token_version INTEGER NOT NULL DEFAULT 0, created_at TEXT)"))
         c.execute(text("CREATE TABLE session (id TEXT PRIMARY KEY, user_id INTEGER, model TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE task (id TEXT PRIMARY KEY, session_id TEXT, complexity INTEGER, status TEXT DEFAULT 'pending', text TEXT, result TEXT, tokens_used INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, trace TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
@@ -157,12 +157,46 @@ def test_run_task_passes_model_to_brain(monkeypatch):
         return real_make_brain(tools, **kwargs)
 
     monkeypatch.setattr(graph_mod, "make_brain", spy_make_brain)
-    monkeypatch.setattr(graph_mod, "build_default_registry", lambda engine: __import__("app.orchestration.tools", fromlist=["ToolRegistry"]).ToolRegistry())
+    monkeypatch.setattr(graph_mod, "build_default_registry", lambda engine, **_kwargs: __import__("app.orchestration.tools", fromlist=["ToolRegistry"]).ToolRegistry())
     result, events = graph_mod.run_task("查年假", model="qwen-plus")
     assert captured.get("model_id") == "qwen-plus"
     assert result["status"] == "done"
 
 
+def test_run_task_effort_only_for_reasoning_models(monkeypatch):
+    import app.orchestration.graph as graph_mod
+    from app.orchestration.react import StubBrain
+
+    captured: dict = {}
+
+    def spy(tools, **kwargs):
+        captured.update(kwargs)
+        return StubBrain("ok")
+
+    monkeypatch.setattr(graph_mod, "make_brain", spy)
+    monkeypatch.setattr(
+        graph_mod, "build_default_registry",
+        lambda engine, **_kwargs: __import__("app.orchestration.tools", fromlist=["ToolRegistry"]).ToolRegistry(),
+    )
+    graph_mod.run_task("hi", model="deepseek-v4-flash-sf", effort="low")
+    assert captured.get("reasoning_effort") == "high"
+    captured.clear()
+    graph_mod.run_task("hi", model="deepseek-v4-flash-sf", effort="high")
+    assert captured.get("reasoning_effort") == "high"
+    captured.clear()
+    graph_mod.run_task("hi", model="deepseek-v4-flash-sf", effort="max")
+    assert captured.get("reasoning_effort") == "max"
+    captured.clear()
+    graph_mod.run_task("hi", model="deepseek-v4.1-flash-sf", effort="low")
+    assert captured.get("reasoning_effort") == "low"
+    captured.clear()
+    graph_mod.run_task("hi", model="deepseek-chat", effort="max")
+    assert captured.get("reasoning_effort") is None
+    captured.clear()
+    graph_mod.run_task("hi", model="deepseek-reasoner", effort="max")
+    assert captured.get("reasoning_effort") is None
+
+
 # ---------- p6.7 trace 过程落库 ----------
 def test_trace_persisted_and_readable(client):
     # assistant 消息带 trace：落库后历史回读能重建过程事件
@@ -203,3 +237,70 @@ def test_trace_persisted_and_readable(client):
     msgs = client.get(f"/api/v1/sessions/{sid}/messages", headers=_auth(_token())).json()["messages"]
     assert msgs[-1]["trace"] is not None
     assert _json.loads(msgs[-1]["trace"])[0]["type"] == "thinking_delta"
+
+
+def test_rewind_keeps_prefix_and_drops_the_rest(client):
+    from app.core.db import get_engine
+    from app.core.session_repo import SessionRepo
+
+    sid = client.post("/api/v1/sessions", json={}, headers=_auth(_token())).json()["session_id"]
+    repo = SessionRepo(get_engine())
+    for role, content in (("user", "q1"), ("assistant", "a1"), ("user", "q2"), ("assistant", "a2")):
+        repo.append_message(sid, role, content)
+    r = client.post(f"/api/v1/sessions/{sid}/rewind", json={"keep": 2}, headers=_auth(_token()))
+    assert r.status_code == 200 and r.json()["deleted"] == 2
+    msgs = client.get(f"/api/v1/sessions/{sid}/messages", headers=_auth(_token())).json()["messages"]
+    assert [m["content"] for m in msgs] == ["q1", "a1"]
+
+
+def test_rewind_rejects_negative_and_foreign_session(client):
+    from app.core.db import get_engine
+    from app.core.session_repo import SessionRepo
+
+    sid = client.post("/api/v1/sessions", json={}, headers=_auth(_token())).json()["session_id"]
+    bad = client.post(f"/api/v1/sessions/{sid}/rewind", json={"keep": -1}, headers=_auth(_token()))
+    assert bad.status_code == 400
+    other = SessionRepo(get_engine()).create_session(2)
+    foreign = client.post(f"/api/v1/sessions/{other}/rewind", json={"keep": 0}, headers=_auth(_token()))
+    assert foreign.status_code == 404
+
+
+def test_messages_pick_up_model_from_ledger(client):
+    from app.core.db import get_engine
+    from app.core.session_repo import SessionRepo
+
+    sid = client.post("/api/v1/sessions", json={}, headers=_auth(_token())).json()["session_id"]
+    repo = SessionRepo(get_engine())
+    repo.append_message(sid, "user", "问")
+    repo.append_message(sid, "assistant", "答")
+    with get_engine().begin() as conn:
+        conn.execute(
+            text("INSERT INTO token_ledger (user_id, task_id, model, settle) VALUES (1, 't1', 'deepseek-chat', 1200)")
+        )
+    msgs = client.get(f"/api/v1/sessions/{sid}/messages", headers=_auth(_token())).json()["messages"]
+    assistant = msgs[-1]
+    assert assistant["model"] == "deepseek-chat"
+    assert assistant["tokens"] == 1200
+
+
+def test_quota_usage_summary_counts_settles(client):
+    from app.core.db import get_engine
+
+    with get_engine().begin() as conn:
+        conn.execute(
+            text("INSERT INTO token_ledger (user_id, task_id, model, settle) VALUES (1, 't1', 'deepseek-chat', 50)")
+        )
+    body = client.get("/api/v1/quota", headers=_auth(_token())).json()
+    assert body["usage"]["total_tokens"] == 50
+    assert body["usage"]["total_count"] == 1
+    assert body["ledger"][0]["created_at"].endswith("Z")
+    assert "T" in body["ledger"][0]["created_at"]
+
+
+def test_tasks_rejects_unknown_effort(client):
+    r = client.post(
+        "/api/v1/tasks",
+        json={"text": "hi", "effort": "ultra"},
+        headers=_auth(_token()),
+    )
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "BAD_EFFORT"

@@ -12,9 +12,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@hugeicons/core-free-icons": "^4.3.5",
+    "@hugeicons/react": "^1.1.10",
     "dompurify": "^3.4.17",
     "lucide-react": "^0.468.0",
     "marked": "^18.1.1",
+    "motion": "^14.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

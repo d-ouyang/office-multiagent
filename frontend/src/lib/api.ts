@@ -66,7 +66,14 @@ export async function createSession(model?: string): Promise<string> {
 }
 
 /** p6.2c/p6.7：会话历史消息（user/assistant 终答 + assistant 的 trace 过程事件 JSON）。 */
-export async function getMessages(sessionId: string): Promise<Array<{ role: string; content: string; trace?: string | null; created_at: string }>> {
+export async function getMessages(sessionId: string): Promise<Array<{
+  role: string;
+  content: string;
+  trace?: string | null;
+  created_at: string;
+  model?: string | null;
+  tokens?: number | null;
+}>> {
   const res = await fetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`, {
     headers: authHeaders(),
   });
@@ -78,8 +85,34 @@ export async function getMessages(sessionId: string): Promise<Array<{ role: stri
   return data.messages ?? [];
 }
 
+/** 改密。成功后换成新 token（旧 token 的 token_version 已失效）。 */
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  const res = await fetch('/api/v1/auth/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(String(data?.message ?? data?.error?.message ?? `修改失败（HTTP ${res.status}）`));
+  }
+  if (data.access_token) setToken(String(data.access_token));
+}
+
+export interface LedgerEntry {
+  task_id?: string | null;
+  model?: string | null;
+  reserve?: number | null;
+  settle?: number | null;
+  created_at?: string;
+}
+
 /** p6.4：我的 token 余额与流水。 */
-export async function getQuota(): Promise<{ balance: number; ledger: Array<Record<string, unknown>> }> {
+export async function getQuota(): Promise<{
+  balance: number;
+  ledger: LedgerEntry[];
+  usage?: { month_tokens: number; month_count: number; total_tokens: number; total_count: number };
+}> {
   const res = await fetch('/api/v1/quota', { headers: authHeaders() });
   if (res.status === 401) {
     clearToken();

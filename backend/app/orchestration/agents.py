@@ -40,7 +40,7 @@ class AgentSpec:
 # --------------------------------------------------------------------------- #
 # 工具池（全部真实工具；各 Agent 按白名单取子集）
 # --------------------------------------------------------------------------- #
-def build_default_registry(engine: Engine | None) -> ToolRegistry:
+def build_default_registry(engine: Engine | None, username: str | None = None) -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(
         "db_query",
@@ -62,18 +62,29 @@ def build_default_registry(engine: Engine | None) -> ToolRegistry:
             "适用于查公司制度、流程、文档内容等非结构化知识。"
         ),
     )
-    reg.register(
-        "read_document",
-        make_read_document_tool(
-            base_dir=settings.documents_dir, max_chars=settings.doc_read_max_chars
-        ),
-        description=(
+    owner = (username or "").strip().strip("/") or None
+    doc_base = str(Path(settings.documents_dir) / owner) if owner else settings.documents_dir
+    if owner:
+        read_desc = (
+            "读取当前登录用户上传目录中的文件全文（支持 .md/.txt/.pdf），返回文本内容与字数。"
+            "参数 file_name 只写文件名，例如 网站备案办事指南.pdf。"
+            "查找目录由系统按当前用户确定，不要传本机绝对路径；写成「用户名/文件名」也可以。"
+            "文件不存在时不要反复重试，直接如实告知用户。"
+        )
+    else:
+        read_desc = (
             "读取文档目录内指定文件的全文（支持 .md/.txt/.pdf），返回文本内容与字数。"
             "参数: file_name（文档目录内的相对路径；当前登录用户上传的文件在 "
             "'<用户名>/' 子目录下，例如 dev/handbook.md）。"
             "适用于需要引用某份文档原文/做摘要的场景。"
             "注意：文件不存在时不要反复重试，直接如实告知用户文件名可能不对。"
+        )
+    reg.register(
+        "read_document",
+        make_read_document_tool(
+            base_dir=doc_base, max_chars=settings.doc_read_max_chars, owner=owner
         ),
+        description=read_desc,
     )
     return reg
 

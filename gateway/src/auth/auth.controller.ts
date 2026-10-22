@@ -27,7 +27,18 @@ export class LoginDto {
   password!: string;
 }
 
+export class ChangePasswordDto {
+  @IsString()
+  @MinLength(1)
+  old_password!: string;
+
+  @IsString()
+  @MinLength(1)
+  new_password!: string;
+}
+
 const BAD_CREDENTIALS = { code: 'BAD_CREDENTIALS', message: '用户名或密码错误' };
+const REVOKED = { code: 'TOKEN_REVOKED', message: '登录已失效，请重新登录' };
 
 @Controller()
 export class AuthController {
@@ -52,16 +63,67 @@ export class AuthController {
     const ok = await bcrypt.compare(dto.password, user.password_hash);
     if (!ok) throw new HttpException(BAD_CREDENTIALS, HttpStatus.UNAUTHORIZED);
 
-    const access_token = await this.jwt.signAsync({
-      sub: user.employee_id, // §2.8：身份键=工号，永不复用
-      username: user.username,
-      role: user.role,
-      uid: user.id,
-    });
+    const access_token = await this.sign(user);
     return {
       access_token,
       user: { employee_id: user.employee_id, username: user.username, role: user.role },
     };
+  }
+
+  /** 改密：校验旧密码，token_version +1，签发新 token。旧 token 立即失效。 */
+  @Post('api/v1/auth/password')
+  async changePassword(@Body() dto: ChangePasswordDto, @Req() req: Request): Promise<{ access_token: string }> {
+    const auth = req.user as { userId?: string; tv?: number };
+    const employeeId = String(auth?.userId ?? '');
+    if (!employeeId) throw new HttpException(REVOKED, HttpStatus.UNAUTHORIZED);
+    if (dto.new_password.length < 8) {
+      throw new HttpException(
+        { code: 'WEAK_PASSWORD', message: '新密码至少 8 位' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    let user;
+    try {
+      user = await this.repo.findByEmployeeId(employeeId);
+    } catch {
+      throw new HttpException(
+        { code: 'USER_SOURCE_UNAVAILABLE', message: '用户数据暂时不可用，请稍后再试' },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+    if (!user) throw new HttpException(REVOKED, HttpStatus.UNAUTHORIZED);
+    if (Number(user.token_version ?? 0) !== Number(auth.tv ?? 0)) {
+      throw new HttpException(REVOKED, HttpStatus.UNAUTHORIZED);
+    }
+    const ok = await bcrypt.compare(dto.old_password, user.password_hash);
+    if (!ok) {
+      throw new HttpException({ code: 'BAD_PASSWORD', message: '当前密码不正确' }, HttpStatus.UNAUTHORIZED);
+    }
+    if (dto.new_password === dto.old_password) {
+      throw new HttpException({ code: 'SAME_PASSWORD', message: '新密码不能与当前密码相同' }, HttpStatus.BAD_REQUEST);
+    }
+    const hash = await bcrypt.hash(dto.new_password, 12);
+    let tv: number;
+    try {
+      tv = await this.repo.updatePassword(employeeId, hash);
+    } catch {
+      throw new HttpException(
+        { code: 'USER_SOURCE_UNAVAILABLE', message: '用户数据暂时不可用，请稍后再试' },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+    user.token_version = tv;
+    return { access_token: await this.sign(user) };
+  }
+
+  private sign(user: { employee_id: string; username: string; role: string; id: number; token_version?: number }) {
+    return this.jwt.signAsync({
+      sub: user.employee_id,
+      username: user.username,
+      role: user.role,
+      uid: user.id,
+      tv: Number(user.token_version ?? 0),
+    });
   }
 
   /** 受保护（走全局 guard）：验过的 token 回显身份。 */

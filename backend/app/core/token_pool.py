@@ -8,9 +8,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+
+from .session_repo import _iso_utc
 
 
 @dataclass
@@ -47,7 +51,7 @@ class TokenPool:
                 "model": r["model"],
                 "reserve": r["reserve"],
                 "settle": r["settle"],
-                "created_at": str(r["created_at"]),
+                "created_at": _iso_utc(r["created_at"]),
             }
             for r in rows
         ]
@@ -124,3 +128,28 @@ class TokenPool:
                 text("SELECT balance FROM wallet WHERE user_id=:u"), {"u": user_id}
             ).first()
             return int(row[0]) if row else 0
+
+    def usage_summary(self, user_id: int) -> dict[str, int]:
+        """本月（上海时区）与累计的结算用量。只计 settle 行，不含预扣。"""
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        start_local = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        start_utc = start_local.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%d %H:%M:%S")
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT "
+                    " COALESCE(SUM(CASE WHEN settle IS NOT NULL AND created_at >= :ms THEN settle ELSE 0 END), 0), "
+                    " COALESCE(SUM(CASE WHEN settle IS NOT NULL AND created_at >= :ms THEN 1 ELSE 0 END), 0), "
+                    " COALESCE(SUM(CASE WHEN settle IS NOT NULL THEN settle ELSE 0 END), 0), "
+                    " COALESCE(SUM(CASE WHEN settle IS NOT NULL THEN 1 ELSE 0 END), 0) "
+                    "FROM token_ledger WHERE user_id=:u"
+                ),
+                {"ms": start_utc, "u": user_id},
+            ).first()
+        month_tokens, month_count, total_tokens, total_count = row or (0, 0, 0, 0)
+        return {
+            "month_tokens": int(month_tokens or 0),
+            "month_count": int(month_count or 0),
+            "total_tokens": int(total_tokens or 0),
+            "total_count": int(total_count or 0),
+        }

@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import AppSidebar, { formatSessionTime, type SessionMeta } from './AppSidebar';
+import { APP_BLURB, APP_VERSION } from '../version';
 import { act } from 'react';
 
 afterEach(() => cleanup());
@@ -91,5 +92,40 @@ describe('AppSidebar 会话分页展开（p6.12c：每次 10 条）', () => {
     expect(screen.queryByText('会话 10')).toBeNull();
     expect(screen.getByText('查看更多 (13)')).toBeInTheDocument();
     expect(screen.queryByText('收起')).toBeNull();
+  });
+});
+
+describe('侧栏简介与版本', () => {
+  it('展示项目简介和当前版本号', () => {
+    render(<AppSidebar sessions={[]} currentId="" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => {}} />);
+    expect(screen.getByText(APP_BLURB)).toBeInTheDocument();
+    expect(screen.getByText(APP_VERSION)).toBeInTheDocument();
+  });
+
+  it('点用户行打开个人中心，额度可进入详情，退出需确认', () => {
+    let loggedOut = 0;
+    render(<AppSidebar sessions={[]} currentId="" onSelect={() => {}} onNew={() => {}} user={user} balance={100000} onLogout={() => { loggedOut += 1; }} />);
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /dev/ }));
+    });
+    expect(screen.getByText('修改密码')).toBeInTheDocument();
+    expect(screen.getByText('100,000')).toBeInTheDocument();
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /剩余额度/ }));
+    });
+    expect(screen.getByText('消耗详情')).toBeInTheDocument();
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /消耗详情/ }));
+    });
+    expect(screen.queryByRole('button', { name: '退出' })).toBeNull();
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: '退出登录' }));
+    });
+    expect(loggedOut).toBe(0);
+    expect(screen.getByText('确定退出登录？')).toBeInTheDocument();
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: '退出' }));
+    });
+    expect(loggedOut).toBe(1);
   });
 });

@@ -18,6 +18,7 @@ from typing_extensions import TypedDict
 from ..core.config import settings
 from ..core.decomposer import DAG, Subtask, decompose
 from ..core.events import Event, RunEventEmitter, new_run_id
+from ..core.model_registry import map_reasoning_effort
 from ..core.planner import Plan, plan as run_plan
 from ..core.router import decide
 from ..core.token_pool import TokenPool
@@ -46,6 +47,13 @@ class TaskState(TypedDict, total=False):
     tokens_used: int
     result: str
     model: str | None            # p6.5：本次任务的对话模型（优先级：请求>会话>默认）
+    effort: str | None           # low/medium/high/max，仅推理模型会传给 API
+
+
+def _effort_for(state: TaskState) -> str | None:
+    """按模型真实档位折叠界面三档。不支持的模型返回 None，请求里不带该字段。"""
+    mid = state.get("model") or settings.llm_brain_model
+    return map_reasoning_effort(mid, state.get("effort"))
 
 
 def build_graph(
@@ -54,9 +62,13 @@ def build_graph(
     *,
     token_pool: TokenPool | None = None,
     checkpointer: Any | None = None,
+    username: str | None = None,
 ) -> Any:
-    """构建编排图。token_pool 提供时前置 quota 门（reserve + 中断续跑）。"""
-    tools = build_default_registry(get_engine())  # p5.1a：真实工具（db_query / rag_retrieve）
+    """构建编排图。token_pool 提供时前置 quota 门（reserve + 中断续跑）。
+
+    username 有值时，read_document 只在该用户的上传目录里找文件。
+    """
+    tools = build_default_registry(get_engine(), username=username)
 
     def spec_agent_runner(base, state):
         """multi 的子任务执行器：按子任务 agent_type 取 AgentSpec（角色提示词+工具白名单）。"""
@@ -68,10 +80,11 @@ def build_graph(
                 spec_tools,
                 fallback_answer=f"[{st.agent_type}] 完成 {st.intent}",
                 system_prompt=spec.system_prompt,
-                model_id=state.get("model"),  # p6.5：子任务跟随任务级模型选择
+                model_id=state.get("model"),
                 stream=True,
                 on_content=lambda c: emit(emitter.content_delta(c)),
                 on_thought=lambda t: emit(emitter.thinking_delta(t)),
+                reasoning_effort=_effort_for(state),
             )
             # 必须用主 emitter：子 emitter 的 seq 独立从 1 开始，会让主事件流 seq 乱序
             return run_react(f"{st.intent} 任务", brain, spec_tools, emitter=emitter, emit=emit)
@@ -129,10 +142,11 @@ def build_graph(
         emit(emitter.status(agent, "running"))
         brain = make_brain(
             spec_tools, fallback_answer=f"[{agent}] 处理完成", system_prompt=spec.system_prompt,
-            model_id=state.get("model"),  # p6.5：用户选择的模型（None→settings 默认）
-            stream=True,  # p6.3：LLM 输出逐字转发（自然语言终答边收边推）
+            model_id=state.get("model"),
+            stream=True,
             on_content=lambda c: emit(emitter.content_delta(c)),
             on_thought=lambda t: emit(emitter.thinking_delta(t)),
+            reasoning_effort=_effort_for(state),
         )
         res = run_react(state["text"], brain, spec_tools, emitter=emitter, emit=emit)
         usage = getattr(brain, "usage", None) or {}
@@ -183,6 +197,8 @@ def run_task(
     token_pool: TokenPool | None = None,
     sink: Callable[[Event], None] | None = None,
     model: str | None = None,
+    effort: str | None = None,
+    username: str | None = None,
 ) -> tuple[dict[str, Any], list[Event]]:
     """跑一次编排。带 token_pool+user_id 时前置 reserve；余额不足→quota_paused 中断。
 
@@ -193,6 +209,7 @@ def run_task(
     run_id = new_run_id()
     turn_id = new_run_id()
     emitter = RunEventEmitter(run_id, turn_id)
+    model_id = model or settings.llm_brain_model
     events: list[Event] = []
 
     def emit(ev: Event) -> None:
@@ -201,9 +218,11 @@ def run_task(
             sink(ev)
 
     checkpointer = MemorySaver() if token_pool is not None else None
-    graph = build_graph(emitter, emit, token_pool=token_pool, checkpointer=checkpointer)
+    graph = build_graph(
+        emitter, emit, token_pool=token_pool, checkpointer=checkpointer, username=username
+    )
     cfg = {"configurable": {"thread_id": run_id}}
-    init: dict[str, Any] = {"text": text, "run_id": run_id, "turn_id": turn_id, "model": model}
+    init: dict[str, Any] = {"text": text, "run_id": run_id, "turn_id": turn_id, "model": model, "effort": effort}
     if user_id is not None:
         init["user_id"] = user_id
         init["estimate"] = estimate
@@ -213,7 +232,7 @@ def run_task(
     except Exception as e:  # noqa: BLE001 - 编排崩溃也要给流一个体面的 done（前端能收尾）
         logger.exception("编排执行失败 run_id=%s", run_id)
         emit(emitter.error(f"编排执行失败：{e}"))
-        emit(emitter.done("failed"))
+        emit(emitter.done("failed", model=model_id))
         return (
             {
                 "run_id": run_id,
@@ -234,7 +253,7 @@ def run_task(
                 needed=int(payload.get("needed") or 0),
             )
         )
-        emit(emitter.done("paused_insufficient_quota"))
+        emit(emitter.done("paused_insufficient_quota", model=model_id))
         return (
             {
                 "run_id": run_id,
@@ -253,7 +272,13 @@ def run_task(
             user_id, estimate, actual, task_id=run_id,
             model=state.get("model") or settings.llm_brain_model,  # p6.4/p6.5：落账记实际模型
         )
-    emit(emitter.done(state.get("route", "single")))
+    emit(
+        emitter.done(
+            state.get("route", "single"),
+            tokens_used=int(state.get("tokens_used", 0)),
+            model=state.get("model") or model_id,
+        )
+    )
     return (
         {
             "run_id": run_id,

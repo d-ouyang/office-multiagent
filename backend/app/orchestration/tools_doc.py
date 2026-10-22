@@ -15,6 +15,22 @@ from typing import Any
 _SUPPORTED = (".md", ".txt", ".pdf")
 
 
+def normalize_doc_name(file_name: str, owner: str | None = None) -> str:
+    """模型常只给文件名，有时又带上「用户名/」。工具根目录已是该用户目录时，剥掉这层前缀。
+
+    绝对路径原样返回，交给路径护栏拒绝，不能先剥掉前导斜杠变成相对路径。
+    """
+    name = (file_name or "").strip().replace("\\", "/")
+    if name.startswith("/") or (len(name) >= 2 and name[1] == ":"):
+        return name
+    while name.startswith("./"):
+        name = name[2:]
+    prefix = (owner or "").strip().strip("/")
+    if prefix and (name == prefix or name.startswith(prefix + "/")):
+        name = name[len(prefix) :].lstrip("/")
+    return name
+
+
 def check_inside_base(base: Path, file_name: str) -> Path:
     """路径护栏：通过返回解析后的绝对路径；越界/非法抛 ValueError。"""
     name = (file_name or "").strip()
@@ -36,13 +52,18 @@ def _read_pdf(path: Path) -> str:
     return "\n".join(pages).strip()
 
 
-def make_read_document_tool(*, base_dir: str, max_chars: int = 8000) -> Callable[..., Any]:
+def make_read_document_tool(
+    *, base_dir: str, max_chars: int = 8000, owner: str | None = None
+) -> Callable[..., Any]:
+    """base_dir 是查找根目录。owner 有值时根目录应已是该用户的上传目录，file_name 只写文件名。"""
     base = Path(base_dir).resolve()
 
     def read_document(file_name: str) -> dict[str, Any]:
-        target = check_inside_base(base, file_name)
+        name = normalize_doc_name(file_name, owner)
+        target = check_inside_base(base, name)
         if not target.is_file():
-            raise FileNotFoundError(f"文件不存在：{file_name}")
+            where = "当前用户上传目录" if owner else "文档目录"
+            raise FileNotFoundError(f"文件不存在：{file_name}（已在{where}查找）")
         suffix = target.suffix.lower()
         if suffix not in _SUPPORTED:
             raise ValueError(f"暂不支持该格式：{suffix}（当前支持 {'/'.join(_SUPPORTED)}）")

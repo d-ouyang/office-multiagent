@@ -3,7 +3,7 @@
 // 选中变化回调上层（PATCH 当前会话默认模型 + 信息条展示）。
 import { useEffect, useState } from 'react';
 
-interface DialogueModel {
+export interface DialogueModel {
   id: string;
   name: string;
   provider: string;
@@ -29,6 +29,31 @@ function optionLabel(m: DialogueModel): string {
   if (m.supports_reasoning) tags.push('思考');
   if (m.multimodal_input) tags.push('视觉');
   return `${m.name}（${fmtCtx(m.context_window)}${tags.length ? ' · ' + tags.join('/') : ''}）`;
+}
+
+const MODEL_NAMES: Record<string, string> = {
+  'deepseek-chat': 'DeepSeek V3',
+  'deepseek-reasoner': 'DeepSeek R1',
+  'deepseek-v3-sf': 'DeepSeek V3 · 硅基',
+  'deepseek-r1-sf': 'DeepSeek R1 · 硅基',
+  'deepseek-v4.1-flash-sf': 'DeepSeek V4.1-Flash',
+  'deepseek-v4-flash-sf': 'DeepSeek V4-Flash',
+  'glm-5.3-flash-sf': 'GLM-5.3-Flash',
+  'qwen3.5-9b-sf': 'Qwen3.5-9B',
+};
+
+/** 回复行展示用。未知 id 原样显示，空则破折号。 */
+export function modelDisplayName(id: string | undefined): string {
+  if (!id) return '—';
+  return MODEL_NAMES[id] ?? id;
+}
+
+export function toPromptModel(m: DialogueModel): { key: string; name: string; tag: string } {
+  const channel = m.provider === 'deepseek' ? '官方' : m.provider === 'siliconflow' ? '硅基' : m.provider;
+  const bits = [fmtCtx(m.context_window)];
+  if (m.supports_reasoning) bits.push('思考');
+  if (m.multimodal_input) bits.push('视觉');
+  return { key: m.id, name: `${m.name} · ${channel}`, tag: bits.join(' · ') };
 }
 
 export function ModelPicker({ onChange }: { onChange?: (m: DialogueModel | null) => void }) {

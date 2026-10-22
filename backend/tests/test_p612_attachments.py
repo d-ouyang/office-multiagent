@@ -132,6 +132,7 @@ def test_compose_task_text_no_attachments_unchanged():
 
 def test_compose_task_text_with_attachments_prefix():
     out = _compose_task_text("总结一下", ["dev/a.md", "dev/b.pdf"])
-    assert out.startswith("[用户随消息上传了附件：a.md、b.pdf")
+    assert out.startswith("[用户随消息上传了这些文件，已放在当前用户的上传目录：a.md、b.pdf。")
+    assert "file_name 只填文件名" in out
     assert "read_document" in out
     assert out.endswith("总结一下")  # 原文在后，未被改写
