@@ -1,6 +1,6 @@
 // p6.12：会话列表相对时间规则 + 折叠/展开（默认 10 条，"查看更多 (N)"）
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import AppSidebar, { formatSessionTime, type SessionMeta } from './AppSidebar';
 import { APP_BLURB, APP_VERSION } from '../version';
@@ -96,12 +96,24 @@ describe('AppSidebar 会话分页展开（p6.12c：每次 10 条）', () => {
 });
 
 describe('会话操作', () => {
-  it('悬停操作图标后出现置顶、重命名和删除', () => {
-    render(<AppSidebar sessions={mkSessions(1)} currentId="s-0" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => {}} />);
-    fireEvent.mouseEnter(screen.getByRole('button', { name: '会话 0 的操作' }));
+  it('点击更多操作才出现菜单，删除要弹窗确认', () => {
+    const onDelete = vi.fn();
+    render(<AppSidebar sessions={mkSessions(1)} currentId="s-0" onSelect={() => {}} onNew={() => {}} onDelete={onDelete} user={user} onLogout={() => {}} />);
+    const more = screen.getByRole('button', { name: '更多操作' });
+    expect(more).toHaveAttribute('title', '更多操作');
+    expect(screen.queryByRole('button', { name: '置顶' })).toBeNull();
+    fireEvent.click(more);
     expect(screen.getByRole('button', { name: '置顶' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重命名' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '删除会话' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '删除会话' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('确认删除会话「会话 0」？');
+    expect(screen.getByText('该会话下的全部对话消息会一并删除，且无法恢复。')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(onDelete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '更多操作' }));
+    fireEvent.click(screen.getByRole('button', { name: '删除会话' }));
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    expect(onDelete).toHaveBeenCalledWith('s-0');
   });
 });
 

@@ -85,19 +85,21 @@ export function AppSidebar(props: {
   const [menuId, setMenuId] = useState('');
   const [renamingId, setRenamingId] = useState('');
   const [renameText, setRenameText] = useState('');
-  const [confirmDeleteId, setConfirmDeleteId] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null);
   const accountRef = useRef<HTMLDivElement>(null);
   const visible = props.sessions.slice(0, visibleCount);
   const remaining = props.sessions.length - visible.length;
 
   useEffect(() => {
-    if (!accountOpen) return undefined;
+    if (!accountOpen && !menuId) return undefined;
     const onDown = (e: PointerEvent) => {
-      if (!accountRef.current?.contains(e.target as Node)) setAccountOpen(false);
+      const target = e.target as HTMLElement;
+      if (accountOpen && !accountRef.current?.contains(target)) setAccountOpen(false);
+      if (menuId && !target.closest?.('.session-ops')) setMenuId('');
     };
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
-  }, [accountOpen]);
+  }, [accountOpen, menuId]);
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -117,11 +119,7 @@ export function AppSidebar(props: {
             key={s.id}
             className={`session-item ${s.id === props.currentId ? 'active' : ''} ${menuId === s.id ? 'menu-open' : ''}`}
             onMouseEnter={() => setHoverId(s.id)}
-            onMouseLeave={() => {
-              setHoverId('');
-              if (menuId === s.id) setMenuId('');
-              if (confirmDeleteId === s.id) setConfirmDeleteId('');
-            }}
+            onMouseLeave={() => setHoverId('')}
           >
             {renamingId === s.id ? (
               <input
@@ -154,21 +152,20 @@ export function AppSidebar(props: {
               <button
                 type="button"
                 className="session-ops-btn"
-                aria-label={`${s.title} 的操作`}
-                onMouseEnter={() => {
-                  setMenuId(s.id);
-                  setConfirmDeleteId('');
-                }}
+                aria-label="更多操作"
+                title="更多操作"
+                aria-expanded={menuId === s.id}
                 onClick={(e) => {
                   e.stopPropagation();
-                  setMenuId(s.id);
+                  setMenuId((current) => (current === s.id ? '' : s.id));
                 }}
               >
                 ⋯
               </button>
               {menuId === s.id && (
-                <div className="session-menu" onMouseEnter={() => setMenuId(s.id)}>
+                <div className="session-menu">
                   <button type="button" onClick={() => { props.onPin?.(s.id, !s.pinned); setMenuId(''); }}>
+                    <PinIcon />
                     {s.pinned ? '取消置顶' : '置顶'}
                   </button>
                   <button
@@ -179,25 +176,20 @@ export function AppSidebar(props: {
                       setMenuId('');
                     }}
                   >
+                    <RenameIcon />
                     重命名
                   </button>
-                  {confirmDeleteId === s.id ? (
-                    <button
-                      type="button"
-                      className="danger"
-                      onClick={() => {
-                        props.onDelete?.(s.id);
-                        setMenuId('');
-                        setConfirmDeleteId('');
-                      }}
-                    >
-                      确认删除
-                    </button>
-                  ) : (
-                    <button type="button" className="danger" onClick={() => setConfirmDeleteId(s.id)}>
-                      删除会话
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => {
+                      setDeleteTarget(s);
+                      setMenuId('');
+                    }}
+                  >
+                    <TrashIcon />
+                    删除会话
+                  </button>
                 </div>
               )}
             </div>
@@ -242,7 +234,60 @@ export function AppSidebar(props: {
           </span>
         </button>
       </div>
+      {deleteTarget && (
+        <div className="confirm-mask" onClick={() => setDeleteTarget(null)}>
+          <div
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-session-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="delete-session-title">确认删除会话「{deleteTarget.title}」？</h3>
+            <p>该会话下的全部对话消息会一并删除，且无法恢复。</p>
+            <div className="confirm-actions">
+              <button type="button" className="confirm-cancel" onClick={() => setDeleteTarget(null)}>取消</button>
+              <button
+                type="button"
+                className="confirm-danger"
+                onClick={() => {
+                  props.onDelete?.(deleteTarget.id);
+                  setDeleteTarget(null);
+                }}
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
+  );
+}
+
+function PinIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path d="M12 17v5" />
+      <path d="M9 3h6l1 7 3 3H5l3-3z" />
+    </svg>
+  );
+}
+
+function RenameIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
   );
 }
 

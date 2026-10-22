@@ -260,7 +260,9 @@ body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 .session-menu button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   text-align: left;
   border: none;
@@ -271,8 +273,69 @@ body {
   cursor: pointer;
   font-size: 13px;
 }
+.session-menu svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
 .session-menu button:hover { background: var(--card2); }
 .session-menu button.danger { color: var(--err, #d64545); }
+.confirm-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(15, 17, 21, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.confirm-dialog {
+  width: min(440px, calc(100vw - 48px));
+  background: #fff;
+  color: #1f2328;
+  border-radius: 16px;
+  padding: 22px 24px 18px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+}
+.confirm-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+.confirm-dialog p {
+  margin: 0;
+  color: #57606a;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 22px;
+}
+.confirm-cancel,
+.confirm-danger {
+  border-radius: 10px;
+  padding: 8px 18px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.confirm-cancel {
+  background: #fff;
+  color: #1f2328;
+  border: 1px solid #d0d7de;
+}
+.confirm-danger {
+  background: #e5534b;
+  color: #fff;
+  border: none;
+}
 /* p6.12c：会话列表分页展开——"查看更多 (剩余N) | 收起"同行，全部展示完只剩"收起" */
 .session-more-row {
   display: flex;
