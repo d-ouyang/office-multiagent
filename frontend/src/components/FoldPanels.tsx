@@ -49,7 +49,7 @@ export function ProcessTrace({
         <div className="process-body">
           {steps.map((step, index) => {
             if (step.kind === 'thinking') {
-              return <ThinkingBlock key={`t-${index}`} text={step.text} />;
+              return <ThinkingBlock key={`t-${index}`} text={step.text} durationMs={step.durationMs} />;
             }
             if (step.kind === 'answer') {
               return <MarkdownView key={`a-${index}`} text={step.text} />;
@@ -62,13 +62,14 @@ export function ProcessTrace({
   );
 }
 
-function ThinkingBlock({ text }: { text: string }) {
+function ThinkingBlock({ text, durationMs }: { text: string; durationMs?: number }) {
   const [open, setOpen] = useState(false);
+  const elapsed = durationMs != null && durationMs > 0 ? formatDuration(durationMs) : '';
   return (
     <div className="process-mod">
       <button type="button" className="fold-head" onClick={() => setOpen((v) => !v)}>
         <span className={`arrow ${open ? 'open' : ''}`}>▸</span>
-        深度思考
+        <span>深度思考{elapsed ? ` ${elapsed}` : ''}</span>
         <span className="fold-meta">{text.length} 字</span>
       </button>
       {open && <pre className="think-scroll">{text}</pre>}

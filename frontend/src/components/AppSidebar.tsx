@@ -71,7 +71,7 @@ export function AppSidebar(props: {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <span className="brand-dot" />
+        <img className="brand-logo" src="/gq_logo.jpg" alt="锅圈" />
         <div className="brand-copy">
           <div className="brand-name">office-multiagent</div>
           <div className="brand-blurb">{APP_BLURB}</div>

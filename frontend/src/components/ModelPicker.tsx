@@ -19,8 +19,8 @@ const PROVIDER_LABEL: Record<string, string> = {
 };
 
 function fmtCtx(n: number): string {
-  if (n >= 1_000_000) return `${Math.round(n / 1_000_000)}M`;
-  if (n >= 1000) return `${Math.round(n / 1000)}K`;
+  if (n >= 1_000_000) return `${Math.round(n / (n % 1024 === 0 ? 1_048_576 : 1_000_000))}M`;
+  if (n >= 1000) return `${Math.round(n / (n % 1024 === 0 ? 1024 : 1000))}K`;
   return String(n);
 }
 
@@ -40,6 +40,10 @@ const MODEL_NAMES: Record<string, string> = {
   'deepseek-v4-flash-sf': 'DeepSeek V4-Flash',
   'glm-5.3-flash-sf': 'GLM-5.3-Flash',
   'qwen3.5-9b-sf': 'Qwen3.5-9B',
+  'longcat-2.0-sf': 'LongCat-2.0',
+  'hy4-preview-sf': 'Hy4-preview',
+  'deepseek-v4-pro-sf': 'DeepSeek V4-Pro',
+  'qwen3.8-27b-sf': 'Qwen3.8-27B',
 };
 
 /** 回复行展示用。未知 id 原样显示，空则破折号。 */

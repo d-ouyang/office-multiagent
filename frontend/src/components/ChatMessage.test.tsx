@@ -138,6 +138,26 @@ describe('过程顺序', () => {
     expect(await screen.findByText(/阶段/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /运行 analyze_table/ })).toBeInTheDocument();
   });
+
+  it('深度思考的耗时紧跟标题，字数仍在右侧', async () => {
+    render(
+      <ChatMessage
+        index={1}
+        msg={{
+          role: 'assistant',
+          events: [
+            ev('thinking_delta', { delta: '先' }, 1000, 1),
+            ev('thinking_delta', { delta: '想' }, 2500, 2),
+            ev('content_delta', { delta: '结论' }, 3000, 3),
+          ],
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /已完成/ }));
+    const think = await screen.findByRole('button', { name: /深度思考 1\.5s/ });
+    expect(think).toHaveTextContent('2 字');
+    expect(think.textContent?.indexOf('1.5s')).toBeLessThan(think.textContent?.indexOf('2 字') ?? 0);
+  });
 });
 
 describe('生成文件', () => {

@@ -39,6 +39,17 @@ describe('deriveProcess', () => {
     expect(view.steps[1]).toMatchObject({ text: '阶段结论' });
     expect(view.steps[2].kind === 'tool' && view.steps[2].call.name).toBe('db_query');
   });
+
+  it('同一段思考用首尾时间算耗时', () => {
+    const think = (delta: string, seq: number, ts: number) =>
+      ({ type: 'thinking_delta', run_id: 'r', turn_id: 't', seq, ts, data: { delta } }) as StreamEvent;
+    const view = deriveProcess([
+      think('先', 1, 1_000),
+      think('想', 2, 2_500),
+      { type: 'content_delta', run_id: 'r', turn_id: 't', seq: 3, ts: 3_000, data: { delta: '答' } },
+    ]);
+    expect(view.steps[0]).toMatchObject({ kind: 'thinking', text: '先想', durationMs: 1_500 });
+  });
 });
 
 describe('deriveToolCalls', () => {

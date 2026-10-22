@@ -23,7 +23,9 @@ p6.14 已补上 docx、csv、xlsx、json，表格只给表头、行数和前 20 
 
 ## 2. 视觉和 OCR
 
-支持视觉的模型是自己看图，不是先 OCR。当前注册表里只有 DeepSeek V4.1-Flash 标了 `multimodal_input: true`。对话请求目前只发文字，所以即使用这个模型，图片也还没送进去。
+支持视觉的模型是自己看图，不是先 OCR。注册表里标了视觉的有 DeepSeek V4.1-Flash、GLM-5.3-Flash、Qwen3.8-27B。对话请求目前只发文字，所以即使用这些模型，图片也还没送进去。
+
+DeepSeek-OCR（`deepseek-ai/DeepSeek-OCR`，限时免费，上下文 8K）不放进对话模型。它只适合在读扫描件或图片的那一小步里，把页面转成 Markdown 再交回阅读结果。8K 装不下一次正常办公对话，也不该让用户把它当成主模型。免费期结束时，只换这一步的模型。
 
 规则：
 

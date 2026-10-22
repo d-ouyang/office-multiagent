@@ -53,7 +53,7 @@ models:
     provider: siliconflow
     in_dialogue: true
     multimodal_input: false
-    context_window: 131072
+    context_window: 163840
     max_output: 8192
     supports_reasoning: false
     pool_ids: [default, staff, admin]
@@ -66,7 +66,7 @@ models:
     provider: siliconflow
     in_dialogue: true
     multimodal_input: false
-    context_window: 131072
+    context_window: 163840
     max_output: 16384
     supports_reasoning: true
     pool_ids: [staff, admin]
@@ -106,27 +106,80 @@ models:
     name: GLM-5.3-Flash
     provider: siliconflow
     in_dialogue: true
-    multimodal_input: false
+    multimodal_input: true
     context_window: 1048576
     max_output: 8192
-    supports_reasoning: false
+    supports_reasoning: true
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.0005
     api_model: zai-org/GLM-5.3-Flash
-    description: 智谱 GLM-5.3 Flash，免费/低价档，通用对话与轻量任务
+    description: 智谱 GLM-5.3 Flash，支持思考与视觉，1M 上下文，适合通用对话与轻量任务
 
   - id: qwen3.5-9b-sf
     name: Qwen3.5-9B
     provider: siliconflow
     in_dialogue: true
     multimodal_input: false
-    context_window: 131072
+    context_window: 262144
     max_output: 8192
     supports_reasoning: false
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.0002
     api_model: Qwen/Qwen3.5-9B
-    description: 通义千问 3.5 9B 轻量模型，极速响应，适合简单问答
+    description: 通义千问 3.5 9B 轻量模型，256K 上下文，极速响应，适合简单问答
+
+  - id: longcat-2.0-sf
+    name: LongCat-2.0
+    provider: siliconflow
+    in_dialogue: true
+    multimodal_input: false
+    context_window: 1048576
+    max_output: 16384
+    supports_reasoning: false
+    pool_ids: [default, staff, admin]
+    cost_per_1k: 0.02
+    api_model: meituan-longcat/LongCat-2.0
+    description: 美团 LongCat-2.0，1M 上下文，面向工具调用和长任务
+
+  - id: hy4-preview-sf
+    name: Hy4-preview
+    provider: siliconflow
+    in_dialogue: true
+    multimodal_input: false
+    context_window: 1048576
+    max_output: 65536
+    supports_reasoning: false
+    pool_ids: [default, staff, admin]
+    cost_per_1k: 0.018
+    api_model: tencent/Hy4-preview
+    description: 腾讯混元 Hy4 preview，1M 上下文，适合长程规划与代码工作流
+
+  - id: deepseek-v4-pro-sf
+    name: DeepSeek V4-Pro
+    provider: siliconflow
+    in_dialogue: true
+    multimodal_input: false
+    context_window: 1048576
+    max_output: 16384
+    supports_reasoning: true
+    reasoning_efforts: [high, max]
+    pool_ids: [default, staff, admin]
+    cost_per_1k: 0.024
+    api_model: deepseek-ai/DeepSeek-V4-Pro
+    description: DeepSeek V4 旗舰，1M 上下文，支持思考与工具调用
+
+  - id: qwen3.8-27b-sf
+    name: Qwen3.8-27B
+    provider: siliconflow
+    in_dialogue: true
+    multimodal_input: true
+    context_window: 262144
+    max_output: 16384
+    supports_reasoning: true
+    pool_ids: [default, staff, admin]
+    cost_per_1k: 0.012
+    api_model: Qwen/Qwen3.8-27B
+    description: 通义千问 3.8 27B，256K 上下文，默认思考，支持视觉
 
   # ---------- 逻辑用小模型（云端，不进对话列表） ----------
   - id: bge-m3

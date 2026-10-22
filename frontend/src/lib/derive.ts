@@ -41,7 +41,12 @@ export function deriveToolCalls(events: StreamEvent[]): ToolCall[] {
 }
 
 export type ProcessStep =
-  | { kind: 'thinking'; text: string }
+  | { kind: 'thinking'; text: string; durationMs?: number }
+  | { kind: 'answer'; text: string }
+  | { kind: 'tool'; call: ToolCall };
+
+type OpenStep =
+  | { kind: 'thinking'; text: string; startTs: number; endTs: number }
   | { kind: 'answer'; text: string }
   | { kind: 'tool'; call: ToolCall };
 
@@ -59,11 +64,18 @@ export function deriveProcess(events: StreamEvent[]): ProcessView {
     .map((item) => item.ev);
   const steps: ProcessStep[] = [];
   const tools = new Map<string, ToolCall>();
-  let open: ProcessStep | null = null;
+  let open: OpenStep | null = null;
 
   const flush = () => {
     if (!open) return;
-    if (open.kind === 'tool' || open.text.trim()) steps.push(open);
+    if (open.kind === 'thinking') {
+      if (open.text.trim()) {
+        const durationMs = open.endTs > open.startTs && open.startTs > 0 ? open.endTs - open.startTs : undefined;
+        steps.push({ kind: 'thinking', text: open.text, durationMs });
+      }
+    } else if (open.kind === 'tool' || open.text.trim()) {
+      steps.push(open);
+    }
     open = null;
   };
 
@@ -71,9 +83,13 @@ export function deriveProcess(events: StreamEvent[]): ProcessView {
     if (ev.type === 'thinking_delta') {
       if (!open || open.kind !== 'thinking') {
         flush();
-        open = { kind: 'thinking', text: '' };
+        open = { kind: 'thinking', text: '', startTs: ev.ts, endTs: ev.ts };
       }
       open.text += String(ev.data.delta ?? '');
+      if (ev.ts > 0) {
+        if (open.startTs <= 0) open.startTs = ev.ts;
+        open.endTs = ev.ts;
+      }
     } else if (ev.type === 'content_delta') {
       if (!open || open.kind !== 'answer') {
         flush();
