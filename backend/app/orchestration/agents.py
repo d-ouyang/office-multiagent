@@ -112,7 +112,8 @@ def build_default_registry(
     doc_base = str(Path(settings.documents_dir) / owner) if owner else settings.documents_dir
     if owner:
         read_desc = (
-            "读取当前登录用户上传目录中的文件（支持 .md/.txt/.json/.csv/.docx/.xlsx/.pdf）。"
+            "读取当前登录用户上传目录中的文件（支持 .md/.txt/.json/.csv/.docx/.xlsx/.pdf/.png/.jpg/.webp）。"
+            "PDF 有文字层就直接抽文字。没有文字层的扫描件，以及图片，会转成文字后再返回。"
             "表格只返回表头、行数和前 20 行，不是整表。"
             "参数 file_name 只写文件名，例如 网站备案办事指南.pdf。"
             "查找目录由系统按当前用户确定，不要传本机绝对路径；写成「用户名/文件名」也可以。"

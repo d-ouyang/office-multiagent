@@ -797,6 +797,69 @@ button.account-link:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.header-side {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.context-ring { position: relative; }
+.context-ring-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.context-ring-btn:hover { color: var(--text); background: var(--card2); }
+.context-panel {
+  position: absolute;
+  right: 0;
+  top: 34px;
+  z-index: 20;
+  width: min(420px, calc(100vw - 48px));
+  background: #161616;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+.context-panel-head, .context-panel-summary, .context-panel li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.context-panel-head button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+}
+.context-panel-summary { margin: 8px 0; color: #8b949e; font-size: 13px; }
+.context-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: #30363d;
+}
+.context-bar i { display: block; height: 100%; }
+.context-panel ul { list-style: none; margin: 12px 0 0; padding: 0; }
+.context-panel li { padding: 6px 0; font-size: 13px; }
+.context-panel li span { display: flex; align-items: center; gap: 8px; }
+.context-panel li i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
 .message-scroll {
   flex: 1;
   overflow-y: auto;

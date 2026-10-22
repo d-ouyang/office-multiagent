@@ -198,6 +198,15 @@ models:
     api_model: BAAI/bge-reranker-v2-m3
     api_key_env: SILICONFLOW_API_KEY
 
+  - id: deepseek-ocr
+    name: DeepSeek-OCR
+    provider: siliconflow
+    in_dialogue: false
+    role: ocr
+    api_model: deepseek-ai/DeepSeek-OCR
+    api_key_env: SILICONFLOW_API_KEY
+    description: 只用于扫描件和图片转文字，不进对话列表。上下文 8K。
+
   - id: decision-llm
     name: 决策小模型（路由 / 复杂度判断）
     provider: siliconflow

@@ -11,7 +11,7 @@ export function FilePreview({ path, onClose }: { path: string; onClose: () => vo
   const name = fileLabel(path);
   const lower = name.toLowerCase();
   const isPdf = lower.endsWith('.pdf');
-  const isImage = lower.endsWith('.svg') || lower.endsWith('.png');
+  const isImage = ['.svg', '.png', '.jpg', '.jpeg', '.webp'].some((suffix) => lower.endsWith(suffix));
   const [text, setText] = useState('');
   const [pdfUrl, setPdfUrl] = useState('');
   const [imageUrl, setImageUrl] = useState('');

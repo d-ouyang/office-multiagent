@@ -131,6 +131,42 @@ export function deriveProcess(events: StreamEvent[]): ProcessView {
   return { steps, result, durationMs };
 }
 
+export interface ContextItem {
+  key: string;
+  label: string;
+  tokens: number;
+  color: string;
+}
+
+export interface ContextUsage {
+  window: number;
+  used: number;
+  items: ContextItem[];
+}
+
+/** 取最后一次上下文分栏。没有事件时返回空。 */
+export function deriveContextUsage(events: StreamEvent[]): ContextUsage | null {
+  let found: ContextUsage | null = null;
+  for (const ev of events) {
+    if (ev.type !== 'context_usage') continue;
+    const items = Array.isArray(ev.data.items) ? ev.data.items : [];
+    found = {
+      window: Number(ev.data.window) || 0,
+      used: Number(ev.data.used) || 0,
+      items: items.map((item) => {
+        const row = item as Record<string, unknown>;
+        return {
+          key: String(row.key ?? ''),
+          label: String(row.label ?? ''),
+          tokens: Number(row.tokens) || 0,
+          color: String(row.color ?? '#8b949e'),
+        };
+      }),
+    };
+  }
+  return found;
+}
+
 export function deriveContent(events: StreamEvent[]): string {
   return events
     .filter((e) => e.type === 'content_delta')

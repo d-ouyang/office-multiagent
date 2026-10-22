@@ -48,6 +48,27 @@ class TaskState(TypedDict, total=False):
     result: str
     model: str | None            # p6.5：本次任务的对话模型（优先级：请求>会话>默认）
     effort: str | None           # low/medium/high/max，仅推理模型会传给 API
+    context_parts: dict[str, str]
+
+
+def _emit_context(state: TaskState, system: str, tools, emitter: RunEventEmitter, emit: Callable[[Event], None]) -> None:
+    from ..core.model_registry import load_registry
+    from .brain import _PROTOCOL_TMPL
+    from .memory import context_items
+
+    parts = dict(state.get("context_parts") or {})
+    if "current" not in parts:
+        parts["current"] = state.get("text") or ""
+    tool_text = "\n".join(item.get("description") or "" for item in tools.describe())
+    mid = state.get("model") or settings.llm_brain_model
+    window = 128000
+    registry = load_registry()
+    entry = next((m for m in registry.get("models", []) if m.id == mid), None)
+    if entry is not None and int(getattr(entry, "context_window", 0) or 0) > 0:
+        window = int(entry.context_window)
+    items = context_items(parts, system=system, rules=_PROTOCOL_TMPL, tools=tool_text)
+    used = sum(int(item["tokens"]) for item in items)
+    emit(emitter.context_usage(window, used, items))
 
 
 def _effort_for(state: TaskState) -> str | None:
@@ -144,6 +165,7 @@ def build_graph(
         spec_tools = build_registry_for_spec(spec, tools)
         # p5.2：向流上暴露"当前是谁在回答"（前端 Agent 徽章的数据源）
         emit(emitter.status(agent, "running"))
+        _emit_context(state, spec.system_prompt, spec_tools, emitter, emit)
         brain = make_brain(
             spec_tools, fallback_answer=f"[{agent}] 处理完成", system_prompt=spec.system_prompt,
             model_id=state.get("model"),
@@ -203,6 +225,7 @@ def run_task(
     model: str | None = None,
     effort: str | None = None,
     username: str | None = None,
+    context_parts: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], list[Event]]:
     """跑一次编排。带 token_pool+user_id 时前置 reserve；余额不足→quota_paused 中断。
 
@@ -232,7 +255,14 @@ def run_task(
         task_id=run_id,
     )
     cfg = {"configurable": {"thread_id": run_id}}
-    init: dict[str, Any] = {"text": text, "run_id": run_id, "turn_id": turn_id, "model": model, "effort": effort}
+    init: dict[str, Any] = {
+        "text": text,
+        "run_id": run_id,
+        "turn_id": turn_id,
+        "model": model,
+        "effort": effort,
+        "context_parts": context_parts or {"current": text},
+    }
     if user_id is not None:
         init["user_id"] = user_id
         init["estimate"] = estimate

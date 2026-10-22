@@ -17,7 +17,9 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-SUPPORTED_SUFFIXES = (".md", ".txt", ".json", ".csv", ".docx", ".xlsx", ".pdf")
+SUPPORTED_SUFFIXES = (".md", ".txt", ".json", ".csv", ".docx", ".xlsx", ".pdf", ".png", ".jpg", ".jpeg", ".webp")
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+_IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 TABLE_PREVIEW_ROWS = 20
 _SUPPORTED = SUPPORTED_SUFFIXES
 
@@ -208,11 +210,51 @@ def _read_pdf(path: Path) -> str:
     return "\n".join(pages).strip()
 
 
+def _pdf_images(path: Path) -> list[tuple[bytes, str]]:
+    """抽出扫描页里的图片。抽不出就返回空，不假装有文字。"""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return []
+    found: list[tuple[bytes, str]] = []
+    reader = PdfReader(str(path))
+    for page in reader.pages[:3]:
+        images = getattr(page, "images", None) or []
+        for image in images:
+            data = getattr(image, "data", b"") or b""
+            name = str(getattr(image, "name", "")).lower()
+            if data[:2] == b"\xff\xd8" or name.endswith((".jpg", ".jpeg")):
+                mime = "image/jpeg"
+            elif name.endswith(".webp"):
+                mime = "image/webp"
+            else:
+                mime = "image/png"
+            if data:
+                found.append((data, mime))
+    return found[:3]
+
+
+def _ocr_path(path: Path) -> str:
+    from .tools_ocr import recognize
+
+    suffix = path.suffix.lower()
+    if suffix in IMAGE_SUFFIXES:
+        return recognize(path.read_bytes(), _IMAGE_MIME[suffix])
+    text = _read_pdf(path)
+    if len(text) >= 20:
+        return text
+    images = _pdf_images(path)
+    if not images:
+        return text
+    pages = [recognize(data, mime) for data, mime in images]
+    return "\n\n".join(page for page in pages if page).strip()
+
+
 def extract_document_text(path: Path) -> str:
     """按后缀抽出可放进上下文的文本。调用方负责确认格式在白名单内。"""
     suffix = path.suffix.lower()
-    if suffix == ".pdf":
-        return _read_pdf(path)
+    if suffix == ".pdf" or suffix in IMAGE_SUFFIXES:
+        return _ocr_path(path)
     if suffix == ".docx":
         return _read_docx(path)
     if suffix == ".xlsx":

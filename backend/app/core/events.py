@@ -41,6 +41,7 @@ class EventType(str, Enum):
     ERROR = "error"
     DONE = "done"
     TASK_SUMMARY = "task_summary"
+    CONTEXT_USAGE = "context_usage"
 
 
 class Event(BaseModel):
@@ -143,6 +144,9 @@ class RunEventEmitter:
 
     def error(self, message: str, code: str | None = None) -> Event:
         return self.emit(EventType.ERROR, message=message, code=code)
+
+    def context_usage(self, window: int, used: int, items: list[dict[str, Any]]) -> Event:
+        return self.emit(EventType.CONTEXT_USAGE, window=window, used=used, items=items)
 
     def task_summary(self, artifacts: list[dict[str, Any]], sources: list[dict[str, Any]]) -> Event:
         return self.emit(EventType.TASK_SUMMARY, artifacts=artifacts, sources=sources)

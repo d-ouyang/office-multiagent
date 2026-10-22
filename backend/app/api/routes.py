@@ -341,6 +341,10 @@ def own_document(name: str, authorization: str | None = Header(default=None)):
         ".txt": "text/plain; charset=utf-8",
         ".pdf": "application/pdf",
         ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
     }.get(suffix, "application/octet-stream")
     return FileResponse(path, media_type=media, filename=filename, content_disposition_type="inline")
 
@@ -392,7 +396,13 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
         raise HTTPException(400, detail={"code": "BAD_EFFORT", "message": f"未知力度：{body.effort}"})
     # p6.12：随消息附件——fail-closed 校验（自己目录内且存在），以 prompt 前缀注入任务文本
     validated_attachments = _validate_attachments(body.attachments, str(user["username"]))
-    effective_text = _compose_task_text(body.text, validated_attachments)
+    from ..orchestration.memory import prepare_turn
+
+    prior = repo.list_messages(session_id) if session_id else []
+    remembered, context_parts = prepare_turn(prior, body.text)
+    effective_text = _compose_task_text(remembered, validated_attachments)
+    if validated_attachments:
+        context_parts["current"] = effective_text
     q: _queue.Queue = _queue.Queue()
 
     def worker() -> None:
@@ -406,6 +416,7 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
                 model=effective_model,
                 effort=body.effort,
                 username=str(user["username"]),
+                context_parts=context_parts,
             )
             # p6.2c/p6.7：落库（user 消息 + assistant 终答+过程事件 trace + task 记录）。
             # 落库失败不影响已完成的流（任务结果已推给用户），但必须 ERROR 级可见

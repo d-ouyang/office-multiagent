@@ -9,7 +9,8 @@ import PromptBar, { type PromptBarModel } from '../components/bits/PromptBar';
 import { toPromptModel, type DialogueModel } from '../components/ModelPicker';
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import type { StreamEvent } from '../types';
-import { deriveCurrentAgent, agentLabel } from '../lib/derive';
+import ContextRing from '../components/ContextRing';
+import { deriveContextUsage, deriveCurrentAgent, agentLabel } from '../lib/derive';
 import { authHeaders, clearToken, createSession, deleteSession, getMessages, getQuota, listSessions, updateSession } from '../lib/api';
 
 const EFFORTS = ['低', '高', '最大'] as const;
@@ -19,7 +20,7 @@ const SOURCES = [
   {
     key: 'files',
     name: '上传文档',
-    description: '.md / .txt / .json / .csv / .docx / .xlsx / .pdf，不超过 10MB',
+    description: '.md / .txt / .json / .csv / .docx / .xlsx / .pdf / 图片，不超过 10MB',
     icon: Attachment01Icon,
     attach: true,
   },
@@ -364,41 +365,6 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     await newChat();
   };
 
-  const renameChat = async (id: string, title: string) => {
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
-    try {
-      await updateSession(id, { title });
-    } catch (e) {
-      if ((e as Error).message === 'UNAUTHORIZED') onLogout();
-    }
-  };
-
-  const pinChat = async (id: string, pinned: boolean) => {
-    setSessions((prev) => {
-      const next = prev.map((s) => (s.id === id ? { ...s, pinned } : s));
-      return [...next.filter((s) => s.pinned), ...next.filter((s) => !s.pinned)];
-    });
-    try {
-      await updateSession(id, { pinned });
-    } catch (e) {
-      if ((e as Error).message === 'UNAUTHORIZED') onLogout();
-    }
-  };
-
-  const removeChat = async (id: string) => {
-    const rest = sessions.filter((s) => s.id !== id);
-    setSessions(rest);
-    if (currentIdRef.current === id) {
-      if (rest[0]) void selectSession(rest[0].id);
-      else void newChat();
-    }
-    try {
-      await deleteSession(id);
-    } catch (e) {
-      if ((e as Error).message === 'UNAUTHORIZED') onLogout();
-    }
-  };
-
   const newChat = async () => {
     if (status === 'streaming') stop();
     sealedRef.current = true;
@@ -423,6 +389,15 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
   const promptModels = useMemo(() => models.map(toPromptModel), [models]);
   const defaultModel = localStorage.getItem('office_model') || 'deepseek-chat';
   const currentAgent = deriveCurrentAgent(events);
+  const contextUsage = useMemo(() => {
+    const live = events.length ? deriveContextUsage(events) : null;
+    if (live) return live;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const found = messages[i].events ? deriveContextUsage(messages[i].events!) : null;
+      if (found) return found;
+    }
+    return null;
+  }, [events, messages]);
 
   return (
     <div className="app-shell">
@@ -431,9 +406,9 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
         currentId={currentId}
         onSelect={(id) => void selectSession(id)}
         onNew={() => void newChat()}
-        onRename={(id, title) => void renameChat(id, title)}
-        onPin={(id, pinned) => void pinChat(id, pinned)}
-        onDelete={(id) => void removeChat(id)}
+        onRename={(id, title) => void onRenameSession(id, title)}
+        onPin={(id, pinned) => void onPinSession(id, pinned)}
+        onDelete={(id) => void onDeleteSession(id)}
         user={user}
         balance={balance}
         usage={usage}
@@ -446,11 +421,14 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
       <main className="chat-main">
         <header className="chat-header">
           <h2>{sessions.find((s) => s.id === currentId)?.title ?? '新会话'}</h2>
-          {currentAgent && (
-            <span className="agent-now">
-              当前回答：<span className="badge agent">{agentLabel(currentAgent.agent)}</span>
-            </span>
-          )}
+          <div className="header-side">
+            {currentAgent && (
+              <span className="agent-now">
+                当前回答：<span className="badge agent">{agentLabel(currentAgent.agent)}</span>
+              </span>
+            )}
+            <ContextRing usage={contextUsage} />
+          </div>
         </header>
         <div className="message-scroll" ref={scrollRef}>
           {liveMessages.length === 0 && (

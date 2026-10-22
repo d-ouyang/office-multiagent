@@ -11,7 +11,8 @@ export type EventType =
   | 'source'
   | 'error'
   | 'done'
-  | 'task_summary';
+  | 'task_summary'
+  | 'context_usage';
 
 export interface StreamEvent {
   type: EventType;
