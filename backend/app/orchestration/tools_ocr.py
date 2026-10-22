@@ -8,7 +8,7 @@ import httpx
 from ..core.llm import LlmError, resolve_model
 
 OCR_MODEL_ID = "deepseek-ocr"
-_PROMPT = "Convert the document to markdown. Keep the original language. Do not add commentary."
+_PROMPT = "<image>\nFree OCR."
 
 
 def recognize(data: bytes, mime: str, *, transport: httpx.BaseTransport | None = None) -> str:
@@ -49,7 +49,7 @@ def recognize(data: bytes, mime: str, *, transport: httpx.BaseTransport | None =
         content = resp.json()["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError, TypeError, ValueError) as e:
         raise RuntimeError("扫描识别响应里没有文字") from e
-    text = str(content).strip()
+    text = str(content).strip().lstrip("}").strip()
     if not text:
         raise RuntimeError("扫描识别没有读到文字")
     return text
