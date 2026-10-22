@@ -65,6 +65,22 @@ def test_upload_traversal_filename_flattened(client, tmp_path):
     assert not (tmp_path / "evil.md").exists()  # 没逃出去
 
 
+def test_upload_and_preview_csv(client):
+    r = client.post(
+        "/api/v1/documents",
+        files={"file": ("订单.csv", "地区,金额\n上海,12\n".encode())},
+        headers=_auth(),
+    )
+    assert r.status_code == 200
+    assert r.json()["file_name"] == "dev/订单.csv"
+    preview = client.get(
+        "/api/v1/documents/content", params={"name": "dev/订单.csv"}, headers=_auth()
+    )
+    assert preview.status_code == 200
+    assert "列：地区、金额" in preview.text
+    assert "上海 | 12" in preview.text
+
+
 def test_upload_bad_format_rejected(client):
     r = client.post(
         "/api/v1/documents",

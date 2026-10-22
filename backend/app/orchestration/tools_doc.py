@@ -1,18 +1,25 @@
-"""read_document 工具（p5.2）——读取文档目录内的文本内容（.md/.txt/.pdf）。
+"""read_document 工具（p5.2 / p6.14）——读取文档目录内的文本。
 
 硬护栏（fail-closed）：
   · 路径穿越防护：解析后的真实路径必须仍在文档目录内（`..`、绝对路径、软链逃逸全部拒绝）。
-  · 格式白名单：仅 .md/.txt（直读）与 .pdf（pypdf 抽文本）；其他格式如实"暂不支持"。
+  · 格式白名单：.md/.txt/.json/.csv/.docx/.xlsx 与 .pdf。其他格式如实「暂不支持」。
+  · 表格不交整表：只给表头、数据行数和前若干行。
   · 单次返回按 max_chars 截断，并如实标注 truncated（不假装给了全文）。
 文件不存在/为空同样如实报错——绝不编造文档内容。
 """
 from __future__ import annotations
 
+import csv
+import io
+import json
 from collections.abc import Callable
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-_SUPPORTED = (".md", ".txt", ".pdf")
+SUPPORTED_SUFFIXES = (".md", ".txt", ".json", ".csv", ".docx", ".xlsx", ".pdf")
+TABLE_PREVIEW_ROWS = 20
+_SUPPORTED = SUPPORTED_SUFFIXES
 
 
 def normalize_doc_name(file_name: str, owner: str | None = None) -> str:
@@ -42,6 +49,92 @@ def check_inside_base(base: Path, file_name: str) -> Path:
     return target
 
 
+def _cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ", timespec="seconds")
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def _decode_text(path: Path) -> str:
+    raw = path.read_bytes()
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("gbk", errors="replace")
+
+
+def _table_preview(headers: list[str], rows: list[list[str]], *, sheet: str | None = None) -> str:
+    title = f"工作表 {sheet}\n" if sheet else ""
+    shown = rows[:TABLE_PREVIEW_ROWS]
+    head = "列：" + ("、".join(headers) if any(headers) else "（无表头）")
+    lines = [f"{i}. " + " | ".join(row) for i, row in enumerate(shown, 1)]
+    if len(rows) > TABLE_PREVIEW_ROWS:
+        tail = f"共 {len(rows)} 行，这里只给出前 {TABLE_PREVIEW_ROWS} 行"
+    else:
+        tail = f"共 {len(rows)} 行"
+    body = "\n".join(lines)
+    return f"{title}{head}\n{body}\n{tail}".strip()
+
+
+def _read_csv(path: Path) -> str:
+    rows = list(csv.reader(io.StringIO(_decode_text(path))))
+    if not rows:
+        return ""
+    headers = [_cell(c) for c in rows[0]]
+    data = [[_cell(c) for c in row] for row in rows[1:]]
+    return _table_preview(headers, data)
+
+
+def _read_xlsx(path: Path) -> str:
+    try:
+        from openpyxl import load_workbook
+    except ImportError as e:
+        raise RuntimeError("Excel 解析依赖未安装（openpyxl）") from e
+    book = load_workbook(path, read_only=True, data_only=True)
+    parts: list[str] = []
+    try:
+        for name in book.sheetnames:
+            sheet = book[name]
+            grid = [[_cell(c) for c in row] for row in sheet.iter_rows(values_only=True)]
+            if not grid:
+                parts.append(f"工作表 {name}\n（空表）")
+                continue
+            parts.append(_table_preview(grid[0], grid[1:], sheet=name))
+    finally:
+        book.close()
+    return "\n\n".join(parts).strip()
+
+
+def _read_docx(path: Path) -> str:
+    try:
+        from docx import Document
+    except ImportError as e:
+        raise RuntimeError("Word 解析依赖未安装（python-docx）") from e
+    doc = Document(str(path))
+    parts = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        grid = [[_cell(cell.text) for cell in row.cells] for row in table.rows]
+        if not grid:
+            continue
+        parts.append(_table_preview(grid[0], grid[1:]))
+    return "\n".join(parts).strip()
+
+
+def _read_json(path: Path) -> str:
+    raw = _decode_text(path).strip()
+    if not raw:
+        return ""
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return f"不是合法 JSON（{e.msg}）。原文：\n{raw}"
+    return json.dumps(parsed, ensure_ascii=False, indent=2)
+
+
 def _read_pdf(path: Path) -> str:
     try:
         from pypdf import PdfReader
@@ -50,6 +143,22 @@ def _read_pdf(path: Path) -> str:
     reader = PdfReader(str(path))
     pages = [(page.extract_text() or "") for page in reader.pages]
     return "\n".join(pages).strip()
+
+
+def extract_document_text(path: Path) -> str:
+    """按后缀抽出可放进上下文的文本。调用方负责确认格式在白名单内。"""
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        return _read_pdf(path)
+    if suffix == ".docx":
+        return _read_docx(path)
+    if suffix == ".xlsx":
+        return _read_xlsx(path)
+    if suffix == ".csv":
+        return _read_csv(path)
+    if suffix == ".json":
+        return _read_json(path)
+    return path.read_text(encoding="utf-8", errors="replace").strip()
 
 
 def make_read_document_tool(
@@ -67,10 +176,7 @@ def make_read_document_tool(
         suffix = target.suffix.lower()
         if suffix not in _SUPPORTED:
             raise ValueError(f"暂不支持该格式：{suffix}（当前支持 {'/'.join(_SUPPORTED)}）")
-        if suffix == ".pdf":
-            content = _read_pdf(target)
-        else:
-            content = target.read_text(encoding="utf-8", errors="replace").strip()
+        content = extract_document_text(target)
         if not content:
             raise ValueError(f"文档内容为空：{file_name}")
         return {

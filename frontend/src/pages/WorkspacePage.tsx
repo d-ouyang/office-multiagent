@@ -19,7 +19,7 @@ const SOURCES = [
   {
     key: 'files',
     name: '上传文档',
-    description: '.md / .txt / .pdf，不超过 10MB',
+    description: '.md / .txt / .json / .csv / .docx / .xlsx / .pdf，不超过 10MB',
     icon: Attachment01Icon,
     attach: true,
   },
@@ -436,7 +436,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
           <input
             ref={fileRef}
             type="file"
-            accept=".md,.txt,.pdf"
+            accept=".md,.txt,.json,.csv,.docx,.xlsx,.pdf"
             hidden
             onChange={(e) => {
               const file = e.target.files?.[0] ?? null;

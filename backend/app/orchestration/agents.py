@@ -66,14 +66,16 @@ def build_default_registry(engine: Engine | None, username: str | None = None) -
     doc_base = str(Path(settings.documents_dir) / owner) if owner else settings.documents_dir
     if owner:
         read_desc = (
-            "读取当前登录用户上传目录中的文件全文（支持 .md/.txt/.pdf），返回文本内容与字数。"
+            "读取当前登录用户上传目录中的文件（支持 .md/.txt/.json/.csv/.docx/.xlsx/.pdf）。"
+            "表格只返回表头、行数和前 20 行，不是整表。"
             "参数 file_name 只写文件名，例如 网站备案办事指南.pdf。"
             "查找目录由系统按当前用户确定，不要传本机绝对路径；写成「用户名/文件名」也可以。"
             "文件不存在时不要反复重试，直接如实告知用户。"
         )
     else:
         read_desc = (
-            "读取文档目录内指定文件的全文（支持 .md/.txt/.pdf），返回文本内容与字数。"
+            "读取文档目录内指定文件（支持 .md/.txt/.json/.csv/.docx/.xlsx/.pdf）。"
+            "表格只返回表头、行数和前 20 行。"
             "参数: file_name（文档目录内的相对路径；当前登录用户上传的文件在 "
             "'<用户名>/' 子目录下，例如 dev/handbook.md）。"
             "适用于需要引用某份文档原文/做摘要的场景。"

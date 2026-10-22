@@ -41,6 +41,62 @@ def test_read_pdf_returns_empty_page_text_or_ok(doc_dir):
         tool("blank.pdf")
 
 
+def test_read_csv_previews_header_and_limits_rows(doc_dir):
+    lines = ["姓名,城市"] + [f"人{i},上海" for i in range(1, 26)]
+    (doc_dir / "orders.csv").write_text("\n".join(lines), encoding="utf-8")
+    tool = make_read_document_tool(base_dir=str(doc_dir))
+    out = tool("orders.csv")
+    assert "列：姓名、城市" in out["content"]
+    assert "共 25 行，这里只给出前 20 行" in out["content"]
+    assert "人20" in out["content"]
+    assert "人21" not in out["content"]
+
+
+def test_read_json_and_invalid_json(doc_dir):
+    (doc_dir / "ok.json").write_text('{"名称": "备案"}', encoding="utf-8")
+    (doc_dir / "bad.json").write_text("{不是", encoding="utf-8")
+    tool = make_read_document_tool(base_dir=str(doc_dir))
+    assert "备案" in tool("ok.json")["content"]
+    bad = tool("bad.json")["content"]
+    assert bad.startswith("不是合法 JSON")
+    assert "{不是" in bad
+
+
+def test_read_docx_paragraph_and_table(doc_dir):
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("备案说明")
+    table = doc.add_table(rows=2, cols=2)
+    table.rows[0].cells[0].text = "项目"
+    table.rows[0].cells[1].text = "材料"
+    table.rows[1].cells[0].text = "网站"
+    table.rows[1].cells[1].text = "执照"
+    doc.save(doc_dir / "说明.docx")
+    tool = make_read_document_tool(base_dir=str(doc_dir))
+    out = tool("说明.docx")["content"]
+    assert "备案说明" in out
+    assert "列：项目、材料" in out
+    assert "网站 | 执照" in out
+
+
+def test_read_xlsx_sheet_preview(doc_dir):
+    from openpyxl import Workbook
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "订单"
+    sheet.append(["地区", "金额"])
+    sheet.append(["上海", 12])
+    book.save(doc_dir / "订单.xlsx")
+    tool = make_read_document_tool(base_dir=str(doc_dir))
+    out = tool("订单.xlsx")["content"]
+    assert "工作表 订单" in out
+    assert "列：地区、金额" in out
+    assert "上海 | 12" in out
+    assert "共 1 行" in out
+
+
 def test_unsupported_format_is_honest(doc_dir):
     tool = make_read_document_tool(base_dir=str(doc_dir))
     with pytest.raises(ValueError, match="不支持"):

@@ -235,7 +235,7 @@ def my_quota(authorization: str | None = Header(default=None)):
 async def upload_document(file: UploadFile = File(...), authorization: str | None = Header(default=None)):
     """p6.6：上传文档到自己的目录（data/upload/<username>/），供 read_document 工具读取。
 
-    护栏：只取 basename（防路径穿越）、格式白名单（.md/.txt/.pdf）、大小上限 10MB、
+    护栏：只取 basename（防路径穿越）、格式白名单与 read_document 相同、大小上限 10MB、
     按登录用户分目录（身份隔离）。失败一律 4xx 如实说明。
     """
     from pathlib import Path as _Path
@@ -244,9 +244,12 @@ async def upload_document(file: UploadFile = File(...), authorization: str | Non
     name = _Path(file.filename or "").name  # 只取 basename：../、绝对路径全部拍平
     if not name:
         raise HTTPException(400, detail={"code": "EMPTY_FILENAME", "message": "文件名为空"})
-    if not name.lower().endswith((".md", ".txt", ".pdf")):
+    from ..orchestration.tools_doc import SUPPORTED_SUFFIXES
+
+    if not name.lower().endswith(SUPPORTED_SUFFIXES):
+        allowed = "/".join(s.lstrip(".") for s in SUPPORTED_SUFFIXES)
         raise HTTPException(
-            400, detail={"code": "BAD_FORMAT", "message": "仅支持 .md/.txt/.pdf"}
+            400, detail={"code": "BAD_FORMAT", "message": f"仅支持 {allowed}"}
         )
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
@@ -264,17 +267,28 @@ def own_document(name: str, authorization: str | None = Header(default=None)):
     """预览本人已上传的文件。只读自己的目录，路径穿越按 basename 拍平后仍必须落在该目录内。"""
     from pathlib import Path as _Path
 
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, PlainTextResponse
+
+    from ..orchestration.tools_doc import extract_document_text
 
     user = _current_user(authorization)
     stored = _validate_attachments([name], str(user["username"]))
     filename = stored[0].split("/", 1)[1]
     path = _Path(settings.documents_dir) / str(user["username"]) / filename
+    suffix = path.suffix.lower()
+    if suffix in {".docx", ".xlsx", ".csv", ".json"}:
+        try:
+            body = extract_document_text(path)
+        except ValueError as e:
+            raise HTTPException(400, detail={"code": "EMPTY_PREVIEW", "message": str(e)}) from e
+        if not body:
+            raise HTTPException(400, detail={"code": "EMPTY_PREVIEW", "message": "文档内容为空"})
+        return PlainTextResponse(body, media_type="text/plain; charset=utf-8")
     media = {
         ".md": "text/markdown; charset=utf-8",
         ".txt": "text/plain; charset=utf-8",
         ".pdf": "application/pdf",
-    }.get(path.suffix.lower(), "application/octet-stream")
+    }.get(suffix, "application/octet-stream")
     return FileResponse(path, media_type=media, filename=filename, content_disposition_type="inline")
 
 
