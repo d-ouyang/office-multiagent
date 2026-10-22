@@ -246,8 +246,14 @@ def _ocr_path(path: Path) -> str:
     images = _pdf_images(path)
     if not images:
         return text
-    pages = [recognize(data, mime) for data, mime in images]
-    return "\n\n".join(page for page in pages if page).strip()
+    pages = []
+    for data, mime in images:
+        try:
+            pages.append(recognize(data, mime))
+        except RuntimeError:
+            continue
+    joined = "\n\n".join(page for page in pages if page).strip()
+    return joined or text
 
 
 def extract_document_text(path: Path) -> str:
