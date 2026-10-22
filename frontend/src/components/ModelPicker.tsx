@@ -18,9 +18,10 @@ const PROVIDER_LABEL: Record<string, string> = {
   siliconflow: '硅基流动',
 };
 
-function fmtCtx(n: number): string {
-  if (n >= 1_000_000) return `${Math.round(n / (n % 1024 === 0 ? 1_048_576 : 1_000_000))}M`;
-  if (n >= 1000) return `${Math.round(n / (n % 1024 === 0 ? 1024 : 1000))}K`;
+export function fmtCtx(n: number): string {
+  const binary = n % 1024 === 0 && n % 1000 !== 0;
+  if (n >= 1_000_000) return `${Math.round(n / (binary ? 1_048_576 : 1_000_000))}M`;
+  if (n >= 1000) return `${Math.round(n / (binary ? 1024 : 1000))}K`;
   return String(n);
 }
 
