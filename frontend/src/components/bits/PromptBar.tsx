@@ -48,6 +48,7 @@ export interface PromptBarModel {
   key: string;
   name: string;
   tag?: string;
+  description?: string;
 }
 
 export interface PromptBarSendDetail {

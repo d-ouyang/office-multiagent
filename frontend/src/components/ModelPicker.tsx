@@ -11,6 +11,7 @@ export interface DialogueModel {
   context_window: number;
   supports_reasoning: boolean;
   description: string;
+  highlights?: string[];
 }
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -58,7 +59,12 @@ export function toPromptModel(m: DialogueModel): { key: string; name: string; ta
   const bits = [fmtCtx(m.context_window)];
   if (m.supports_reasoning) bits.push('思考');
   if (m.multimodal_input) bits.push('视觉');
-  return { key: m.id, name: `${m.name} · ${channel}`, tag: bits.join(' · ') };
+  return {
+    key: m.id,
+    name: `${m.name} · ${channel}`,
+    tag: bits.join(' · '),
+    description: (m.highlights ?? []).join(' · '),
+  };
 }
 
 export function ModelPicker({ onChange }: { onChange?: (m: DialogueModel | null) => void }) {

@@ -37,6 +37,8 @@ class ModelEntry(BaseModel):
     base_url: str | None = None
     api_key_env: str | None = None
     description: str = ""  # p6.8：模型描述（前端下拉展示）
+    # 下拉里上下文和思考/视觉之外还要露出的标签，例如参数规模、工具、续写。
+    highlights: list[str] = Field(default_factory=list)
 
 
 class ProviderEntry(BaseModel):
@@ -94,6 +96,7 @@ def get_dialogue_models(pool_ids: list[str] | None = None) -> list[dict[str, Any
                 "pool_ids": m.pool_ids,
                 "cost_per_1k": m.cost_per_1k,
                 "description": m.description,
+                "highlights": list(m.highlights),
             }
         )
     return out

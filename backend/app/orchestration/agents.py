@@ -21,6 +21,7 @@ from sqlalchemy.engine import Engine
 from ..core.config import settings
 from .tools import ToolRegistry
 from .tools_db import make_db_query_tool
+from .tools_orders import make_query_orders_tool
 from .tools_chart import make_render_chart_tool
 from .tools_doc import make_read_document_tool
 from .tools_rag import make_rag_retrieve_tool
@@ -54,9 +55,29 @@ def build_default_registry(
         "db_query",
         make_db_query_tool(engine, max_rows=settings.db_query_max_rows),
         description=(
-            "查询公司业务库（只读兜底）。没有专用查询工具时才用。"
-            "参数 sql：单条 SELECT。必须带 WHERE、GROUP BY 或聚合；最多返回 50 行，"
-            "执行超过 3 秒会被数据库打断。禁止写操作。上传的表不要用它，先 clean_table。"
+            "查询公司业务库（只读兜底）。锅圈订单不要用它，用 query_orders。"
+            "没有专用查询工具时才用。参数 sql：单条 SELECT。必须带 WHERE、GROUP BY 或聚合；"
+            "最多返回 50 行，执行超过 3 秒会被数据库打断。禁止写操作。上传的表先 clean_table。"
+        ),
+    )
+    reg.register(
+        "query_orders",
+        make_query_orders_tool(engine, max_rows=settings.db_query_max_rows),
+        description=(
+            "查询已入库的锅圈食汇订单。不要写 SQL，也不要读订单 CSV。"
+            "至少要带一个条件：date_from、date_to（YYYY-MM-DD，按下单时间）、"
+            "order_no、store_name、city（只能是上海或安庆）、order_status、order_channel、"
+            "order_type、fulfillment_type、member_level、group_by。"
+            "order_status：已完成、已支付、配送中、已退款、待支付、已取消。"
+            "order_channel：微信小程序、抖音小程序、门店扫码、美团外卖、饿了么外卖。"
+            "order_type：普通订单、拼团订单、接龙订单。"
+            "fulfillment_type：门店自提、同城配送、平台外卖配送。"
+            "member_level：普通会员、银卡会员、金卡会员、黑金会员。"
+            "group_by：month、store_name、order_channel、order_status、order_type、"
+            "fulfillment_type、member_level、city。分组时 metric 默认 sum_pay，"
+            "还可取 count、sum_total、sum_discount、sum_refund、avg_pay、sum_goods。"
+            "limit 最大 50。不返回手机号、真实姓名和收货地址。"
+            "条件对不上时会说明没有这个过滤条件，不要改去猜列名或改用 db_query。"
         ),
     )
     reg.register(

@@ -27,6 +27,13 @@ async def lifespan(app: FastAPI):
     required_ok = report["mysql"]["ok"] and report["redis"]["ok"]
     if required_ok:
         logger.info("启动探活全绿 | %s", report)
+        try:
+            from .core.db import get_engine
+            from .orchestration.orders_seed import ensure_orders_loaded
+
+            logger.info("订单数据 %s", ensure_orders_loaded(get_engine()))
+        except Exception:
+            logger.exception("订单数据导入失败，查询时会再试一次")
     else:
         logger.error(
             "启动探活未全绿，降级运行（/health 暴露，逐请求自愈重连）| %s", report

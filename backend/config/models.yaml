@@ -119,14 +119,15 @@ models:
     name: Qwen3.5-9B
     provider: siliconflow
     in_dialogue: true
-    multimodal_input: false
+    multimodal_input: true
     context_window: 262144
     max_output: 8192
-    supports_reasoning: false
+    supports_reasoning: true
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.0002
     api_model: Qwen/Qwen3.5-9B
-    description: 通义千问 3.5 9B 轻量模型，256K 上下文，极速响应，适合简单问答
+    highlights: [9B, 工具]
+    description: 通义千问 3.5 9B 推理模型，256K 上下文，支持对话、工具调用和视觉
 
   - id: longcat-2.0-sf
     name: LongCat-2.0
@@ -135,11 +136,12 @@ models:
     multimodal_input: false
     context_window: 1048576
     max_output: 16384
-    supports_reasoning: false
+    supports_reasoning: true
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.02
     api_model: meituan-longcat/LongCat-2.0
-    description: 美团 LongCat-2.0，1M 上下文，面向工具调用和长任务
+    highlights: [1.6T MoE, 工具, 续写, 长文本, Vibe Coding]
+    description: 美团 LongCat-2.0，1.6T MoE 推理模型，1M 上下文。支持对话、前缀续写和工具调用，适合长文本和 Vibe Coding
 
   - id: hy4-preview-sf
     name: Hy4-preview
@@ -148,11 +150,12 @@ models:
     multimodal_input: false
     context_window: 1048576
     max_output: 65536
-    supports_reasoning: false
+    supports_reasoning: true
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.018
     api_model: tencent/Hy4-preview
-    description: 腾讯混元 Hy4 preview，1M 上下文，适合长程规划与代码工作流
+    highlights: [770B MoE, 工具, 续写, Coder, Vibe Coding, 长文本, 旗舰]
+    description: 腾讯混元 Hy4 preview，770B MoE 旗舰推理模型，1M 上下文。支持对话、前缀续写和工具调用，面向代码、长文本和 Vibe Coding
 
   - id: deepseek-v4-pro-sf
     name: DeepSeek V4-Pro
