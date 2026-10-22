@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.orchestration.orders_seed import COLUMNS, ensure_orders_loaded
 from app.orchestration.tools_orders import make_query_orders_tool
+from app.orchestration.tools_report import make_sales_report_tool
 
 
 @pytest.fixture
@@ -93,3 +94,41 @@ def test_loads_csv_once(tmp_path: Path):
     out = make_query_orders_tool(eng)(order_no="GQ9")
     assert out["rows"][0]["order_no"] == "GQ9"
     assert "13100000000" not in str(out["rows"])
+
+
+def test_sales_report_refuses_when_time_or_metric_missing(engine):
+    tool = make_sales_report_tool(engine)
+    out = tool(city="上海")
+    assert out["complete"] is False
+    assert out["missing"] == ["时间范围", "指标"]
+    assert out["report"] is None
+
+
+def test_sales_report_numbers_come_from_orders(engine):
+    out = make_sales_report_tool(engine)(
+        date_from="2025-01-01",
+        date_to="2025-01-31",
+        metric="sum_pay",
+        city="上海",
+    )
+    assert out["complete"] is True
+    assert out["missing"] == []
+    assert out["numbers"][0]["order_count"] == 2
+    assert float(out["numbers"][0]["metric_value"]) == pytest.approx(30.5)
+    for title in ("时间范围：", "指标：", "口径：", "数据来源："):
+        assert title in out["report"]
+    assert "城市=上海" in out["definition"]
+    assert "query_orders" in out["source"]
+    assert "13800000000" not in out["report"]
+
+
+def test_sales_report_echoes_excluded_status(engine):
+    out = make_sales_report_tool(engine)(
+        date_from="2025-01-01",
+        date_to="2025-12-31",
+        metric="count",
+        exclude_status="已取消",
+    )
+    assert out["complete"] is True
+    assert out["numbers"][0]["order_count"] == 2
+    assert "排除状态=已取消" in out["definition"]

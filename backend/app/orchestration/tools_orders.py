@@ -39,6 +39,15 @@ _METRICS = {
     "avg_pay": "AVG(pay_amount)",
     "sum_goods": "SUM(goods_quantity)",
 }
+METRIC_DEFINITIONS = {
+    "count": "订单条数。每张订单计 1，时间按下单时间。",
+    "sum_pay": "实付金额合计，字段 pay_amount。待支付和已取消的实付为 0，这些订单仍计入。",
+    "sum_total": "总金额合计，字段 total_amount，等于商品小计加配送费加包装费，还没扣优惠。",
+    "sum_discount": "优惠金额合计，只统计优惠券。",
+    "sum_refund": "退款金额合计。已退款订单等于实付，其余为 0。",
+    "avg_pay": "实付金额平均值。分母是范围内全部订单，不是只算已支付。",
+    "sum_goods": "商品件数合计，字段 goods_quantity。",
+}
 _LIST_COLUMNS = (
     "order_no",
     "order_create_time",
@@ -131,7 +140,8 @@ def make_query_orders_tool(engine: Engine | None, *, max_rows: int = _MAX_ROWS) 
         order_type = _choice(raw.get("order_type"), "订单类型", _TYPES)
         fulfillment = _choice(raw.get("fulfillment_type"), "履约方式", _FULFILLMENT)
         level = _choice(raw.get("member_level"), "会员等级", _LEVELS)
-        for item in (date_from, date_to, status, channel, order_type, fulfillment, level):
+        excluded = _choice(raw.get("exclude_status"), "要排除的订单状态", _STATUSES)
+        for item in (date_from, date_to, status, channel, order_type, fulfillment, level, excluded):
             if isinstance(item, dict):
                 return item
 
@@ -184,6 +194,10 @@ def make_query_orders_tool(engine: Engine | None, *, max_rows: int = _MAX_ROWS) 
                 filters.append(f"{key} = :{key}")
                 params[key] = value
                 applied[key] = str(value)
+        if excluded:
+            filters.append("order_status <> :exclude_status")
+            params["exclude_status"] = excluded
+            applied["exclude_status"] = str(excluded)
 
         if not filters and not group_by and not metric:
             return {"error": "查询必须带时间、城市、门店、渠道、状态或分组，避免整表读取"}

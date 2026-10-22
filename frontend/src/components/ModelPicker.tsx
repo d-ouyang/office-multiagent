@@ -11,7 +11,6 @@ export interface DialogueModel {
   context_window: number;
   supports_reasoning: boolean;
   description: string;
-  highlights?: string[];
 }
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -63,7 +62,6 @@ export function toPromptModel(m: DialogueModel): { key: string; name: string; ta
     key: m.id,
     name: `${m.name} · ${channel}`,
     tag: bits.join(' · '),
-    description: (m.highlights ?? []).join(' · '),
   };
 }
 

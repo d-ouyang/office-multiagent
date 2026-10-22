@@ -10,18 +10,17 @@ describe('fmtCtx', () => {
     expect(fmtCtx(1048576)).toBe('1M');
   });
 
-  it('推理和视觉进标签，其余能力进说明', () => {
+  it('能力只标思考和视觉', () => {
     const row = toPromptModel({
-      id: 'longcat-2.0-sf',
-      name: 'LongCat-2.0',
+      id: 'qwen3.5-9b-sf',
+      name: 'Qwen3.5-9B',
       provider: 'siliconflow',
-      multimodal_input: false,
-      context_window: 1048576,
+      multimodal_input: true,
+      context_window: 262144,
       supports_reasoning: true,
-      description: '长说明',
-      highlights: ['1.6T MoE', '工具', '续写'],
+      description: '9B · 工具 · 续写',
     });
-    expect(row.tag).toBe('1M · 思考');
-    expect(row.description).toBe('1.6T MoE · 工具 · 续写');
+    expect(row.tag).toBe('256K · 思考 · 视觉');
+    expect(row).not.toHaveProperty('description');
   });
 });

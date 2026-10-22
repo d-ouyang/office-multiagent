@@ -22,6 +22,7 @@ from ..core.config import settings
 from .tools import ToolRegistry
 from .tools_db import make_db_query_tool
 from .tools_orders import make_query_orders_tool
+from .tools_report import make_sales_report_tool
 from .tools_chart import make_render_chart_tool
 from .tools_doc import make_read_document_tool
 from .tools_rag import make_rag_retrieve_tool
@@ -77,7 +78,22 @@ def build_default_registry(
             "fulfillment_type、member_level、city。分组时 metric 默认 sum_pay，"
             "还可取 count、sum_total、sum_discount、sum_refund、avg_pay、sum_goods。"
             "limit 最大 50。不返回手机号、真实姓名和收货地址。"
+            "不要某状态时传 exclude_status，例如不要退款就传 已退款。"
             "条件对不上时会说明没有这个过滤条件，不要改去猜列名或改用 db_query。"
+            "销售报表不要用本工具拼结论，改用 sales_report。"
+        ),
+    )
+    reg.register(
+        "sales_report",
+        make_sales_report_tool(engine),
+        description=(
+            "生成锅圈销售报表。数字只来自 query_orders，不要自己计算或改写。"
+            "必填 date_from、date_to（YYYY-MM-DD）和 metric。"
+            "metric：count、sum_pay、sum_total、sum_discount、sum_refund、avg_pay、sum_goods。"
+            "可选 city、store_name、order_status、exclude_status、order_channel、order_type、"
+            "fulfillment_type、member_level、group_by。用户说只要某城市、不要某状态时，必须传对应参数。"
+            "时间范围、指标、口径、数据来源缺任何一项时 complete 为 false，这时不能说报表已完成。"
+            "complete 为 true 时，只转述返回的 report，不要另写数字。"
         ),
     )
     reg.register(

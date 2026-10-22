@@ -126,8 +126,7 @@ models:
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.0002
     api_model: Qwen/Qwen3.5-9B
-    highlights: [9B, 工具]
-    description: 通义千问 3.5 9B 推理模型，256K 上下文，支持对话、工具调用和视觉
+    description: 通义千问 3.5 9B，256K 上下文，支持思考与视觉
 
   - id: longcat-2.0-sf
     name: LongCat-2.0
@@ -140,8 +139,7 @@ models:
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.02
     api_model: meituan-longcat/LongCat-2.0
-    highlights: [1.6T MoE, 工具, 续写, 长文本, Vibe Coding]
-    description: 美团 LongCat-2.0，1.6T MoE 推理模型，1M 上下文。支持对话、前缀续写和工具调用，适合长文本和 Vibe Coding
+    description: 美团 LongCat-2.0，1M 上下文，支持思考
 
   - id: hy4-preview-sf
     name: Hy4-preview
@@ -154,8 +152,7 @@ models:
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.018
     api_model: tencent/Hy4-preview
-    highlights: [770B MoE, 工具, 续写, Coder, Vibe Coding, 长文本, 旗舰]
-    description: 腾讯混元 Hy4 preview，770B MoE 旗舰推理模型，1M 上下文。支持对话、前缀续写和工具调用，面向代码、长文本和 Vibe Coding
+    description: 腾讯混元 Hy4 preview，1M 上下文，支持思考
 
   - id: deepseek-v4-pro-sf
     name: DeepSeek V4-Pro
