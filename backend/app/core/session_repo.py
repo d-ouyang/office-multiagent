@@ -54,6 +54,32 @@ class SessionRepo:
                 {"i": session_id, "m": model},
             )
 
+    def rename_session(self, session_id: str, title: str) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(
+                text("UPDATE session SET title = :t WHERE id = :i"),
+                {"i": session_id, "t": title[:60]},
+            )
+
+    def set_pinned(self, session_id: str, pinned: bool) -> None:
+        with self.engine.begin() as conn:
+            if pinned:
+                conn.execute(
+                    text("UPDATE session SET pinned = 1, pinned_at = CURRENT_TIMESTAMP WHERE id = :i"),
+                    {"i": session_id},
+                )
+            else:
+                conn.execute(
+                    text("UPDATE session SET pinned = 0, pinned_at = NULL WHERE id = :i"),
+                    {"i": session_id},
+                )
+
+    def delete_session(self, session_id: str) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(text("DELETE FROM message WHERE session_id = :i"), {"i": session_id})
+            conn.execute(text("DELETE FROM task WHERE session_id = :i"), {"i": session_id})
+            conn.execute(text("DELETE FROM session WHERE id = :i"), {"i": session_id})
+
     def get_session_model(self, session_id: str) -> str | None:
         with self.engine.connect() as conn:
             row = conn.execute(
@@ -79,13 +105,15 @@ class SessionRepo:
             rows = conn.execute(
                 text(
                     "SELECT s.id AS session_id, "
-                    "  (SELECT SUBSTRING(content, 1, 20) FROM message m "
-                    "   WHERE m.session_id = s.id AND m.role = 'user' ORDER BY m.id LIMIT 1) AS title, "
+                    "  COALESCE(NULLIF(TRIM(s.title), ''), "
+                    "    (SELECT SUBSTRING(content, 1, 20) FROM message m "
+                    "     WHERE m.session_id = s.id AND m.role = 'user' ORDER BY m.id LIMIT 1)) AS title, "
+                    "  COALESCE(s.pinned, 0) AS pinned, "
                     "  s.created_at AS created_at, "
                     "  COALESCE((SELECT MAX(m2.created_at) FROM message m2 "
                     "     WHERE m2.session_id = s.id), s.created_at) AS updated_at "
                     "FROM session s WHERE s.user_id = :u "
-                    "ORDER BY updated_at DESC LIMIT :l"
+                    "ORDER BY COALESCE(s.pinned, 0) DESC, s.pinned_at DESC, updated_at DESC LIMIT :l"
                 ),
                 {"u": user_id, "l": limit},
             ).mappings().all()
@@ -93,6 +121,7 @@ class SessionRepo:
         for r in rows:
             d = dict(r)
             d["title"] = (d.get("title") or "新会话").strip() or "新会话"
+            d["pinned"] = bool(d.get("pinned"))
             d["created_at"] = _iso_utc(d.get("created_at"))
             d["updated_at"] = _iso_utc(d.get("updated_at"))
             out.append(d)

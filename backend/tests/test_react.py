@@ -15,7 +15,7 @@ def test_final_in_one_step():
 def test_max_iterations_cap_forces_stage_conclusion():
     class Loopy:
         def next_step(self, task, history):
-            return Step(thought="想", action="noop", action_input={})
+            return Step(thought="想", action="noop", action_input={"n": len(history)})
 
     reg = ToolRegistry()
     reg.register("noop", lambda: "obs")
@@ -75,6 +75,37 @@ def test_observation_summary_truncates_dict_content():
     s2 = _summarize_observation(full)
     assert "已截断展示" not in s2  # 2 万字文档不再截断（通读）
     assert s2.count("y") == 20965
+
+
+def test_observation_summary_keeps_sales_report():
+    from app.orchestration.react import _summarize_observation
+
+    text = _summarize_observation(
+        {"complete": True, "report": "销售报表\n状态：完成\n结果：\n- 订单数 29，指标值 6044.87", "missing": []}
+    )
+    assert "销售报表" in text
+    assert "6044.87" in text
+    assert "complete=true" in text or "complete=True" in text
+
+
+def test_repeat_same_tool_does_not_call_again():
+    calls = {"n": 0}
+
+    def sales_report(**_kwargs):
+        calls["n"] += 1
+        return {"complete": True, "report": "销售报表 6044.87"}
+
+    class RepeatBrain:
+        def next_step(self, task, history):
+            return Step(thought="再查一次", action="sales_report", action_input={"metric": "sum_pay"})
+
+    reg = ToolRegistry()
+    reg.register("sales_report", sales_report, description="报表")
+    res = run_react("出报表并给建议", RepeatBrain(), reg, max_iterations=6)
+    assert calls["n"] == 1
+    assert "6044.87" in (res.steps[0].observation or "")
+    assert res.hit_cap is True
+    assert "6044.87" in res.final
 
 
 def test_invalid_action_streak_forces_honest_finish():

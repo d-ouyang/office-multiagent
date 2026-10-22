@@ -95,6 +95,16 @@ describe('AppSidebar 会话分页展开（p6.12c：每次 10 条）', () => {
   });
 });
 
+describe('会话操作', () => {
+  it('悬停操作图标后出现置顶、重命名和删除', () => {
+    render(<AppSidebar sessions={mkSessions(1)} currentId="s-0" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => {}} />);
+    fireEvent.mouseEnter(screen.getByRole('button', { name: '会话 0 的操作' }));
+    expect(screen.getByRole('button', { name: '置顶' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重命名' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '删除会话' })).toBeInTheDocument();
+  });
+});
+
 describe('侧栏简介与版本', () => {
   it('展示项目简介和当前版本号', () => {
     render(<AppSidebar sessions={[]} currentId="" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => {}} />);

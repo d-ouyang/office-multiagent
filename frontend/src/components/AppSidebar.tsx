@@ -8,6 +8,7 @@ export interface SessionMeta {
   id: string;
   title: string;
   updatedAt: number; // 毫秒时间戳（后端 updated_at=最后一次问答时间）
+  pinned?: boolean;
 }
 
 export interface SessionUser {
@@ -43,11 +44,35 @@ export function formatSessionTime(ts: number, now: number = Date.now()): string 
 
 const PAGE_SIZE = 10; // p6.12c：分页展开——默认 10 条，每次"查看更多"加载下一条
 
+function SessionTitle({ text, scrolling }: { text: string; scrolling: boolean }) {
+  const outer = useRef<HTMLSpanElement>(null);
+  const inner = useRef<HTMLSpanElement>(null);
+  const [overflow, setOverflow] = useState(false);
+  useEffect(() => {
+    const box = outer.current;
+    const label = inner.current;
+    if (!box || !label) return;
+    setOverflow(label.scrollWidth > box.clientWidth + 1);
+  }, [text, scrolling]);
+  const run = scrolling && overflow;
+  return (
+    <span className="session-title" ref={outer}>
+      <span className={`session-title-inner ${run ? 'marquee' : ''}`}>
+        <span ref={inner}>{text}</span>
+        {run && <span aria-hidden="true">{text}</span>}
+      </span>
+    </span>
+  );
+}
+
 export function AppSidebar(props: {
   sessions: SessionMeta[];
   currentId: string;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onRename?: (id: string, title: string) => void;
+  onPin?: (id: string, pinned: boolean) => void;
+  onDelete?: (id: string) => void;
   user: SessionUser;
   balance?: number | null;
   usage?: UsageSummary | null;
@@ -56,6 +81,11 @@ export function AppSidebar(props: {
 }) {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [hoverId, setHoverId] = useState('');
+  const [menuId, setMenuId] = useState('');
+  const [renamingId, setRenamingId] = useState('');
+  const [renameText, setRenameText] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState('');
   const accountRef = useRef<HTMLDivElement>(null);
   const visible = props.sessions.slice(0, visibleCount);
   const remaining = props.sessions.length - visible.length;
@@ -83,14 +113,95 @@ export function AppSidebar(props: {
       </button>
       <div className="session-list">
         {visible.map((s) => (
-          <button
+          <div
             key={s.id}
-            className={`session-item ${s.id === props.currentId ? 'active' : ''}`}
-            onClick={() => props.onSelect(s.id)}
+            className={`session-item ${s.id === props.currentId ? 'active' : ''} ${menuId === s.id ? 'menu-open' : ''}`}
+            onMouseEnter={() => setHoverId(s.id)}
+            onMouseLeave={() => {
+              setHoverId('');
+              if (menuId === s.id) setMenuId('');
+              if (confirmDeleteId === s.id) setConfirmDeleteId('');
+            }}
           >
-            <span className="session-title">{s.title}</span>
+            {renamingId === s.id ? (
+              <input
+                className="session-rename"
+                value={renameText}
+                autoFocus
+                maxLength={60}
+                onChange={(e) => setRenameText(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    props.onRename?.(s.id, renameText.trim() || s.title);
+                    setRenamingId('');
+                  }
+                  if (e.key === 'Escape') setRenamingId('');
+                }}
+                onBlur={() => {
+                  props.onRename?.(s.id, renameText.trim() || s.title);
+                  setRenamingId('');
+                }}
+              />
+            ) : (
+              <button type="button" className="session-open" onClick={() => props.onSelect(s.id)}>
+                {s.pinned && <span className="pin-mark" aria-hidden="true">📌</span>}
+                <SessionTitle text={s.title} scrolling={hoverId === s.id} />
+              </button>
+            )}
             <span className="session-time">{formatSessionTime(s.updatedAt)}</span>
-          </button>
+            <div className="session-ops">
+              <button
+                type="button"
+                className="session-ops-btn"
+                aria-label={`${s.title} 的操作`}
+                onMouseEnter={() => {
+                  setMenuId(s.id);
+                  setConfirmDeleteId('');
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuId(s.id);
+                }}
+              >
+                ⋯
+              </button>
+              {menuId === s.id && (
+                <div className="session-menu" onMouseEnter={() => setMenuId(s.id)}>
+                  <button type="button" onClick={() => { props.onPin?.(s.id, !s.pinned); setMenuId(''); }}>
+                    {s.pinned ? '取消置顶' : '置顶'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRenamingId(s.id);
+                      setRenameText(s.title);
+                      setMenuId('');
+                    }}
+                  >
+                    重命名
+                  </button>
+                  {confirmDeleteId === s.id ? (
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={() => {
+                        props.onDelete?.(s.id);
+                        setMenuId('');
+                        setConfirmDeleteId('');
+                      }}
+                    >
+                      确认删除
+                    </button>
+                  ) : (
+                    <button type="button" className="danger" onClick={() => setConfirmDeleteId(s.id)}>
+                      删除会话
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         ))}
         {/* p6.12c：未展开完 → "查看更多 (剩余N) | 收起"；全部展示完 → 只剩"收起" */}
         {(remaining > 0 || visibleCount > PAGE_SIZE) && (

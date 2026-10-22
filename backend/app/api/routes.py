@@ -83,6 +83,8 @@ class TaskRequest(BaseModel):
 
 class UpdateSessionRequest(BaseModel):
     model: str | None = None     # p6.5：更新会话默认模型
+    title: str | None = None
+    pinned: bool | None = None
 
 
 class CreateSessionRequest(BaseModel):
@@ -225,7 +227,25 @@ def update_session(session_id: str, body: UpdateSessionRequest, authorization: s
     repo = SessionRepo()
     if not repo.session_belongs_to(session_id, user["id"]):
         raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"})
-    repo.update_session_model(session_id, body.model)
+    fields = body.model_fields_set
+    if "model" in fields:
+        repo.update_session_model(session_id, body.model)
+    if "title" in fields:
+        repo.rename_session(session_id, (body.title or "").strip())
+    if "pinned" in fields:
+        repo.set_pinned(session_id, bool(body.pinned))
+    return {"ok": True}
+
+
+@router.delete("/sessions/{session_id}")
+def delete_session(session_id: str, authorization: str | None = Header(default=None)):
+    user = _current_user(authorization)
+    from ..core.session_repo import SessionRepo
+
+    repo = SessionRepo()
+    if not repo.session_belongs_to(session_id, user["id"]):
+        raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"})
+    repo.delete_session(session_id)
     return {"ok": True}
 
 

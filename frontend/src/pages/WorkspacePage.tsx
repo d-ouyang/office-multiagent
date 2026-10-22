@@ -10,7 +10,7 @@ import { toPromptModel, type DialogueModel } from '../components/ModelPicker';
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import type { StreamEvent } from '../types';
 import { deriveCurrentAgent, agentLabel } from '../lib/derive';
-import { authHeaders, clearToken, createSession, getMessages, getQuota, listSessions } from '../lib/api';
+import { authHeaders, clearToken, createSession, deleteSession, getMessages, getQuota, listSessions, updateSession } from '../lib/api';
 
 const EFFORTS = ['低', '高', '最大'] as const;
 const EFFORT_API: Record<string, string> = { 低: 'low', 高: 'high', 最大: 'max' };
@@ -128,7 +128,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
           setSessions([{ id: sid, title: '新会话', updatedAt: Date.now() }]);
           return;
         }
-        setSessions(list.map((s) => ({ id: s.session_id, title: s.title, updatedAt: new Date(s.updated_at).getTime() || Date.now() })));
+        setSessions(list.map((s) => ({ id: s.session_id, title: s.title, pinned: !!s.pinned, updatedAt: new Date(s.updated_at).getTime() || Date.now() })));
         setCurrentId(list[0].session_id);
         await selectSession(list[0].session_id);
       } catch (e) {
@@ -191,7 +191,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
       setMessages((prev) => [...prev, { role: 'assistant', events, streaming: false, createdAt: Date.now() }]);
       if (status === 'done') {
         listSessions()
-          .then((list) => setSessions(list.map((s) => ({ id: s.session_id, title: s.title, updatedAt: new Date(s.updated_at).getTime() || Date.now() }))))
+          .then((list) => setSessions(list.map((s) => ({ id: s.session_id, title: s.title, pinned: !!s.pinned, updatedAt: new Date(s.updated_at).getTime() || Date.now() }))))
           .catch(() => {});
         refreshQuota();
       }
@@ -324,6 +324,81 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     return true;
   };
 
+  const placePinned = (list: SessionMeta[]) => [
+    ...list.filter((s) => s.pinned),
+    ...list.filter((s) => !s.pinned),
+  ];
+
+  const onRenameSession = async (id: string, title: string) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
+    try {
+      await updateSession(id, { title });
+    } catch (e) {
+      if ((e as Error).message === 'UNAUTHORIZED') onLogout();
+    }
+  };
+
+  const onPinSession = async (id: string, pinned: boolean) => {
+    setSessions((prev) => placePinned(prev.map((s) => (s.id === id ? { ...s, pinned } : s))));
+    try {
+      await updateSession(id, { pinned });
+    } catch (e) {
+      if ((e as Error).message === 'UNAUTHORIZED') onLogout();
+    }
+  };
+
+  const onDeleteSession = async (id: string) => {
+    const rest = sessions.filter((s) => s.id !== id);
+    setSessions(rest);
+    try {
+      await deleteSession(id);
+    } catch (e) {
+      if ((e as Error).message === 'UNAUTHORIZED') onLogout();
+      return;
+    }
+    if (currentId !== id) return;
+    if (rest[0]) {
+      await selectSession(rest[0].id);
+      return;
+    }
+    await newChat();
+  };
+
+  const renameChat = async (id: string, title: string) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
+    try {
+      await updateSession(id, { title });
+    } catch (e) {
+      if ((e as Error).message === 'UNAUTHORIZED') onLogout();
+    }
+  };
+
+  const pinChat = async (id: string, pinned: boolean) => {
+    setSessions((prev) => {
+      const next = prev.map((s) => (s.id === id ? { ...s, pinned } : s));
+      return [...next.filter((s) => s.pinned), ...next.filter((s) => !s.pinned)];
+    });
+    try {
+      await updateSession(id, { pinned });
+    } catch (e) {
+      if ((e as Error).message === 'UNAUTHORIZED') onLogout();
+    }
+  };
+
+  const removeChat = async (id: string) => {
+    const rest = sessions.filter((s) => s.id !== id);
+    setSessions(rest);
+    if (currentIdRef.current === id) {
+      if (rest[0]) void selectSession(rest[0].id);
+      else void newChat();
+    }
+    try {
+      await deleteSession(id);
+    } catch (e) {
+      if ((e as Error).message === 'UNAUTHORIZED') onLogout();
+    }
+  };
+
   const newChat = async () => {
     if (status === 'streaming') stop();
     sealedRef.current = true;
@@ -356,6 +431,9 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
         currentId={currentId}
         onSelect={(id) => void selectSession(id)}
         onNew={() => void newChat()}
+        onRename={(id, title) => void renameChat(id, title)}
+        onPin={(id, pinned) => void pinChat(id, pinned)}
+        onDelete={(id) => void removeChat(id)}
         user={user}
         balance={balance}
         usage={usage}

@@ -93,7 +93,7 @@ def build_default_registry(
             "可选 city、store_name、order_status、exclude_status、order_channel、order_type、"
             "fulfillment_type、member_level、group_by。用户说只要某城市、不要某状态时，必须传对应参数。"
             "时间范围、指标、口径、数据来源缺任何一项时 complete 为 false，这时不能说报表已完成。"
-            "complete 为 true 时，只转述返回的 report，不要另写数字。"
+            "complete 为 true 时，report 就是报表正文。下一步直接分析并给销售建议，不要再次调用本工具，也不要再读文件。"
         ),
     )
     reg.register(

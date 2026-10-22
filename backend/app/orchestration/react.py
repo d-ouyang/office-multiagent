@@ -3,6 +3,7 @@ max_iterations 防跑飞，超限强制给阶段结论。Brain 可插拔（确�
 """
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -35,20 +36,32 @@ def _summarize_observation(obs: Any, *, max_chars: int = 24000) -> str:
     """
     if isinstance(obs, dict):
         parts = []
-        for key in ("file_name", "total_chars", "answer", "route"):
-            if key in obs:
-                parts.append(f"{key}={obs[key]}")
-        content = obs.get("content")
-        if isinstance(content, str):
-            shown = content[:max_chars]
-            tail = f"…（原文共 {obs.get('total_chars', len(content))} 字，已截断展示）" if len(content) > max_chars else ""
-            parts.append(f"content={shown}{tail}")
-        if "sources" in obs:
-            parts.append(f"sources={obs['sources']}")
+        for key, value in obs.items():
+            if key == "content" and isinstance(value, str):
+                shown = value[:max_chars]
+                tail = (
+                    f"…（原文共 {obs.get('total_chars', len(value))} 字，已截断展示）"
+                    if len(value) > max_chars
+                    else ""
+                )
+                parts.append(f"content={shown}{tail}")
+                continue
+            rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+            if len(rendered) > 8000:
+                rendered = rendered[:8000] + "…（已截断）"
+            parts.append(f"{key}={rendered}")
         text = "；".join(parts)
     else:
         text = str(obs)
     return text[:max_chars * 2]
+
+
+def _same_call(left: Step, name: str, action_input: dict[str, Any]) -> bool:
+    if left.action != name or left.observation is None:
+        return False
+    return json.dumps(left.action_input, sort_keys=True, ensure_ascii=False, default=str) == json.dumps(
+        action_input, sort_keys=True, ensure_ascii=False, default=str
+    )
 
 
 class Brain(Protocol):
@@ -135,6 +148,20 @@ def run_react(
                 if emitter is not None:
                     _emit(emitter.content_delta(cap))
                 return AgentResult(final=cap, steps=history, iterations=i, hit_cap=True)
+            continue
+        prior = [s for s in history if _same_call(s, name, step.action_input)]
+        if prior:
+            previous = prior[-1].observation or ""
+            step.observation = (
+                "相同参数已经调用过，请直接基于已有观察写最终回答，不要再次调用。"
+                f"上次观察：{previous[:4000]}"
+            )
+            history.append(step)
+            if len(prior) >= 2:
+                final = "已有工具结果，停止重复调用。请根据下面的观察作答，不要编造。\n" + previous[:4000]
+                if emitter is not None:
+                    _emit(emitter.content_delta(final))
+                return AgentResult(final=final, steps=history, iterations=i, hit_cap=True)
             continue
         if emitter is not None:
             _emit(emitter.tool_call_start(name, name, step.action_input))

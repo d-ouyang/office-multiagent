@@ -40,7 +40,7 @@ export function authHeaders(): Record<string, string> {
 }
 
 /** p6.2c：我的会话列表（title=首条用户消息前 20 字；p6.12 起 updated_at=最后一次问答时间）。 */
-export async function listSessions(): Promise<Array<{ session_id: string; title: string; created_at: string; updated_at: string }>> {
+export async function listSessions(): Promise<Array<{ session_id: string; title: string; pinned?: boolean; created_at: string; updated_at: string }>> {
   const res = await fetch('/api/v1/sessions', { headers: authHeaders() });
   if (res.status === 401) {
     clearToken();
@@ -63,6 +63,34 @@ export async function createSession(model?: string): Promise<string> {
   }
   const data = await res.json();
   return String(data.session_id);
+}
+
+export async function updateSession(
+  sessionId: string,
+  body: { title?: string; pinned?: boolean; model?: string },
+): Promise<void> {
+  const res = await fetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  if (!res.ok) throw new Error('更新会话失败');
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await fetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  if (!res.ok) throw new Error('删除会话失败');
 }
 
 /** p6.2c/p6.7：会话历史消息（user/assistant 终答 + assistant 的 trace 过程事件 JSON）。 */

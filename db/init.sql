@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS `session` (
   `id`         VARCHAR(64)  NOT NULL,
   `user_id`    BIGINT       NULL,
   `model`      VARCHAR(128) NULL,    -- 用户级模型选择，不跟随全局默认（§十三/§十四）
+  `title`      VARCHAR(60)  NULL,
+  `pinned`     TINYINT      NOT NULL DEFAULT 0,
+  `pinned_at`  DATETIME(6)  NULL,
   `created_at` DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   KEY `idx_session_user` (`user_id`)
