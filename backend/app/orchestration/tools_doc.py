@@ -80,6 +80,69 @@ def _table_preview(headers: list[str], rows: list[list[str]], *, sheet: str | No
     return f"{title}{head}\n{body}\n{tail}".strip()
 
 
+def load_table_grid(
+    path: Path, sheet: str | None = None
+) -> tuple[list[str], list[list[str]], str | None]:
+    """读出一张表：表头、数据行、工作表名。只接受 csv、xlsx 和对象数组 json。"""
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        rows = list(csv.reader(io.StringIO(_decode_text(path))))
+        if not rows:
+            raise ValueError("表格为空")
+        headers = [_cell(c) for c in rows[0]]
+        data = [[_cell(c) for c in row] for row in rows[1:]]
+        return headers, data, None
+    if suffix == ".xlsx":
+        try:
+            from openpyxl import load_workbook
+        except ImportError as e:
+            raise RuntimeError("Excel 解析依赖未安装（openpyxl）") from e
+        book = load_workbook(path, read_only=True, data_only=True)
+        try:
+            names = list(book.sheetnames)
+            if not names:
+                raise ValueError("工作簿没有工作表")
+            if sheet:
+                if sheet not in names:
+                    raise ValueError(f"没有工作表：{sheet}。现有：{'、'.join(names)}")
+                name = sheet
+            else:
+                name = names[0]
+            grid = [[_cell(c) for c in row] for row in book[name].iter_rows(values_only=True)]
+        finally:
+            book.close()
+        if not grid:
+            raise ValueError(f"工作表 {name} 是空的")
+        return grid[0], grid[1:], name
+    if suffix == ".json":
+        raw = _decode_text(path).strip()
+        if not raw:
+            raise ValueError("表格为空")
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"不是合法 JSON（{e.msg}）") from e
+        rows = parsed
+        if isinstance(parsed, dict):
+            for key in ("rows", "data", "items"):
+                if isinstance(parsed.get(key), list):
+                    rows = parsed[key]
+                    break
+            else:
+                raise ValueError("json 需要是对象数组，或包含 rows/data/items 数组")
+        if not isinstance(rows, list) or not rows or not all(isinstance(item, dict) for item in rows):
+            raise ValueError("json 需要是对象数组才能当表清洗")
+        headers: list[str] = []
+        for item in rows:
+            for key in item:
+                name = str(key)
+                if name not in headers:
+                    headers.append(name)
+        data = [[_cell(item.get(h)) for h in headers] for item in rows]
+        return headers, data, None
+    raise ValueError("清洗只接受 csv、xlsx，或对象数组 json")
+
+
 def _read_csv(path: Path) -> str:
     rows = list(csv.reader(io.StringIO(_decode_text(path))))
     if not rows:

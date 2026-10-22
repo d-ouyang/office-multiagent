@@ -5,6 +5,21 @@
 
 ---
 
+## v1.0.0-p6.15 — 上传表格先清洗再分析（2026-10-22）
+
+**类型**：功能（clean_table / analyze_table）
+**Tag 提交**：见 `git show v1.0.0-p6.15`
+
+### 交付内容
+- `clean_table` 清洗 csv、xlsx 和对象数组 json，不改原文件。去掉全空行、全空列、重复表头和完全相同的行；`null`、`N/A`、`无`、`-` 视为空。
+- 指定关键列时，该列为空的行剔除并计数。未指定则不猜、不删，只报告每列缺失。不填补缺失，不因异常值删行。不能当数字的格子在求和时跳过，结果用空而不是 0。
+- `analyze_table` 只接受清洗返回的 `clean_id`，可过滤、分组和汇总。
+
+### 验证状态
+- ✅ `test_tools_table.py` 6 passed，`test_agents.py` 与文档读取测试一并 30 passed。
+
+---
+
 ## v1.0.0-p6.14 — 读取 docx、csv、xlsx、json（2026-10-22）
 
 **类型**：功能（read_document 阅读器）

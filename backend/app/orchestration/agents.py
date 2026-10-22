@@ -23,6 +23,7 @@ from .tools import ToolRegistry
 from .tools_db import make_db_query_tool
 from .tools_doc import make_read_document_tool
 from .tools_rag import make_rag_retrieve_tool
+from .tools_table import make_analyze_table_tool, make_clean_table_tool
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,27 @@ def build_default_registry(engine: Engine | None, username: str | None = None) -
             base_dir=doc_base, max_chars=settings.doc_read_max_chars, owner=owner
         ),
         description=read_desc,
+    )
+    reg.register(
+        "clean_table",
+        make_clean_table_tool(base_dir=doc_base, owner=owner),
+        description=(
+            "清洗上传的表格（csv、xlsx，或对象数组 json），不修改原文件。"
+            "会去掉全空行、全空列、重复的表头行和完全相同的行；去掉首尾空白，"
+            "并把 null、N/A、无、- 视为空。不用平均数填缺失，也不因异常值删行。"
+            "参数 file_name：文件名。key_columns：可选，关键列名；这些列为空的行会从结果剔除并单独计数。"
+            "sheet：xlsx 工作表名，不填则用第一张。返回 clean_id，接着交给 analyze_table。"
+        ),
+    )
+    reg.register(
+        "analyze_table",
+        make_analyze_table_tool(base_dir=doc_base, owner=owner),
+        description=(
+            "只分析 clean_table 返回的表。参数 clean_id 必填，不能传原始文件名。"
+            "group_by：分组列，可空。metrics：[{column, agg}]，agg 取 count、sum、mean、min、max、count_distinct；"
+            "不传 metrics 时只计数。filters：[{column, op, value}]，op 取 eq、ne、contains、gt、gte、lt、lte。"
+            "sum/mean/min/max 遇到不能转成数字的格子会跳过并计数，不会当成 0。"
+        ),
     )
     return reg
 
