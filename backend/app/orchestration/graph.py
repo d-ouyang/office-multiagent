@@ -63,12 +63,16 @@ def build_graph(
     token_pool: TokenPool | None = None,
     checkpointer: Any | None = None,
     username: str | None = None,
+    user_id: int | None = None,
+    task_id: str | None = None,
 ) -> Any:
     """构建编排图。token_pool 提供时前置 quota 门（reserve + 中断续跑）。
 
     username 有值时，read_document 只在该用户的上传目录里找文件。
     """
-    tools = build_default_registry(get_engine(), username=username)
+    tools = build_default_registry(
+        get_engine(), username=username, user_id=user_id, task_id=task_id
+    )
 
     def spec_agent_runner(base, state):
         """multi 的子任务执行器：按子任务 agent_type 取 AgentSpec（角色提示词+工具白名单）。"""
@@ -219,7 +223,13 @@ def run_task(
 
     checkpointer = MemorySaver() if token_pool is not None else None
     graph = build_graph(
-        emitter, emit, token_pool=token_pool, checkpointer=checkpointer, username=username
+        emitter,
+        emit,
+        token_pool=token_pool,
+        checkpointer=checkpointer,
+        username=username,
+        user_id=user_id,
+        task_id=run_id,
     )
     cfg = {"configurable": {"thread_id": run_id}}
     init: dict[str, Any] = {"text": text, "run_id": run_id, "turn_id": turn_id, "model": model, "effort": effort}

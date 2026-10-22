@@ -39,7 +39,7 @@ p6.14 已补上 docx、csv、xlsx、json，表格只给表头、行数和前 20 
 
 ## 4. 生成文件和图表
 
-p6.16 已能把结论写成 md 或 docx。xlsx、pdf 和图表还没有。
+p6.16 已能把结论写成 md 或 docx。p6.17 已能按清洗表画 bar、barh、line、area、pie、scatter、heatmap、hist。xlsx 和 pdf 还没有。
 
 对外一个 `write_document`，用格式参数区分，对内分写作器。和读取对称。
 

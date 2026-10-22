@@ -23,20 +23,22 @@ def test_specs_loaded_all_seven():
 def test_spec_tools_whitelist():
     assert get_agent_spec("rag_retrieval").tools == ["rag_retrieve"]
     assert get_agent_spec("data_analysis").tools == [
-        "db_query", "clean_table", "analyze_table", "write_document",
+        "db_query", "clean_table", "analyze_table", "write_document", "render_chart",
     ]
     assert get_agent_spec("data_cleaning").tools == ["db_query", "clean_table", "analyze_table"]
     assert get_agent_spec("general").tools == [
-        "db_query", "rag_retrieve", "read_document", "clean_table", "analyze_table", "write_document",
+        "db_query", "rag_retrieve", "read_document", "clean_table", "analyze_table",
+        "write_document", "render_chart",
     ]
     assert get_agent_spec("report_generation").tools == [
-        "db_query", "rag_retrieve", "read_document", "clean_table", "analyze_table", "write_document",
+        "db_query", "rag_retrieve", "read_document", "clean_table", "analyze_table",
+        "write_document", "render_chart",
     ]
 
 
 def test_no_tool_agents_declare_empty():
     # visualization / image_restore：工具池暂无对应工具——留空，由 Brain 如实告知能力暂缺
-    assert get_agent_spec("visualization").tools == []
+    assert get_agent_spec("visualization").tools == ["clean_table", "render_chart"]
     assert get_agent_spec("image_restore").tools == []
 
 

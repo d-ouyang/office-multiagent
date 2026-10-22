@@ -21,6 +21,7 @@ from sqlalchemy.engine import Engine
 from ..core.config import settings
 from .tools import ToolRegistry
 from .tools_db import make_db_query_tool
+from .tools_chart import make_render_chart_tool
 from .tools_doc import make_read_document_tool
 from .tools_rag import make_rag_retrieve_tool
 from .tools_table import make_analyze_table_tool, make_clean_table_tool
@@ -42,7 +43,12 @@ class AgentSpec:
 # --------------------------------------------------------------------------- #
 # 工具池（全部真实工具；各 Agent 按白名单取子集）
 # --------------------------------------------------------------------------- #
-def build_default_registry(engine: Engine | None, username: str | None = None) -> ToolRegistry:
+def build_default_registry(
+    engine: Engine | None,
+    username: str | None = None,
+    user_id: int | None = None,
+    task_id: str | None = None,
+) -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(
         "db_query",
@@ -113,12 +119,29 @@ def build_default_registry(engine: Engine | None, username: str | None = None) -
     )
     reg.register(
         "write_document",
-        make_write_document_tool(base_dir=doc_base, owner=owner),
+        make_write_document_tool(
+            base_dir=doc_base, owner=owner, engine=engine, user_id=user_id, task_id=task_id
+        ),
         description=(
             "把已经得到的结论写成 md 或 docx，不画图，也不生成 xlsx。"
             "参数 title：标题。content：正文，数字必须来自此前的工具结果。"
             "format：md 或 docx。clean_id：若结论来自清洗后的表，传入它，文末会写上来源和行数。"
             "返回 file_name。失败就说明没生成，不要给一个不存在的下载地址。"
+        ),
+    )
+    reg.register(
+        "render_chart",
+        make_render_chart_tool(
+            base_dir=doc_base, owner=owner, engine=engine, user_id=user_id, task_id=task_id
+        ),
+        description=(
+            "根据 clean_table 的 clean_id 画图，数字只来自那张表。不能自己传数据点。"
+            "chart：bar、barh、line、area、pie、scatter、heatmap、hist。"
+            "x：分类列；折线/面积按 x 排序，柱状按汇总值取前 top_n 个。"
+            "y：数值列，可传一个或列表。agg：sum、mean、count、min、max，默认 sum。"
+            "series：分组列，和多个 y 不能同时用。heatmap 必须有 x、series 和 y。"
+            "scatter 的 x、y 都是数字列。hist 用 y 或 x 做分箱，bins 默认 10。"
+            "filters 与 analyze_table 相同。饼图超过 8 类会把其余并成「其他」，且不能有负数。"
         ),
     )
     return reg

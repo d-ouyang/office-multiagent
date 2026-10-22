@@ -53,6 +53,7 @@ chromadb==1.5.9
 # ---- 数据分析 / 报表生成 ----
 pandas==3.0.6               # 3.x 为稳定大版本；新项目无历史 pandas 代码，直接上最新
 numpy==2.5.4
+matplotlib==3.10.6          # 图表只在服务端算几何，导出 SVG；中文由浏览器字体绘制
 openpyxl==3.1.5             # Excel 读写
 reportlab==5.0.1            # PDF 生成（中文需配 Arial Unicode / 思源黑体等字体）
 python-docx==1.2.0          # Word 生成

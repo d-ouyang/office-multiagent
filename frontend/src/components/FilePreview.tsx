@@ -9,9 +9,12 @@ function fileLabel(path: string): string {
 
 export function FilePreview({ path, onClose }: { path: string; onClose: () => void }) {
   const name = fileLabel(path);
-  const isPdf = name.toLowerCase().endsWith('.pdf');
+  const lower = name.toLowerCase();
+  const isPdf = lower.endsWith('.pdf');
+  const isImage = lower.endsWith('.svg') || lower.endsWith('.png');
   const [text, setText] = useState('');
   const [pdfUrl, setPdfUrl] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,9 +30,10 @@ export function FilePreview({ path, onClose }: { path: string; onClose: () => vo
           setError('打不开这份文件');
           return;
         }
-        if (isPdf) {
+        if (isPdf || isImage) {
           url = URL.createObjectURL(await res.blob());
-          setPdfUrl(url);
+          if (isPdf) setPdfUrl(url);
+          else setImageUrl(url);
         } else {
           setText(await res.text());
         }
@@ -41,7 +45,7 @@ export function FilePreview({ path, onClose }: { path: string; onClose: () => vo
       ac.abort();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [path, isPdf]);
+  }, [path, isPdf, isImage]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -63,7 +67,8 @@ export function FilePreview({ path, onClose }: { path: string; onClose: () => vo
         </header>
         {error && <p className="account-err">{error}</p>}
         {!error && isPdf && pdfUrl && <iframe title={name} src={pdfUrl} />}
-        {!error && !isPdf && <pre>{text || '正在读取…'}</pre>}
+        {!error && isImage && imageUrl && <img src={imageUrl} alt={name} />}
+        {!error && !isPdf && !isImage && <pre>{text || '正在读取…'}</pre>}
       </div>
     </div>
   );

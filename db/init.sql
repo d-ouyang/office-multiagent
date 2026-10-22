@@ -99,8 +99,11 @@ CREATE TABLE IF NOT EXISTS `tool_call_log` (
 CREATE TABLE IF NOT EXISTS `asset` (
   `id`          VARCHAR(64) NOT NULL,
   `task_id`     VARCHAR(64) NULL,
-  `type`        VARCHAR(32) NULL,   -- image/excel/pdf/chart
-  `storage_url` TEXT        NULL,
+  `user_id`     BIGINT      NULL,
+  `type`        VARCHAR(32) NULL,   -- md/docx/bar/line 等
+  `name`        VARCHAR(255) NULL,
+  `rel_path`    VARCHAR(512) NULL,  -- upload/<用户>/_out/ 下的相对路径
+  `storage_url` TEXT        NULL,   -- 与 rel_path 相同，预览走文档接口而不是公网 URL
   `created_at`  DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

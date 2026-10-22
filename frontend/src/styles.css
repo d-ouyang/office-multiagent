@@ -592,7 +592,8 @@ button.account-link:hover {
   font-size: 12px;
 }
 .file-preview pre,
-.file-preview iframe {
+.file-preview iframe,
+.file-preview img {
   flex: 1;
   min-height: 0;
   width: 100%;
@@ -601,6 +602,10 @@ button.account-link:hover {
   border-radius: 10px;
   background: var(--bg);
   color: var(--text);
+}
+.file-preview img {
+  object-fit: contain;
+  background: #fff;
 }
 .file-preview pre {
   padding: 12px;

@@ -6,15 +6,14 @@
 from __future__ import annotations
 
 import re
-import secrets
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .tools_store import finish_output, new_output_id, output_file
 from .tools_table import _load_clean
 
 _FORMATS = {"md": ".md", "docx": ".docx"}
-_DOC_ID = re.compile(r"^w-[0-9a-f]{16}$")
 _MAX_CHARS = 80_000
 
 
@@ -73,7 +72,14 @@ def _write_docx(path: Path, title: str, content: str, note: str) -> None:
     doc.save(str(path))
 
 
-def make_write_document_tool(*, base_dir: str, owner: str | None = None) -> Callable[..., Any]:
+def make_write_document_tool(
+    *,
+    base_dir: str,
+    owner: str | None = None,
+    engine: Any = None,
+    user_id: int | None = None,
+    task_id: str | None = None,
+) -> Callable[..., Any]:
     del owner
     base = Path(base_dir).resolve()
 
@@ -87,7 +93,7 @@ def make_write_document_tool(*, base_dir: str, owner: str | None = None) -> Call
         if kind in {"markdown", "word"}:
             kind = "md" if kind == "markdown" else "docx"
         if kind not in _FORMATS:
-            raise ValueError("这一步只生成 md 或 docx。表格文件和图表还没有。")
+            raise ValueError("write_document 只生成 md 或 docx。图请调用 render_chart。")
         body = (content or "").strip()
         if not body:
             raise ValueError("文档正文为空")
@@ -97,20 +103,25 @@ def make_write_document_tool(*, base_dir: str, owner: str | None = None) -> Call
         note = ""
         if clean_id:
             note = _source_note(base, str(clean_id))
-        doc_id = "w-" + secrets.token_hex(8)
-        if not _DOC_ID.match(doc_id):
-            raise RuntimeError("文档编号生成失败")
-        folder = (base / "_out").resolve()
-        folder.mkdir(parents=True, exist_ok=True)
+        doc_id = new_output_id("w")
         filename = doc_id + _FORMATS[kind]
-        target = (folder / filename).resolve()
-        if not target.is_relative_to(folder):
-            raise ValueError("非法文档路径")
+        target = output_file(base, filename)
         if kind == "md":
             target.write_text(_markdown_body(heading, body, note), encoding="utf-8")
         else:
             _write_docx(target, heading, body, note)
         display = f"{heading}.{kind}"
+        rel = f"_out/{filename}"
+        recorded = finish_output(
+            engine,
+            target,
+            asset_id=doc_id,
+            user_id=user_id,
+            task_id=task_id,
+            kind=kind,
+            name=display,
+            rel_path=rel,
+        )
         return {
             "doc_id": doc_id,
             "file_name": f"_out/{filename}",
@@ -118,7 +129,8 @@ def make_write_document_tool(*, base_dir: str, owner: str | None = None) -> Call
             "format": kind,
             "chars": len(body),
             "clean_id": clean_id or None,
-            "note": "文件已写在服务器上，请用返回的文件名预览。不要声称还生成了图表。",
+            "recorded": recorded,
+            "note": "文件已写在服务器上，请用返回的文件名预览。图要另调 render_chart。",
         }
 
     write_document.__name__ = "write_document"

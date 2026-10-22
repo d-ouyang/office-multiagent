@@ -112,7 +112,7 @@ def _current_user(authorization: str | None) -> dict[str, Any]:
     return user
 
 
-_OUT_FILE = re.compile(r"^w-[0-9a-f]{16}\.(md|docx)$")
+_OUT_FILE = re.compile(r"^[wg]-[0-9a-f]{16}\.(md|docx|svg)$")
 
 
 def _generated_file(raw: str, username: str):
@@ -320,6 +320,7 @@ def own_document(name: str, authorization: str | None = Header(default=None)):
         ".md": "text/markdown; charset=utf-8",
         ".txt": "text/plain; charset=utf-8",
         ".pdf": "application/pdf",
+        ".svg": "image/svg+xml",
     }.get(suffix, "application/octet-stream")
     return FileResponse(path, media_type=media, filename=filename, content_disposition_type="inline")
 
