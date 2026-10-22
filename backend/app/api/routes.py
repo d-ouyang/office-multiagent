@@ -1,4 +1,6 @@
 """API 路由：/health 联动探测、/models 模型注册表、/plan 规划路由、/internal/auth/ping 内部鉴权自检、/demo/stream NDJSON 示例。"""
+import re
+
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -108,6 +110,32 @@ def _current_user(authorization: str | None) -> dict[str, Any]:
     if user is None:
         raise HTTPException(401, detail={"code": "UNAUTHORIZED", "message": "未登录或登录态无效"})
     return user
+
+
+_OUT_FILE = re.compile(r"^w-[0-9a-f]{16}\.(md|docx)$")
+
+
+def _generated_file(raw: str, username: str):
+    """生成文档只允许 _out/w-<16位hex>.md|docx，不按上传文件那样拍成 basename。"""
+    from pathlib import Path as _P
+
+    text = str(raw or "").replace("\\", "/").strip().lstrip("/")
+    prefix = f"{username}/"
+    if text.startswith(prefix):
+        text = text[len(prefix):]
+    parts = [part for part in text.split("/") if part and part != "."]
+    if len(parts) != 2 or parts[0] != "_out" or not _OUT_FILE.match(parts[1]):
+        return None
+    base = _P(settings.documents_dir).resolve()
+    own = (base / username).resolve()
+    target = (own / "_out" / parts[1]).resolve()
+    if not target.is_relative_to(own):
+        raise HTTPException(400, detail={"code": "BAD_ATTACHMENT", "message": "非法附件路径"})
+    if not target.is_file():
+        raise HTTPException(
+            400, detail={"code": "BAD_ATTACHMENT", "message": f"附件不存在：{parts[1]}"}
+        )
+    return target
 
 
 def _validate_attachments(paths: list[str] | None, username: str) -> list[str]:
@@ -272,9 +300,13 @@ def own_document(name: str, authorization: str | None = Header(default=None)):
     from ..orchestration.tools_doc import extract_document_text
 
     user = _current_user(authorization)
-    stored = _validate_attachments([name], str(user["username"]))
-    filename = stored[0].split("/", 1)[1]
-    path = _Path(settings.documents_dir) / str(user["username"]) / filename
+    generated = _generated_file(name, str(user["username"]))
+    if generated is not None:
+        path = generated
+    else:
+        stored = _validate_attachments([name], str(user["username"]))
+        path = _Path(settings.documents_dir) / str(user["username"]) / stored[0].split("/", 1)[1]
+    filename = path.name
     suffix = path.suffix.lower()
     if suffix in {".docx", ".xlsx", ".csv", ".json"}:
         try:

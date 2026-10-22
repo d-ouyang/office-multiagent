@@ -6,7 +6,7 @@ import { Copy, Pencil, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import type { StreamEvent } from '../types';
 import type { ToolCall } from '../lib/derive';
-import { deriveContent, deriveFailure, deriveReplyMeta, deriveThinking, deriveToolCalls } from '../lib/derive';
+import { deriveArtifacts, deriveContent, deriveFailure, deriveReplyMeta, deriveThinking, deriveToolCalls } from '../lib/derive';
 import { formatClock, formatDuration, formatTokens } from '../lib/format';
 import { modelDisplayName } from './ModelPicker';
 import MarkdownView from './MarkdownView';
@@ -202,6 +202,7 @@ export function ChatMessage({
   const events = msg.events;
   const thinking = events ? deriveThinking(events) : '';
   const toolCalls: ToolCall[] = events ? deriveToolCalls(events) : [];
+  const artifacts = events ? deriveArtifacts(events) : [];
   const content = events ? deriveContent(events) : (msg.content ?? '');
   const failure = events ? deriveFailure(events) : null;
   const meta = events ? deriveReplyMeta(events) : {};
@@ -233,6 +234,21 @@ export function ChatMessage({
           </div>
         )}
         {content && <MarkdownView text={content} streaming={msg.streaming} />}
+        {artifacts.length > 0 && (
+          <div className="msg-attachments">
+            <span className="attach-label">生成文件</span>
+            {artifacts.map((item) => (
+              <button
+                key={item.asset_id}
+                type="button"
+                className="attach-chip"
+                onClick={() => onPreview?.(item.storage_url || item.name || '')}
+              >
+                {item.name || item.asset_id}
+              </button>
+            ))}
+          </div>
+        )}
         {msg.streaming && !content && !failure && <div className="typing">正在思考…</div>}
         {!msg.streaming && (
           <div className="reply-meta">

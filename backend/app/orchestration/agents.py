@@ -24,6 +24,7 @@ from .tools_db import make_db_query_tool
 from .tools_doc import make_read_document_tool
 from .tools_rag import make_rag_retrieve_tool
 from .tools_table import make_analyze_table_tool, make_clean_table_tool
+from .tools_write import make_write_document_tool
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,16 @@ def build_default_registry(engine: Engine | None, username: str | None = None) -
             "group_by：分组列，可空。metrics：[{column, agg}]，agg 取 count、sum、mean、min、max、count_distinct；"
             "不传 metrics 时只计数。filters：[{column, op, value}]，op 取 eq、ne、contains、gt、gte、lt、lte。"
             "sum/mean/min/max 遇到不能转成数字的格子会跳过并计数，不会当成 0。"
+        ),
+    )
+    reg.register(
+        "write_document",
+        make_write_document_tool(base_dir=doc_base, owner=owner),
+        description=(
+            "把已经得到的结论写成 md 或 docx，不画图，也不生成 xlsx。"
+            "参数 title：标题。content：正文，数字必须来自此前的工具结果。"
+            "format：md 或 docx。clean_id：若结论来自清洗后的表，传入它，文末会写上来源和行数。"
+            "返回 file_name。失败就说明没生成，不要给一个不存在的下载地址。"
         ),
     )
     return reg

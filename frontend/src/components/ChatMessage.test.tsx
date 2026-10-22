@@ -115,6 +115,28 @@ describe('回复信息行', () => {
   });
 });
 
+describe('生成文件', () => {
+  it('产物出现在正文下，点击交给预览', () => {
+    const onPreview = vi.fn();
+    render(
+      <ChatMessage
+        index={1}
+        msg={{
+          role: 'assistant',
+          events: [
+            ev('content_delta', { delta: '已写好。' }, 1),
+            ev('artifact', { asset_id: 'w-1', type: 'md', name: '周报.md', storage_url: '_out/w-1.md' }, 2),
+            ev('done', { status: 'done' }, 3),
+          ],
+        }}
+        onPreview={onPreview}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '周报.md' }));
+    expect(onPreview).toHaveBeenCalledWith('_out/w-1.md');
+  });
+});
+
 describe('复制提示', () => {
   it('写入剪贴板', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);

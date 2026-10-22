@@ -140,6 +140,15 @@ def run_react(
             _emit(emitter.tool_call_start(name, name, step.action_input))
         res: ToolResult = tools.call(name, **step.action_input)
         obs = res.output if res.ok else (res.error or "工具调用失败")
+        if emitter is not None and res.ok and isinstance(res.output, dict) and res.output.get("file_name"):
+            _emit(
+                emitter.artifact(
+                    str(res.output.get("doc_id") or name),
+                    str(res.output.get("format") or "file"),
+                    str(res.output["file_name"]),
+                    str(res.output.get("display_name") or res.output["file_name"]),
+                )
+            )
         if emitter is not None:
             # 前端步骤面板展示口径（p6.9：500 → 2000，用户能看到更多过程细节）
             _emit(emitter.observation(name, str(obs)[:2000]))

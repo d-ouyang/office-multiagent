@@ -129,6 +129,25 @@ def test_preview_other_user_file_not_found(client, tmp_path):
     assert r.status_code == 400
 
 
+def test_preview_generated_markdown(client, tmp_path):
+    folder = tmp_path / "upload" / "dev" / "_out"
+    folder.mkdir(parents=True)
+    (folder / "w-0123456789abcdef.md").write_text("# 周报\n合计 12", encoding="utf-8")
+    ok = client.get(
+        "/api/v1/documents/content",
+        params={"name": "_out/w-0123456789abcdef.md"},
+        headers=_auth(),
+    )
+    assert ok.status_code == 200
+    assert "合计 12" in ok.text
+    escaped = client.get(
+        "/api/v1/documents/content",
+        params={"name": "_out/../secret.md"},
+        headers=_auth(),
+    )
+    assert escaped.status_code == 400
+
+
 def test_preview_requires_token(client):
     r = client.get("/api/v1/documents/content", params={"name": "a.md"})
     assert r.status_code == 401

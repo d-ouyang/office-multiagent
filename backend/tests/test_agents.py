@@ -22,13 +22,15 @@ def test_specs_loaded_all_seven():
 
 def test_spec_tools_whitelist():
     assert get_agent_spec("rag_retrieval").tools == ["rag_retrieve"]
-    assert get_agent_spec("data_analysis").tools == ["db_query", "clean_table", "analyze_table"]
+    assert get_agent_spec("data_analysis").tools == [
+        "db_query", "clean_table", "analyze_table", "write_document",
+    ]
     assert get_agent_spec("data_cleaning").tools == ["db_query", "clean_table", "analyze_table"]
     assert get_agent_spec("general").tools == [
-        "db_query", "rag_retrieve", "read_document", "clean_table", "analyze_table",
+        "db_query", "rag_retrieve", "read_document", "clean_table", "analyze_table", "write_document",
     ]
     assert get_agent_spec("report_generation").tools == [
-        "db_query", "rag_retrieve", "read_document", "clean_table", "analyze_table",
+        "db_query", "rag_retrieve", "read_document", "clean_table", "analyze_table", "write_document",
     ]
 
 
