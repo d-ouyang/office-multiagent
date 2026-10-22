@@ -115,6 +115,31 @@ describe('回复信息行', () => {
   });
 });
 
+describe('过程顺序', () => {
+  it('阶段回答留在过程里，最后一段才显示为结果', async () => {
+    render(
+      <ChatMessage
+        index={1}
+        msg={{
+          role: 'assistant',
+          events: [
+            ev('thinking_delta', { delta: '先看表' }, 1, 1),
+            ev('content_delta', { delta: '阶段：上海有数据' }, 2, 2),
+            ev('tool_call_start', { tool_id: 'a', name: 'analyze_table', input: { clean_id: 'c-1' } }, 3, 3),
+            ev('tool_call_end', { tool_id: 'a', success: true, duration_ms: 20 }, 4, 4),
+            ev('content_delta', { delta: '最终：上海合计 12' }, 5, 5),
+          ],
+        }}
+      />,
+    );
+    expect(await screen.findByText(/最终/)).toBeInTheDocument();
+    expect(screen.queryByText(/阶段/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /已完成/ }));
+    expect(await screen.findByText(/阶段/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /运行 analyze_table/ })).toBeInTheDocument();
+  });
+});
+
 describe('生成文件', () => {
   it('产物出现在正文下，点击交给预览', () => {
     const onPreview = vi.fn();

@@ -5,12 +5,11 @@ import { useState, type ReactNode } from 'react';
 import { Copy, Pencil, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import type { StreamEvent } from '../types';
-import type { ToolCall } from '../lib/derive';
-import { deriveArtifacts, deriveContent, deriveFailure, deriveReplyMeta, deriveThinking, deriveToolCalls } from '../lib/derive';
+import { deriveArtifacts, deriveFailure, deriveProcess, deriveReplyMeta } from '../lib/derive';
 import { formatClock, formatDuration, formatTokens } from '../lib/format';
 import { modelDisplayName } from './ModelPicker';
 import MarkdownView from './MarkdownView';
-import { StepsPanel, ThinkingPanel } from './FoldPanels';
+import { ProcessTrace } from './FoldPanels';
 
 export interface ChatMessageData {
   role: 'user' | 'assistant';
@@ -200,10 +199,9 @@ export function ChatMessage({
   }
 
   const events = msg.events;
-  const thinking = events ? deriveThinking(events) : '';
-  const toolCalls: ToolCall[] = events ? deriveToolCalls(events) : [];
+  const process = events ? deriveProcess(events) : null;
   const artifacts = events ? deriveArtifacts(events) : [];
-  const content = events ? deriveContent(events) : (msg.content ?? '');
+  const content = process ? process.result : (msg.content ?? '');
   const failure = events ? deriveFailure(events) : null;
   const meta = events ? deriveReplyMeta(events) : {};
   const modelId = meta.model || msg.model;
@@ -218,8 +216,9 @@ export function ChatMessage({
   return (
     <div className="msg-row assistant">
       <div className="assistant-block">
-        {events && <ThinkingPanel text={thinking} streaming={!!msg.streaming} />}
-        {events && <StepsPanel toolCalls={toolCalls} streaming={!!msg.streaming} />}
+        {process && process.steps.length > 0 && (
+          <ProcessTrace steps={process.steps} durationMs={process.durationMs ?? meta.durationMs} streaming={!!msg.streaming} />
+        )}
         {failure && (
           <div className={`msg-failure ${failure.kind}`}>
             <span className="failure-icon">{failure.kind === 'quota' ? '⏸' : '⚠'}</span>

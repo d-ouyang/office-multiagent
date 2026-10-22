@@ -764,6 +764,42 @@ button.account-link:hover {
   }
 }
 
+.process {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  background: var(--card);
+}
+.process-body {
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+.process-mod {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.think-scroll {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 12px 12px;
+  white-space: pre-wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+.tool-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 12px;
+}
+.step-status.completed { color: var(--ok); }
+.step-status.error { color: var(--err); }
+
 /* ---- 折叠面板（深度思考/步骤）---- */
 .fold-panel {
   border: 1px solid var(--border);

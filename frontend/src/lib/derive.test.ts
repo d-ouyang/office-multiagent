@@ -5,6 +5,7 @@ import {
   deriveFailure,
   deriveArtifacts,
   deriveContent,
+  deriveProcess,
   deriveCurrentAgent,
   deriveReplyMeta,
   deriveSources,
@@ -20,6 +21,24 @@ const ev = (type: StreamEvent['type'], data: Record<string, unknown>, seq = 0): 
   seq,
   ts: 0,
   data,
+});
+
+describe('deriveProcess', () => {
+  it('按顺序切开，最后一段正文才是结果', () => {
+    const view = deriveProcess([
+      ev('thinking_delta', { delta: '先想' }, 1),
+      ev('content_delta', { delta: '阶段结论' }, 2),
+      ev('tool_call_start', { tool_id: 'q', name: 'db_query', input: { sql: 'SELECT 1' } }, 3),
+      ev('tool_call_end', { tool_id: 'q', success: true }, 4),
+      ev('thinking_delta', { delta: '再想' }, 5),
+      ev('content_delta', { delta: '最终回答' }, 6),
+    ]);
+    expect(view.result).toBe('最终回答');
+    expect(view.steps.map((step) => step.kind)).toEqual(['thinking', 'answer', 'tool', 'thinking']);
+    expect(view.steps[0]).toMatchObject({ text: '先想' });
+    expect(view.steps[1]).toMatchObject({ text: '阶段结论' });
+    expect(view.steps[2].kind === 'tool' && view.steps[2].call.name).toBe('db_query');
+  });
 });
 
 describe('deriveToolCalls', () => {

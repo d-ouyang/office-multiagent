@@ -54,8 +54,9 @@ def build_default_registry(
         "db_query",
         make_db_query_tool(engine, max_rows=settings.db_query_max_rows),
         description=(
-            "查询公司业务库（只读）。参数: sql（单条 SELECT 语句；自动追加 LIMIT，"
-            "禁止 INSERT/UPDATE/DELETE 等写操作）。适用于查员工/订单/台账等结构化数据。"
+            "查询公司业务库（只读兜底）。没有专用查询工具时才用。"
+            "参数 sql：单条 SELECT。必须带 WHERE、GROUP BY 或聚合；最多返回 50 行，"
+            "执行超过 3 秒会被数据库打断。禁止写操作。上传的表不要用它，先 clean_table。"
         ),
     )
     reg.register(

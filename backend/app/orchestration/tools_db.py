@@ -25,6 +25,10 @@ _FORBIDDEN = re.compile(
 )
 
 
+_PREDICATE = re.compile(r"\b(where|group\s+by|having)\b|\b(count|sum|avg|min|max)\s*\(", re.IGNORECASE)
+_LIMIT_TAIL = re.compile(r"\blimit\s+(\d+)\s*$", re.IGNORECASE)
+
+
 def check_readonly(sql: str, *, max_rows: int = 50) -> str:
     """护栏：通过则返回规范化后的 SQL；违规抛 ValueError（工具层转结构化错误如实告知）。"""
     s = (sql or "").strip().rstrip(";").strip()
@@ -38,8 +42,15 @@ def check_readonly(sql: str, *, max_rows: int = 50) -> str:
     hit = _FORBIDDEN.search(s)
     if hit:
         raise ValueError(f"只读查询中禁止出现 {hit.group(1).upper()}")
-    if not re.search(r"\blimit\b", s, re.IGNORECASE):
+    if not _PREDICATE.search(s):
+        raise ValueError("查询必须带 WHERE、GROUP BY 或聚合函数，避免整表读取")
+    limited = _LIMIT_TAIL.search(s)
+    if not limited:
         s = f"{s} LIMIT {int(max_rows)}"
+    elif int(limited.group(1)) > max_rows:
+        s = s[: limited.start()] + f"LIMIT {int(max_rows)}"
+    if s.lower().startswith("select"):
+        s = "SELECT /*+ MAX_EXECUTION_TIME(3000) */" + s[6:]
     return s
 
 

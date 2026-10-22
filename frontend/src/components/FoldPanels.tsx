@@ -1,7 +1,8 @@
-// 深度思考 / 步骤折叠面板（p6.2）：默认折叠；折叠中照常累积，展开即见实时流式内容。
+// 过程按事件顺序展开：思考、阶段回答、工具调用。最后一段正文由消息本体单独显示。
 import { useState } from 'react';
 
-import type { ToolCall } from '../lib/derive';
+import type { ProcessStep, ToolCall } from '../lib/derive';
+import { formatDuration } from '../lib/format';
 import MarkdownView from './MarkdownView';
 
 export function ThinkingPanel({ text, streaming }: { text: string; streaming: boolean }) {
@@ -18,6 +19,79 @@ export function ThinkingPanel({ text, streaming }: { text: string; streaming: bo
       {open && (
         <div className="fold-body">
           <MarkdownView text={text} streaming={streaming} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ProcessTrace({
+  steps,
+  durationMs,
+  streaming,
+}: {
+  steps: ProcessStep[];
+  durationMs?: number;
+  streaming: boolean;
+}) {
+  const [open, setOpen] = useState(streaming);
+  if (!steps.length) return null;
+  const title = streaming ? '进行中' : durationMs != null ? `已完成 ${formatDuration(durationMs)}` : '过程';
+  return (
+    <div className="process">
+      <button type="button" className="fold-head" onClick={() => setOpen((v) => !v)}>
+        <span className={`arrow ${open ? 'open' : ''}`}>▸</span>
+        {title}
+        {streaming && <span className="live-dot" />}
+        <span className="fold-meta">{steps.length} 步</span>
+      </button>
+      {open && (
+        <div className="process-body">
+          {steps.map((step, index) => {
+            if (step.kind === 'thinking') {
+              return <ThinkingBlock key={`t-${index}`} text={step.text} />;
+            }
+            if (step.kind === 'answer') {
+              return <MarkdownView key={`a-${index}`} text={step.text} />;
+            }
+            return <ToolBlock key={step.call.id || `c-${index}`} call={step.call} />;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ThinkingBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="process-mod">
+      <button type="button" className="fold-head" onClick={() => setOpen((v) => !v)}>
+        <span className={`arrow ${open ? 'open' : ''}`}>▸</span>
+        深度思考
+        <span className="fold-meta">{text.length} 字</span>
+      </button>
+      {open && <pre className="think-scroll">{text}</pre>}
+    </div>
+  );
+}
+
+function ToolBlock({ call }: { call: ToolCall }) {
+  const [open, setOpen] = useState(false);
+  const mark = call.status === 'completed' ? '✓' : call.status === 'error' ? '✗' : '…';
+  return (
+    <div className="process-mod">
+      <button type="button" className="fold-head" onClick={() => setOpen((v) => !v)}>
+        <span className={`arrow ${open ? 'open' : ''}`}>▸</span>
+        <span className={`step-status ${call.status}`}>{mark}</span>
+        运行 {call.name || '工具'}
+        {call.durationMs != null && <span className="fold-meta">{formatDuration(call.durationMs)}</span>}
+      </button>
+      {open && (
+        <div className="tool-detail">
+          <code>{JSON.stringify(call.input)}</code>
+          {call.result && <pre className="think-scroll">{call.result}</pre>}
+          {call.error && <p className="account-err">{call.error}</p>}
         </div>
       )}
     </div>

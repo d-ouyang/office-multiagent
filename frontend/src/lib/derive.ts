@@ -40,6 +40,81 @@ export function deriveToolCalls(events: StreamEvent[]): ToolCall[] {
   return order.map((id) => map.get(id)!).filter(Boolean);
 }
 
+export type ProcessStep =
+  | { kind: 'thinking'; text: string }
+  | { kind: 'answer'; text: string }
+  | { kind: 'tool'; call: ToolCall };
+
+export interface ProcessView {
+  steps: ProcessStep[];
+  result: string;
+  durationMs?: number;
+}
+
+/** 按事件顺序切段。最后一段正文是结果，它前面的思考、阶段回答和工具都是过程。 */
+export function deriveProcess(events: StreamEvent[]): ProcessView {
+  const ordered = events
+    .map((ev, index) => ({ ev, index }))
+    .sort((a, b) => a.ev.seq - b.ev.seq || a.index - b.index)
+    .map((item) => item.ev);
+  const steps: ProcessStep[] = [];
+  const tools = new Map<string, ToolCall>();
+  let open: ProcessStep | null = null;
+
+  const flush = () => {
+    if (!open) return;
+    if (open.kind === 'tool' || open.text.trim()) steps.push(open);
+    open = null;
+  };
+
+  for (const ev of ordered) {
+    if (ev.type === 'thinking_delta') {
+      if (!open || open.kind !== 'thinking') {
+        flush();
+        open = { kind: 'thinking', text: '' };
+      }
+      open.text += String(ev.data.delta ?? '');
+    } else if (ev.type === 'content_delta') {
+      if (!open || open.kind !== 'answer') {
+        flush();
+        open = { kind: 'answer', text: '' };
+      }
+      open.text += String(ev.data.delta ?? '');
+    } else if (ev.type === 'tool_call_start') {
+      flush();
+      const id = String(ev.data.tool_id ?? '');
+      const call: ToolCall = {
+        id,
+        name: String(ev.data.name ?? ''),
+        status: 'running',
+        input: (ev.data.input ?? {}) as Record<string, unknown>,
+      };
+      tools.set(id, call);
+      steps.push({ kind: 'tool', call });
+    } else if (ev.type === 'observation' || ev.type === 'tool_call_end') {
+      const call = tools.get(String(ev.data.tool_id ?? ''));
+      if (!call) continue;
+      if (ev.type === 'observation') call.result = String(ev.data.text ?? '');
+      else {
+        call.status = ev.data.success === false ? 'error' : 'completed';
+        if (typeof ev.data.duration_ms === 'number') call.durationMs = ev.data.duration_ms;
+        if (ev.data.error) call.error = String(ev.data.error);
+      }
+    }
+  }
+  flush();
+
+  let result = '';
+  const last = steps[steps.length - 1];
+  if (last?.kind === 'answer') {
+    result = last.text;
+    steps.pop();
+  }
+  const times = ordered.map((item) => item.ts).filter((n) => typeof n === 'number' && n > 0);
+  const durationMs = times.length >= 2 ? times[times.length - 1] - times[0] : undefined;
+  return { steps, result, durationMs };
+}
+
 export function deriveContent(events: StreamEvent[]): string {
   return events
     .filter((e) => e.type === 'content_delta')
