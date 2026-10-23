@@ -103,6 +103,14 @@ def plan(text: str) -> Plan:
     intents, hits = _classify(text, cfg)
     max_intents = int(cfg.get("complexity", {}).get("max_intents", 3))
     intents = intents[:max_intents]
+    # p6.30：折叠规则——"图表"嵌在分析/报表里时，不拆独立可视化意图。
+    # data_analysis / report_generation 都有 render_chart 能力，"文档中带图表"
+    # 是文档的内嵌产物而非独立交付物；拆出去必然失败（子任务间只传文本摘要，
+    # 画图需要数据文件——真跑事故 run 074e6de7：viz 子任务拿不到 clean_id 只能认怂）。
+    if cfg.get("fold_visualization", True) and "visualization" in intents:
+        if any(i in ("analysis", "report", "cleaning") for i in intents):
+            hits.pop("visualization", None)
+            intents = [i for i in intents if i != "visualization"]
     score, signals = _score(text, intents, cfg)
     low = text.lower()
     output_formats = [o for o in cfg.get("complexity", {}).get("output_markers", []) if o in low]

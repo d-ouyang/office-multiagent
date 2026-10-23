@@ -5,6 +5,25 @@
 
 ---
 
+## v1.0.0-p6.30 — 销售链路修正（planner 隔离/折叠 + export_orders + 图表嵌文档 + assets）（2026-10-23）
+
+**类型**：修复 + 功能（复盘 run 074e6de7 三根因全修）
+
+### 交付内容
+- **P0 planner 输入隔离**：意图识别/复杂度/拆分只看本轮原文（`TaskState.raw_text`）——记忆注入块/历史摘要不再劫持意图（真跑事故：记忆"财务制度"触发 rag，2.5/single→4.5/multi+rag）。
+- **折叠规则**：analysis/report/cleaning + visualization 同时命中时 viz 折进主意图（图表是内嵌产物，不拆独立子任务）；单独要图仍走 visualization。
+- **export_orders**：订单明细导出 csv/xlsx（fields 指定列；手机号脱敏；缺字段整列省略如实说明；export_id 供画图）。
+- **图表数据链**：render_chart 接受 export_id（xlsx 也能读回——真机抓到）；同时产 png；write_document 新增 image_file 嵌图进 docx/md；预览白名单放宽 e-/png/csv/xlsx。
+- **assets 传递 + 汇总脑**：子任务间传文件资产（不只文本摘要）；multi 汇总不再原样拼接子任务终答（表格重复展示根因），汇总脑输出"核心结论+交付清单"，token 入账。
+
+### 验证状态
+- pytest **335 passed / 3 skipped**（新增 15 例）；tsc 干净。
+- 真机（用户原任务逐字重放）：意图 `['analysis']`/1.0 → single；export xlsx 236 行（支付方式省略说明）→ render_chart(export_id) → docx 嵌图（zip media 验证）；终答无重复表格。
+
+详细见 `docs/iterations/v1.0.0-p6.30-export-chain.md`、`docs/分析-2026-10-23-销售总结任务复盘.md`。
+
+---
+
 ## v1.0.0-p6.29 — P1 两件套：轻量结果校验器 + 显式长期记忆（2026-10-23）
 
 **类型**：功能（对照参考架构差距分析的拍板项：⑭ 结果校验器 + ④ 长期记忆）

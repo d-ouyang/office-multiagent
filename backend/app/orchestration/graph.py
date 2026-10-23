@@ -53,6 +53,7 @@ class TaskState(TypedDict, total=False):
     model: str | None            # p6.5：本次任务的对话模型（优先级：请求>会话>默认）
     effort: str | None           # low/medium/high/max，仅推理模型会传给 API
     context_parts: dict[str, str]
+    raw_text: str | None          # p6.30：本轮用户原文（planner 只看它，不被注入块污染）
     validation: dict[str, Any] | None  # p6.29：终答数字对账结果（None=未校验/跳过）
 
 
@@ -217,7 +218,10 @@ def build_graph(
     def planner_node(state: TaskState) -> dict[str, Any]:
         if should_cancel is not None and should_cancel():
             raise RunCancelled("用户暂停")
-        p: Plan = run_plan(state["text"])
+        # p6.30：意图识别/复杂度/拆分只看【本轮用户原文】——text 可能带着【历史摘要】
+        #【近期对话】【用户长期记忆】等注入块（真跑事故：记忆里"财务制度"的"制度"
+        # 命中 rag 关键词，把 2.5/single 劫持成 4.5/multi+rag）。注入块只给 Agent 上下文。
+        p: Plan = run_plan(state.get("raw_text") or state["text"])
         d = decide(p)
         emit(emitter.thinking_delta(f"识别意图 {p.intents or ['general']}，复杂度分 {p.score}"))
         out: dict[str, Any] = {
@@ -290,7 +294,7 @@ def build_graph(
         # p4.3c：汇总各子任务真实用量（此前 multi 不返回 tokens_used，settle 时
         # actual=0 全额退回，多 Agent 消耗不计账——§十四 对账恒等式破洞）
         total_tokens = sum(int(getattr(r, "tokens_used", 0) or 0) for r in results.values())
-        # p6.29：每个子任务终答各自对账（观察取各子任务自己的 steps）
+        # p6.30：每个子任务终答各自对账（观察取各子任务自己的 steps）
         validations: dict[str, Any] = {}
         for key, r in results.items():
             rep = _validate_and_flag(
@@ -298,10 +302,45 @@ def build_graph(
             )
             if rep is not None:
                 validations[key] = rep
-        emit(emitter.content_delta(f"多 Agent 汇总 → {summary}"))
+        # p6.30：汇总脑重写最终答复——不再原样拼接各子任务终答（真跑事故：5 张表
+        # 在子任务终答里出现一遍、汇总又整段重复一遍）。汇总脑只输出：核心结论 +
+        # 交付物清单（文件名/行数），完整表格以文件为准。失败回落旧拼接（不阻断）。
+        deliverables = [
+            f"- {a.get('display_name') or a.get('file_name')}（{a['file_name']}）"
+            for r in results.values()
+            for a in (getattr(r, "assets", None) or [])
+        ]
+        fallback = f"[multi] {summary}"
+        final_text = fallback
+        try:
+            synth = make_brain(
+                ToolRegistry(),
+                fallback_answer="",
+                system_prompt="你是多 Agent 协作的汇总官。把各子任务结果整合成面向用户的最终答复。",
+                model_id=state.get("model"),
+                stream=True,
+                on_content=lambda c: emit(emitter.content_delta(c)),
+                on_thought=lambda t: emit(emitter.thinking_delta(t)),
+                reasoning_effort=_effort_for(state),
+            )
+            task_lines = "\n".join(f"【{k}】{(v.final or '')[:2000]}" for k, v in results.items())
+            asset_block = ("\n\n生成的文件：\n" + "\n".join(deliverables)) if deliverables else ""
+            step = synth.next_step(
+                "用户请求：" + (state.get("raw_text") or state.get("text", ""))[:2000]
+                + "\n\n各子任务结果：\n" + task_lines + asset_block
+                + "\n\n请写最终答复：先给核心结论（3-5 条），再列交付文件清单（如有）。"
+                "不要重复完整表格内容（表格已在交付文件里），不要编造文件名和数字。",
+                [],
+            )
+            if (step.final or "").strip():
+                final_text = step.final.strip()
+            usage = getattr(synth, "usage", None) or {}
+            total_tokens += int(usage.get("total_tokens", 0))
+        except Exception:  # noqa: BLE001 - 汇总脑失败回落拼接，不阻断
+            logger.exception("multi 汇总脑失败（回落拼接）")
         emit(emitter.status("orchestrator", "done"))
         return {
-            "result": f"[multi] {summary}",
+            "result": final_text,
             "tokens_used": total_tokens,
             "validation": validations or None,
         }
@@ -337,6 +376,7 @@ def run_task(
     context_parts: dict[str, str] | None = None,
     run_id: str | None = None,
     cancel_event: threading.Event | None = None,
+    raw_text: str | None = None,
 ) -> tuple[dict[str, Any], list[Event]]:
     """跑一次编排。带 token_pool+user_id 时前置 reserve；余额不足→quota_paused 中断。
 
@@ -377,6 +417,7 @@ def run_task(
         "model": model,
         "effort": effort,
         "context_parts": context_parts or {"current": text},
+        "raw_text": raw_text,
     }
     if user_id is not None:
         init["user_id"] = user_id

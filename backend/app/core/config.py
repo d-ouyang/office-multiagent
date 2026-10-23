@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     rag_base_url: str = "http://127.0.0.1:8000"
     rag_internal_secret: str = ""       # 须与 RAG 后端 OFFICE_GATEWAY_SHARED_SECRET 同值
     rag_service_username: str = "office-service"  # 注入 X-Username（须能在 RAG user 表解析）
+    # export_orders 明细导出的单次行数上限（p6.30）
+    export_orders_max_rows: int = 5000
     # db_query 工具护栏：强制 LIMIT 行数上限
     db_query_max_rows: int = 50
     # read_document 工具：文档目录（工具只能读该目录内文件，防路径穿越）与单次返回字符上限。

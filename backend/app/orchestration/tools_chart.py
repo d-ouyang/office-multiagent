@@ -13,6 +13,8 @@ from typing import Any
 from .tools_store import finish_output, new_output_id, output_file
 from .tools_table import _as_list, _load_clean, _match_filter, _parse_number
 
+_EXPORT_ID_RE = __import__("re").compile(r"^e-[0-9a-f]{16}$")
+
 _CHARTS = ("bar", "barh", "line", "area", "pie", "scatter", "heatmap", "hist")
 _AGGS = ("sum", "mean", "count", "min", "max")
 _COLORS = ("#4C78A8", "#F58518", "#54A24B", "#E45756", "#72B7B2", "#B279A2", "#FF9DA6", "#9D755D")
@@ -71,7 +73,7 @@ def _ordered_labels(labels: list[str], totals: dict[str, float], chart: str, top
     return ordered[:top_n]
 
 
-def _draw(path: Path, chart: str, title: str, payload: dict[str, Any]) -> None:
+def _draw(path: Path, chart: str, title: str, payload: dict[str, Any], *, fmt: str = "svg") -> None:
     import matplotlib
 
     matplotlib.use("Agg", force=False)
@@ -138,7 +140,7 @@ def _draw(path: Path, chart: str, title: str, payload: dict[str, Any]) -> None:
             ax.set_ylabel(payload["ylabel"])
         ax.set_title(title)
         fig.tight_layout()
-        fig.savefig(path, format="svg")
+        fig.savefig(path, format=fmt)
     finally:
         plt.close(fig)
 
@@ -247,6 +249,16 @@ def _prepare(records: list[dict[str, str]], headers: list[str], chart: str, x: s
     return {"labels": labels, "series": plotted, "ylabel": "、".join(y_cols) if y_cols else "数量"}, used, skipped
 
 
+def _load_table(base: Path, table_id: str) -> tuple[list[str], list[list[str]], dict[str, Any]]:
+    """p6.30：clean_id（清洗表）与 export_id（订单明细导出）统一加载入口。"""
+    if _EXPORT_ID_RE.match(table_id or ""):
+        from .tools_export import load_export
+
+        headers, grid = load_export(str(base), table_id)
+        return headers, grid, {"source": "订单明细导出"}
+    return _load_clean(base, table_id)
+
+
 def make_render_chart_tool(
     *,
     base_dir: str,
@@ -276,7 +288,15 @@ def make_render_chart_tool(
         how = (agg or "sum").strip().lower()
         if how not in _AGGS:
             raise ValueError(f"不支持的汇总：{agg}（可用 {'/'.join(_AGGS)}）")
-        headers, grid, meta = _load_clean(base, clean_id)
+        # p6.30：clean_id（c-）与 export_id（e-，export_orders 产物）都接受，
+        # 订单明细导出后可直接画图，不必再走 clean_table。
+        tid = str(clean_id or "").strip()
+        if not (_EXPORT_ID_RE.match(tid) or tid.startswith("c-")):
+            raise ValueError(
+                "clean_id 无效。请先调用 clean_table（上传表）或 export_orders（订单明细，e- 开头），"
+                "不要把原始文件名传进来。"
+            )
+        headers, grid, meta = _load_table(base, tid)
         records = [dict(zip(headers, row + [""] * (len(headers) - len(row)), strict=False)) for row in grid]
         filter_items = _as_filter(filters)
         matched = [row for row in records if all(_match_filter(row, item) for item in filter_items)]
@@ -292,6 +312,10 @@ def make_render_chart_tool(
         filename = f"{doc_id}.svg"
         target = output_file(base, filename)
         _draw(target, kind, heading, payload)
+        # p6.30：同时产出 png（write_document 往 docx 里嵌图需要位图；svg 无法直接嵌 docx）。
+        # png 只落盘不注册 asset——预览/嵌入走 documents/content 的文件存在性校验。
+        png_filename = f"{doc_id}.png"
+        _draw_png(output_file(base, png_filename), kind, heading, payload)
         rel = f"_out/{filename}"
         recorded = finish_output(
             engine,
@@ -306,6 +330,7 @@ def make_render_chart_tool(
         return {
             "doc_id": doc_id,
             "file_name": rel,
+            "png_file": f"_out/{png_filename}",
             "display_name": f"{heading}.svg",
             "format": kind,
             "clean_id": clean_id,
@@ -313,11 +338,35 @@ def make_render_chart_tool(
             "points": used,
             "skipped_non_numeric": skipped,
             "recorded": recorded,
-            "note": "图中的数只来自清洗后的表。文字在 SVG 里，预览时由浏览器显示中文。",
+            "note": "图中的数只来自表格数据（清洗表或订单导出表）。svg 供预览，png 供嵌进 docx。",
         }
 
     render_chart.__name__ = "render_chart"
     return render_chart
+
+
+def _draw_png(path: Path, chart: str, title: str, payload: dict[str, Any]) -> None:
+    """p6.30：同 payload 画一份 png（docx 嵌图需要位图，svg 嵌不进 docx）。
+
+    png 走系统字体渲染：容器里没有中文字体时中文会变方框——这是已知的显示退化，
+    不阻断（svg 版本用 svg.fonttype=none 把文字留给浏览器渲染，不受影响）。
+    """
+    import matplotlib
+
+    matplotlib.use("Agg", force=False)
+    # png 需要真实字体文件；按常见中文字体优先探测一次，找不到就用默认（可能方框）
+    try:
+        from matplotlib import font_manager
+
+        for family in ("Noto Sans CJK SC", "WenQuanYi Zen Hei", "PingFang SC",
+                       "Microsoft YaHei", "SimHei", "Arial Unicode MS"):
+            if any(f.name == family for f in font_manager.fontManager.ttflist):
+                matplotlib.rcParams["font.family"] = family
+                break
+    except Exception:  # noqa: BLE001 - 字体探测失败不阻断
+        pass
+    matplotlib.rcParams["axes.unicode_minus"] = False
+    _draw(path, chart, title, payload, fmt="png")
 
 
 def _as_filter(value: Any) -> list[dict[str, Any]]:

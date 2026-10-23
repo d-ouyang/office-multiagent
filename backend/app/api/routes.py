@@ -161,7 +161,7 @@ def _current_user(authorization: str | None) -> dict[str, Any]:
     return user
 
 
-_OUT_FILE = re.compile(r"^[wg]-[0-9a-f]{16}\.(md|docx|svg)$")
+_OUT_FILE = re.compile(r"^[weg]-[0-9a-f]{16}\.(md|docx|svg|png|csv|xlsx)$")
 
 
 def _generated_file(raw: str, username: str):
@@ -784,6 +784,7 @@ def _stream_task(
                 context_parts=context_parts,
                 run_id=run_id,
                 cancel_event=cancel_ev,
+                raw_text=text,  # p6.30：planner 只看本轮原文（附件引用属本轮语境，保留在 text 里）
             )
             status = str(result.get("status") or "done")
             # 落库失败不影响已完成的流（任务结果已推给用户），但必须 ERROR 级可见

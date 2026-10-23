@@ -21,6 +21,7 @@ from sqlalchemy.engine import Engine
 from ..core.config import settings
 from .tools import ToolRegistry
 from .tools_db import make_db_query_tool
+from .tools_export import make_export_orders_tool
 from .tools_orders import make_query_orders_tool
 from .tools_report import make_sales_report_tool
 from .tools_chart import make_render_chart_tool
@@ -81,6 +82,7 @@ def build_default_registry(
             "不要某状态时传 exclude_status，例如不要退款就传 已退款。"
             "条件对不上时会说明没有这个过滤条件，不要改去猜列名或改用 db_query。"
             "销售报表不要用本工具拼结论，改用 sales_report。"
+            "【要订单明细表格/导出文件时不要用本工具，改用 export_orders】。"
         ),
     )
     reg.register(
@@ -157,6 +159,27 @@ def build_default_registry(
         ),
     )
     reg.register(
+        "export_orders",
+        make_export_orders_tool(
+            engine,
+            base_dir=str(doc_base),
+            owner=owner,
+            user_id=user_id,
+            task_id=task_id,
+        ),
+        description=(
+            "导出订单明细表格文件（csv 或 xlsx），是「形成表格/导出明细」类请求的正解。"
+            "必填 date_from、date_to（YYYY-MM-DD）。可选 city（上海/安庆）、store_name、"
+            "order_status、exclude_status、order_channel、order_type、fulfillment_type、"
+            "member_level、fields（要保留的列名列表，如 [销售金额, 门店, 用户, 是否线上, 平台, 支付方式]）、"
+            "format（csv/xlsx）。字段映射规则：手机号自动脱敏进文件；「是否线上」由渠道推导"
+            "（门店扫码→线下，其余→线上）；表里没有的字段（如支付方式）【整列省略】并在返回的 "
+            "omitted 里说明，绝不编造该列。返回 export_id 和 file_name：可直接交给 render_chart "
+            "画图（不必再 clean_table），也可作为交付物告知用户预览/下载。"
+            "【要画时间趋势图时，fields 必须包含「下单时间」列，否则画不了按月趋势】。"
+        ),
+    )
+    reg.register(
         "write_document",
         make_write_document_tool(
             base_dir=doc_base, owner=owner, engine=engine, user_id=user_id, task_id=task_id
@@ -165,6 +188,7 @@ def build_default_registry(
             "把已经得到的结论写成 md 或 docx，不画图，也不生成 xlsx。"
             "参数 title：标题。content：正文，数字必须来自此前的工具结果。"
             "format：md 或 docx。clean_id：若结论来自清洗后的表，传入它，文末会写上来源和行数。"
+            "image_file：要把图表嵌进文档时，传 render_chart 返回的 png_file（文档内会嵌入该图）。"
             "返回 file_name。失败就说明没生成，不要给一个不存在的下载地址。"
         ),
     )
@@ -174,13 +198,16 @@ def build_default_registry(
             base_dir=doc_base, owner=owner, engine=engine, user_id=user_id, task_id=task_id
         ),
         description=(
-            "根据 clean_table 的 clean_id 画图，数字只来自那张表。不能自己传数据点。"
+            "根据表格数据画图，数字只来自那张表。不能自己传数据点。"
+            "第一个参数传 clean_id（clean_table 产物，c- 开头）或 export_id（export_orders 产物，e- 开头）"
+            "——订单明细导出后可直接画图，不必再 clean_table。"
             "chart：bar、barh、line、area、pie、scatter、heatmap、hist。"
             "x：分类列；折线/面积按 x 排序，柱状按汇总值取前 top_n 个。"
             "y：数值列，可传一个或列表。agg：sum、mean、count、min、max，默认 sum。"
             "series：分组列，和多个 y 不能同时用。heatmap 必须有 x、series 和 y。"
             "scatter 的 x、y 都是数字列。hist 用 y 或 x 做分箱，bins 默认 10。"
             "filters 与 analyze_table 相同。饼图超过 8 类会把其余并成「其他」，且不能有负数。"
+            "返回 svg（预览）和 png（供 write_document 嵌入文档）。"
         ),
     )
     # p6.29：显式长期记忆（仅登录用户场景挂载；匿名=无记忆能力，工具不可见）

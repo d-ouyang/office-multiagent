@@ -90,7 +90,8 @@ def test_multi_route_aggregates_subtask_tokens(monkeypatch):
     assert result["route"] == "multi"
     n = len(result["dag"]["subtasks"])
     assert n >= 2
-    assert result["tokens_used"] == 7 * n  # 各子任务用量之和
+    # p6.30：汇总脑也是一次真 LLM 调用，用量入账 → 子任务 n 个 + 汇总 1 次
+    assert result["tokens_used"] == 7 * (n + 1)
 
 
 def test_multi_route_settles_actual_usage(monkeypatch):
@@ -101,10 +102,10 @@ def test_multi_route_settles_actual_usage(monkeypatch):
     assert result["status"] == "done"
     assert result["route"] == "multi"
     n = len(result["dag"]["subtasks"])
-    assert tp.balance(1) == 1000 - 7 * n
+    assert tp.balance(1) == 1000 - 7 * (n + 1)
     settle_rows = [r for r in tp.recent(1, limit=10) if r["settle"] is not None]
     assert len(settle_rows) == 1
-    assert settle_rows[0]["reserve"] == 100 and settle_rows[0]["settle"] == 7 * n
+    assert settle_rows[0]["reserve"] == 100 and settle_rows[0]["settle"] == 7 * (n + 1)
 
 
 def test_multi_route_stub_baseline_settles_zero(monkeypatch):

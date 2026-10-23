@@ -81,6 +81,7 @@ class AgentResult:
     iterations: int
     hit_cap: bool = False
     tokens_used: int = 0       # p4.3c：本次 ReAct 的真实 LLM 用量（brain.usage 汇总；StubBrain 为 0）
+    assets: list[dict[str, str]] = field(default_factory=list)  # p6.30：过程产出的文件/数据资产（file_name 等）
 
 
 class StubBrain:
@@ -118,6 +119,7 @@ def run_react(
     """
     history: list[Step] = []
     invalid_streak = 0  # p6.7：连续无效工具名计数（幻觉兜底）
+    assets: list[dict[str, str]] = []  # p6.30：产出资产（下游子任务要能拿到文件名/id，不只文本摘要）
 
     def _emit(ev: Event) -> None:
         if emit is not None:
@@ -154,7 +156,7 @@ def run_react(
                 elif not step.streamed:
                     _emit(emitter.content_delta(step.final))
             history.append(step)
-            return AgentResult(final=step.final, steps=history, iterations=i)
+            return AgentResult(final=step.final, steps=history, iterations=i, assets=assets)
 
         # Action → 工具调用 → Observation
         name = step.action or ""
@@ -177,7 +179,7 @@ def run_react(
                 cap = _cap_final("模型连续给出无效工具名", cap)
                 if emitter is not None:
                     _emit(emitter.content_delta(cap))
-                return AgentResult(final=cap, steps=history, iterations=i, hit_cap=True)
+                return AgentResult(final=cap, steps=history, iterations=i, hit_cap=True, assets=assets)
             continue
         prior = [s for s in history if _same_call(s, name, step.action_input)]
         if prior:
@@ -192,7 +194,7 @@ def run_react(
                 final = _cap_final("模型对同一工具重复调用相同参数", final)
                 if emitter is not None:
                     _emit(emitter.content_delta(final))
-                return AgentResult(final=final, steps=history, iterations=i, hit_cap=True)
+                return AgentResult(final=final, steps=history, iterations=i, hit_cap=True, assets=assets)
             continue
         if emitter is not None:
             _emit(emitter.tool_call_start(name, name, step.action_input))
@@ -201,12 +203,25 @@ def run_react(
         if emitter is not None and res.ok and isinstance(res.output, dict) and res.output.get("file_name"):
             _emit(
                 emitter.artifact(
-                    str(res.output.get("doc_id") or name),
+                    str(res.output.get("doc_id") or res.output.get("export_id") or name),
                     str(res.output.get("format") or "file"),
                     str(res.output["file_name"]),
                     str(res.output.get("display_name") or res.output["file_name"]),
                 )
             )
+        # p6.30：把文件产物记进 assets（file_name/export_id/clean_id）——multi 链路上
+        # 下游子任务靠它引用上游文件（画图/嵌图），不再"只有文字没有数据"。
+        if res.ok and isinstance(res.output, dict) and res.output.get("file_name"):
+            asset = {
+                "tool": name,
+                "file_name": str(res.output["file_name"]),
+                "display_name": str(res.output.get("display_name") or res.output["file_name"]),
+            }
+            for key in ("export_id", "clean_id", "doc_id", "png_file"):
+                if res.output.get(key):
+                    asset[key] = str(res.output[key])
+            if not any(a["file_name"] == asset["file_name"] for a in assets):
+                assets.append(asset)
         if emitter is not None:
             # 前端步骤面板展示口径（p6.9：500 → 2000，用户能看到更多过程细节）
             _emit(emitter.observation(name, str(obs)[:2000]))
@@ -224,4 +239,4 @@ def run_react(
     cap = _cap_final("达到最大步数上限", cap)
     if emitter is not None:
         _emit(emitter.content_delta(cap))
-    return AgentResult(final=cap, steps=history, iterations=max_iterations, hit_cap=True)
+    return AgentResult(final=cap, steps=history, iterations=max_iterations, hit_cap=True, assets=assets)

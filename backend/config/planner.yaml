@@ -48,6 +48,11 @@ complexity:
 # DAG 拆分（p3.2，§四.2 第三步）：复杂任务按意图依赖生成子任务图。
 # 只对【同时出现】的意图生效；被依赖方不在任务里则自动忽略该边。
 # 与 p3.1 一致用确定性规则打底；LLM 分解长尾/歧义留作 DecisionModel 插槽。
+#
+# p6.30 折叠规则：文本同时命中 analysis/report 和 visualization（如"文档中带图表"）
+# 时，visualization 不拆独立子任务（data_analysis/report_generation 自带 render_chart，
+# 图表是文档的内嵌产物）；单独要图（"把我的表画成柱状图"）仍走 visualization Agent。
+fold_visualization: true
 dag:
   dependencies:
     analysis: [cleaning]      # 先清洗再分析

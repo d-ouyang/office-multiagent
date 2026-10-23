@@ -76,6 +76,17 @@ def compose_subtask_text(
             else:
                 ups.append(f"- 【{dep_id}】{final}{tail}")
         blocks.append("【上游子任务结果】（来自依赖步骤，可直接引用）\n" + "\n".join(ups))
+        # p6.30：上游文件/数据资产（file_name、export_id 等）单独列出——下游画图/嵌图
+        # 靠这些 id 引用上游文件，只有文字摘要会让下游"想画图但拿不到数据"。
+        asset_lines = [
+            f"- [{dep_id}] {a.get('display_name') or a.get('file_name')}：file_name={a['file_name']}"
+            + (f"，export_id={a['export_id']}" if a.get("export_id") else "")
+            + (f"，png_file={a['png_file']}" if a.get("png_file") else "")
+            for dep_id, res in (upstream or {}).items()
+            for a in (getattr(res, "assets", None) or [])
+        ]
+        if asset_lines:
+            blocks.append("【上游产物（可直接引用的文件）】\n" + "\n".join(asset_lines))
         blocks.append("请基于上述上游结果完成本任务；上游未完成时如实说明缺什么，不要编造上游数据。")
     return "\n\n".join(blocks)
 
