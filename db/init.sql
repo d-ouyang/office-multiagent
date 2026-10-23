@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS `token_ledger` (
   `settle`        INT         NULL,   -- 结算差额（可负）
   `kind`          VARCHAR(16) NOT NULL DEFAULT 'task',  -- p7.1：task=任务账 / recharge=充值
   `note`          VARCHAR(255) NULL,                     -- p7.1：充值备注（操作人/原因）
+  `amount`        BIGINT      NULL,                      -- p6.26：充值金额（任务账为 NULL）
   `created_at`    DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   KEY `idx_ledger_user` (`user_id`)

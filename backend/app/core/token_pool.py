@@ -36,11 +36,11 @@ class TokenPool:
             return int(row[0]) if row else 0
 
     def recent(self, user_id: int, limit: int = 10) -> list[dict]:
-        """最近流水（p6.4 /quota 展示用；p7.1 带 kind/note 区分任务账与充值）。"""
+        """最近流水（p6.4 /quota 展示用；p7.1 带 kind/note；p6.26 充值带 amount）。"""
         with self.engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT id, task_id, model, reserve, settle, kind, note, created_at "
+                    "SELECT id, task_id, model, reserve, settle, kind, note, amount, created_at "
                     "FROM token_ledger WHERE user_id=:u ORDER BY id DESC LIMIT :l"
                 ),
                 {"u": user_id, "l": limit},
@@ -53,6 +53,7 @@ class TokenPool:
                 "settle": r["settle"],
                 "kind": r.get("kind") or "task",
                 "note": r.get("note"),
+                "amount": r.get("amount"),
                 "created_at": _iso_utc(r["created_at"]),
             }
             for r in rows
@@ -89,10 +90,10 @@ class TokenPool:
                 )
             conn.execute(
                 text(
-                    "INSERT INTO token_ledger (user_id, task_id, model, reserve, settle, kind, note) "
-                    "VALUES (:u, NULL, NULL, NULL, NULL, 'recharge', :n)"
+                    "INSERT INTO token_ledger (user_id, task_id, model, reserve, settle, kind, note, amount) "
+                    "VALUES (:u, NULL, NULL, NULL, NULL, 'recharge', :n, :a)"
                 ),
-                {"u": user_id, "n": label[:255] or None},
+                {"u": user_id, "n": label[:255] or None, "a": amount},
             )
             row = conn.execute(
                 text("SELECT balance FROM wallet WHERE user_id=:u"), {"u": user_id}

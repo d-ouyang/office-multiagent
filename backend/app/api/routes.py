@@ -767,6 +767,174 @@ def admin_user_ledger(
     return {"ledger": TokenPool(eng).recent(user_id, limit=limit)}
 
 
+# --------------------------------------------------------------------------- #
+# 管理端 · 概览 / 用量 / 任务（p6.26）
+# --------------------------------------------------------------------------- #
+
+
+def _month_start_utc() -> str:
+    """本月起点（上海时区）转 UTC 字符串，与 token_ledger.usage_summary 同口径。"""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return start.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%d %H:%M:%S")
+
+
+@router.get("/admin/overview")
+def admin_overview(authorization: str | None = Header(default=None)):
+    """管理端概览：用户/余额/任务/本月消耗/累计充值。
+
+    口径说明：`tokens_month` 只计 kind=task 的 settle 行（真实任务消耗，不含充值）；
+    `recharge_total` 只计 kind=recharge 且有 amount 的行——p6.26 之前的充值行没有
+    金额字段，历史金额不臆造（如实只统计可统计部分）。
+    """
+    _require_admin(authorization)
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+
+    eng = get_engine()
+    month_start = _month_start_utc()
+    today_start = (
+        datetime.now(ZoneInfo("Asia/Shanghai"))
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .astimezone(ZoneInfo("UTC"))
+        .strftime("%Y-%m-%d %H:%M:%S")
+    )
+    with eng.connect() as conn:
+        users_total = int(conn.execute(_text("SELECT COUNT(*) FROM `user`")).scalar() or 0)
+        balance_total = int(
+            conn.execute(_text("SELECT COALESCE(SUM(balance), 0) FROM wallet")).scalar() or 0
+        )
+        tasks_total = int(conn.execute(_text("SELECT COUNT(*) FROM task")).scalar() or 0)
+        tasks_today = int(
+            conn.execute(
+                _text("SELECT COUNT(*) FROM task WHERE created_at >= :t"), {"t": today_start}
+            ).scalar()
+            or 0
+        )
+        tasks_paused = int(
+            conn.execute(
+                _text("SELECT COUNT(*) FROM task WHERE status LIKE 'paused%'")
+            ).scalar()
+            or 0
+        )
+        month_tokens, month_calls = conn.execute(
+            _text(
+                "SELECT COALESCE(SUM(settle), 0), COUNT(*) FROM token_ledger "
+                "WHERE kind = 'task' AND settle IS NOT NULL AND created_at >= :m"
+            ),
+            {"m": month_start},
+        ).first() or (0, 0)
+        recharge_total, recharge_count = conn.execute(
+            _text(
+                "SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM token_ledger "
+                "WHERE kind = 'recharge' AND amount IS NOT NULL"
+            )
+        ).first() or (0, 0)
+    return {
+        "users_total": users_total,
+        "balance_total": balance_total,
+        "tasks_total": tasks_total,
+        "tasks_today": tasks_today,
+        "tasks_paused": tasks_paused,
+        "month_tokens": int(month_tokens or 0),
+        "month_calls": int(month_calls or 0),
+        "recharge_total": int(recharge_total or 0),
+        "recharge_count": int(recharge_count or 0),
+    }
+
+
+@router.get("/admin/usage")
+def admin_usage(
+    days: int = Query(default=7, ge=1, le=30),
+    authorization: str | None = Header(default=None),
+):
+    """最近 N 天任务消耗（按 settle 汇总，按天分桶）。"""
+    _require_admin(authorization)
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days - 1)).strftime("%Y-%m-%d 00:00:00")
+    eng = get_engine()
+    with eng.connect() as conn:
+        rows = conn.execute(
+            _text(
+                "SELECT DATE(created_at) AS d, COALESCE(SUM(settle), 0) AS tokens, COUNT(*) AS calls "
+                "FROM token_ledger WHERE kind = 'task' AND settle IS NOT NULL AND created_at >= :s "
+                "GROUP BY DATE(created_at) ORDER BY d"
+            ),
+            {"s": since},
+        ).mappings().all()
+    return {
+        "days": days,
+        "series": [
+            {"date": str(r["d"]), "tokens": int(r["tokens"] or 0), "calls": int(r["calls"] or 0)}
+            for r in rows
+        ],
+    }
+
+
+@router.get("/admin/tasks")
+def admin_tasks(
+    status: str | None = Query(default=None, max_length=32),
+    limit: int = Query(default=20, ge=1, le=100),
+    authorization: str | None = Header(default=None),
+):
+    """最近任务（全局，含所属用户/暂停原因），用于管理端任务监控。"""
+    _require_admin(authorization)
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+
+    sql = (
+        "SELECT t.id, t.status, t.pause_reason, t.text, t.tokens_used, t.created_at, "
+        "s.user_id, u.username "
+        "FROM task t LEFT JOIN session s ON s.id = t.session_id "
+        "LEFT JOIN `user` u ON u.id = s.user_id"
+    )
+    params: dict[str, Any] = {"l": limit}
+    if status:
+        sql += " WHERE t.status = :st"
+        params["st"] = status
+    sql += " ORDER BY t.created_at DESC LIMIT :l"
+    eng = get_engine()
+    with eng.connect() as conn:
+        rows = conn.execute(_text(sql), params).mappings().all()
+    return {
+        "tasks": [
+            {
+                "id": r["id"],
+                "user_id": r["user_id"],
+                "username": r["username"],
+                "status": r["status"],
+                "pause_reason": r["pause_reason"],
+                "text": (r["text"] or "")[:80],
+                "tokens_used": int(r["tokens_used"] or 0),
+                "created_at": _iso_or_none(r["created_at"]),
+            }
+            for r in rows
+        ]
+    }
+
+
+def _iso_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        return value.isoformat() if hasattr(value, "isoformat") else str(value)
+    except Exception:  # noqa: BLE001 - 展示字段，序列化失败不阻断
+        return str(value)
+
+
 @router.get("/internal/auth/ping", dependencies=[Depends(require_internal)])
 def internal_auth_ping():
     """内部调用自检：只有带正确 X-Internal-Token 才能进（fail-closed）。"""

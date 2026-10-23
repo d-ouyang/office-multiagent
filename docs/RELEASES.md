@@ -5,6 +5,24 @@
 
 ---
 
+## v1.0.0-p6.26 — 管理端升级为独立页面（4 板块）（2026-10-23）
+
+**类型**：功能（体验补齐）
+**Tag 提交**：见 `git show v1.0.0-p6.26`
+
+### 交付内容
+- **独立路由** `/admin`（也认 `#/admin`），刷新直达；极简路由不引 react-router；非管理员访问静默回工作台。
+- **四个板块**：用户与额度（列表/搜索/充值/流水+金额）、用量概览（6 指标卡 + 近 7/14/30 天消耗条形图）、任务监控（全局任务+状态筛选+暂停原因）、系统状态（mysql/redis/chroma + 模型清单）。
+- **后端**：`GET /admin/overview`、`GET /admin/usage?days=`、`GET /admin/tasks?status=`；迁移 `0009_ledger_amount`（充值金额，存量 NULL 不计入，不臆造）；`TokenPool.credit` 落 amount。
+- **口径**：本月消耗只计 `kind=task` 的 settle；累计充值只计有 amount 的充值行。
+
+### 验证状态
+- ✅ pytest 262 / jest 40 / vitest 73；tsc 无错。
+- ✅ 真机：overview（2 用户 / 余额 5.5w / 本月 40.4w / 暂停 3）、usage 4 桶、tasks 30 条含暂停原因；充值 7000 → recharge_total=7000。
+- ✅ Playwright 截图四板块布局正常；`/admin` 直达标题「管理端」；点入口 URL 正确切换。
+
+---
+
 ## v1.0.0-p6.25 — 管理端最小版 + 多原因暂停续跑（2026-10-23）
 
 **类型**：功能（两个 P0 断点）

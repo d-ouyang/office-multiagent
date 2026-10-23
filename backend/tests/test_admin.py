@@ -17,7 +17,10 @@ def eng(monkeypatch):
     with engine.begin() as c:
         c.execute(text("CREATE TABLE `user` (id INTEGER PRIMARY KEY, employee_id TEXT, username TEXT, role TEXT, model_pool_id INTEGER, token_version INTEGER NOT NULL DEFAULT 0)"))
         c.execute(text("CREATE TABLE wallet (user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0)"))
-        c.execute(text("CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, kind TEXT DEFAULT 'task', note TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        c.execute(text("CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, kind TEXT DEFAULT 'task', note TEXT, amount INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        # p6.26：概览/任务监控要查 task 与 session
+        c.execute(text("CREATE TABLE session (id TEXT PRIMARY KEY, user_id INTEGER, model TEXT, title TEXT, pinned INTEGER DEFAULT 0, pinned_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        c.execute(text("CREATE TABLE task (id TEXT PRIMARY KEY, session_id TEXT, complexity INTEGER, status TEXT DEFAULT 'pending', text TEXT, result TEXT, tokens_used INTEGER, pause_reason TEXT, pause_payload TEXT, retry_of TEXT, request_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("INSERT INTO `user` (id, employee_id, username, role) VALUES (1, 'EMP001', 'dev', 'admin')"))
         c.execute(text("INSERT INTO `user` (id, employee_id, username, role) VALUES (2, 'EMP002', 'chen', 'user')"))
         c.execute(text("INSERT INTO wallet (user_id, balance) VALUES (1, 100000)"))
@@ -110,3 +113,66 @@ def test_admin_endpoints_require_login(eng):
     c = TestClient(app)
     assert c.get("/api/v1/admin/users").status_code == 401
     assert c.post("/api/v1/admin/users/2/recharge", json={"amount": 1}).status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+# p6.26：概览 / 用量 / 任务监控
+# --------------------------------------------------------------------------- #
+
+def test_overview_counts_and_zero_safe(eng):
+    c = TestClient(app)
+    data = c.get("/api/v1/admin/overview", headers=_auth()).json()
+    assert data["users_total"] == 2
+    assert data["balance_total"] == 100500  # 100000 + 500
+    assert data["tasks_total"] == 0 and data["month_tokens"] == 0
+
+    c.post("/api/v1/admin/users/2/recharge", json={"amount": 3000}, headers=_auth())
+    data2 = c.get("/api/v1/admin/overview", headers=_auth()).json()
+    assert data2["recharge_total"] == 3000  # 只统计有金额的充值
+    assert data2["recharge_count"] == 1
+    assert data2["balance_total"] == 103500
+
+
+def test_overview_month_tokens_only_task_settles(eng):
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle) VALUES (1, 't1', 'task', 2000, 1500)"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle) VALUES (1, 't2', 'task', 2000, NULL)"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, kind, amount) VALUES (1, 'recharge', 9999)"))
+    data = TestClient(app).get("/api/v1/admin/overview", headers=_auth()).json()
+    assert data["month_tokens"] == 1500  # 只计 settle 行；预扣行/充值行不算
+    assert data["month_calls"] == 1
+
+
+def test_usage_series_by_day(eng):
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle, created_at) VALUES (1, 'a', 'task', 2000, 100, '2026-10-21 10:00:00')"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle, created_at) VALUES (1, 'b', 'task', 2000, 200, '2026-10-21 11:00:00')"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle, created_at) VALUES (2, 'c', 'task', 2000, 300, '2026-10-22 12:00:00')"))
+    data = TestClient(app).get("/api/v1/admin/usage?days=30", headers=_auth()).json()
+    series = {row["date"]: row for row in data["series"]}
+    assert series["2026-10-21"]["tokens"] == 300 and series["2026-10-21"]["calls"] == 2
+    assert series["2026-10-22"]["tokens"] == 300
+
+
+def test_admin_tasks_global_with_username_and_filter(eng):
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO session (id, user_id) VALUES ('s1', 1)"))
+        conn.execute(text("INSERT INTO session (id, user_id) VALUES ('s2', 2)"))
+        conn.execute(
+            text("INSERT INTO task (id, session_id, status, text, tokens_used, pause_reason) VALUES ('t-a', 's1', 'done', '查年假', 120, NULL)")
+        )
+        conn.execute(
+            text("INSERT INTO task (id, session_id, status, text, tokens_used, pause_reason) VALUES ('t-b', 's2', 'paused_user', '清洗表格', 0, 'user')")
+        )
+    c = TestClient(app)
+    rows = c.get("/api/v1/admin/tasks", headers=_auth()).json()["tasks"]
+    assert {r["id"] for r in rows} == {"t-a", "t-b"}
+    by_id = {r["id"]: r for r in rows}
+    assert by_id["t-a"]["username"] == "dev"
+    assert by_id["t-b"]["username"] == "chen" and by_id["t-b"]["pause_reason"] == "user"
+    paused = c.get("/api/v1/admin/tasks?status=paused_user", headers=_auth()).json()["tasks"]
+    assert [r["id"] for r in paused] == ["t-b"]
+
+
+def test_admin_tasks_requires_admin(eng):
+    assert TestClient(app).get("/api/v1/admin/tasks", headers=_auth("EMP002")).status_code == 403

@@ -135,6 +135,8 @@ export interface LedgerEntry {
   /** p7.1：task=任务账 / recharge=充值 */
   kind?: string | null;
   note?: string | null;
+  /** p6.26：充值金额（任务账为 null） */
+  amount?: number | null;
   created_at?: string;
 }
 
@@ -270,4 +272,72 @@ export async function adminUserLedger(userId: number, limit = 20): Promise<Ledge
   if (!res.ok) return [];
   const data = await res.json();
   return data.ledger ?? [];
+}
+
+// --------------------------------------------------------------------------- //
+// p6.26：管理端概览 / 用量 / 任务监控 / 系统状态
+// --------------------------------------------------------------------------- //
+
+export interface AdminOverview {
+  users_total: number;
+  balance_total: number;
+  tasks_total: number;
+  tasks_today: number;
+  tasks_paused: number;
+  month_tokens: number;
+  month_calls: number;
+  recharge_total: number;
+  recharge_count: number;
+}
+
+export interface UsagePoint {
+  date: string;
+  tokens: number;
+  calls: number;
+}
+
+export interface AdminTaskRow {
+  id: string;
+  user_id: number | null;
+  username: string | null;
+  status: string;
+  pause_reason: string | null;
+  text: string;
+  tokens_used: number;
+  created_at: string | null;
+}
+
+async function adminGet<T>(path: string): Promise<T> {
+  const res = await fetch(path, { headers: authHeaders() });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  if (res.status === 403) throw new Error('FORBIDDEN');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as T;
+}
+
+export function adminOverview(): Promise<AdminOverview> {
+  return adminGet<AdminOverview>('/api/v1/admin/overview');
+}
+
+export function adminUsage(days = 7): Promise<{ days: number; series: UsagePoint[] }> {
+  return adminGet(`/api/v1/admin/usage?days=${days}`);
+}
+
+export async function adminTasks(status?: string, limit = 30): Promise<AdminTaskRow[]> {
+  const qs = new URLSearchParams({ limit: String(limit) });
+  if (status) qs.set('status', status);
+  const data = await adminGet<{ tasks: AdminTaskRow[] }>(`/api/v1/admin/tasks?${qs.toString()}`);
+  return data.tasks ?? [];
+}
+
+/** 系统状态（公开接口，不需要 token 也能看；这里带上 token 无害） */
+export async function getHealth(): Promise<{
+  status: string;
+  services?: Record<string, { ok: boolean; detail?: string | null }>;
+}> {
+  const res = await fetch('/api/v1/health');
+  return res.json();
 }

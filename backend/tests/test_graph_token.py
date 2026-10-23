@@ -17,7 +17,7 @@ def _pool(balance: int) -> tuple[TokenPool, object]:
             text(
                 "CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, "
                 "user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, "
-                "kind TEXT DEFAULT 'task', note TEXT, "
+                "kind TEXT DEFAULT 'task', note TEXT, amount INTEGER, "
                 "created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
             )
         )
