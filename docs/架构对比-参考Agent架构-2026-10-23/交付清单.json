@@ -1,0 +1,60 @@
+{
+  "schema_version": 2,
+  "views": [
+    {
+      "view_id": "technical",
+      "kind": "technical",
+      "source": "01-办公多Agent系统-技术架构.json",
+      "diagram": "01-办公多Agent系统-技术架构.svg",
+      "extra_files": [
+        "01-办公多Agent系统-技术架构.png",
+        "办公多Agent系统-架构对比与实施建议.html"
+      ],
+      "reading_section": "三、项目现状速览（分层事实）",
+      "review": {
+        "content": {
+          "status": "passed",
+          "evidence": "已对照实读代码逐项核对：gateway/src/proxy/route-table.ts（routes.yaml 多上游+限流+身份剥离/注入）、backend/app/orchestration/graph.py（quota→planner→router→ReAct/DAG 主流程）、react.py（ReAct 循环与收尾规则）、agents.py（9 工具注册与 AgentSpec 装配）、config/models.yaml（12 对话+4 逻辑模型，已用行号复核计数）、config/agents.yaml（7+1 Agent）、docker-compose.yml（六容器与端口/网络边界）；图中每个组件均有代码或配置依据，参考架构六大组件的对应关系逐层标注在分区标签上。"
+        },
+        "visual": {
+          "status": "passed",
+          "evidence": "已查看 Chrome 渲染 PNG（1800×3020）：8 个分层全部渲染，卡片标题与描述文字无截断、无相互重叠，左侧分层标签、标题/副标题/基线/图例完整可读；模型数量笔误（13→12）已修正后重渲染复核。"
+        }
+      }
+    },
+    {
+      "view_id": "gap",
+      "kind": "technical",
+      "source": "02-参考架构差距对比.json",
+      "diagram": "02-参考架构差距对比.svg",
+      "extra_files": [
+        "02-参考架构差距对比.png",
+        "办公多Agent系统-架构对比与实施建议.html"
+      ],
+      "reading_section": "四、20 步闭环逐项对比",
+      "review": {
+        "content": {
+          "status": "passed",
+          "evidence": "已对照参考教程图的六大组件与约 20 步编号逐项映射至项目实现：17 步完全对齐、3 步部分对齐（④ 记忆检索仅会话级、⑩ 工具发现为静态注册表、⑭ 无独立结果校验器）、MCP 协议层整体缺失；每卡标注对应迭代 tag（p3.1/p4.1/p5.1a/p6.7 等）可回溯 docs/iterations/；结论区计数与正文第四节对比表一致。"
+        },
+        "visual": {
+          "status": "passed",
+          "evidence": "已查看 Chrome 渲染 PNG（1800×2626）：7 个分区（六组件+结论）全部渲染，每卡首行步骤编号与状态前缀 ✅/⚠️/❌ 清晰可辨，描述文字无溢出重叠，结论区四张卡片计数（17/3/1 层/超出项）与图源 JSON 一致。"
+        }
+      }
+    }
+  ],
+  "implementation": {
+    "document": "办公多Agent系统-架构对比与实施建议.md",
+    "level": "draft",
+    "blocking_items": [
+      "长期记忆采用显式记忆策略（用户可查看/删除）需用户确认后才进入 P1 实施",
+      "MCP 是否引入取决于是否出现外部工具消费方，当前无触发条件，维持暂缓",
+      "结果校验器的误伤率需在实施时用现有回归集（pytest 146+）验证零误伤"
+    ],
+    "contract_review": {
+      "status": "passed",
+      "evidence": "实施说明已覆盖分项裁决（每项含现状/裁决/理由/触发条件）、P1-P3 优先级与验收标准、遗留未决项显式列出；现状描述（as-built 事实）与建议草案（draft）分离，未将建议表述为已实现；与两张图的组件 ID 和步骤编号可互相索引。"
+    }
+  }
+}

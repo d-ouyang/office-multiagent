@@ -1,0 +1,328 @@
+{
+  "title": "智能办公助手 · 多 Agent 系统｜现有技术架构（与参考教程图同构）",
+  "subtitle": "现状描述 · 基线 tag v1.0.0-p6.24c（2026-10-23）｜分层与参考图六大组件对应：用户 → 接入/网关 → Agent 运行时 → LLM → Agent Skills → 工具/外部 → 数据｜主流程：登录 → /tasks NDJSON 流 → quota 门 → planner → router → ReAct 或 DAG → 工具 → 终答流 → 落库结算",
+  "baseline": "架构图生产 SOP · office-multiagent 现状梳理 v1.0 · 2026-10-23 · 事实来源：backend/app、gateway/src、frontend/src、docker-compose.yml 实读",
+  "legend": "蓝：应用与编排职责（对应参考图 用户/Agent运行时/LLM/Agent Skills）　teal：工具与数据归属（对应参考图 工具·外部系统）　灰：运行约束；每卡首行列出实现要点，括号内为迭代 tag",
+  "layers": [
+    {
+      "label": "用户层\n（参考：用户）",
+      "kind": "blue",
+      "columns": 2,
+      "items": [
+        {
+          "id": "fe-login",
+          "title": "登录页 LoginPage",
+          "description": [
+            "账号密码 → 网关签发 JWT（sub=employee_id）",
+            "token 本地存储；401 自动回登录页（p6.1）"
+          ]
+        },
+        {
+          "id": "fe-workspace",
+          "title": "工作台 WorkspacePage",
+          "description": [
+            "聊天输入 + 📎 附件 chip（p6.12）；消息编辑回填/复制",
+            "打字机 + Markdown + Agent 徽章（p6.2a/p6.10）",
+            "思考流 / 工具调用折叠 / 过程透明（p6.7）",
+            "模型下拉切换 + 上下文用量环（p6.5/p6.24）",
+            "会话列表（新建/置顶/删除）+ 钱包流水（p6.12）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "接入与安全层\n网关 NestJS :3001",
+      "kind": "blue",
+      "columns": 4,
+      "items": [
+        {
+          "id": "gw-auth",
+          "title": "认证单点",
+          "description": [
+            "POST /auth/login 校验 office user 表（bcrypt）",
+            "JWT 签发 + /auth/me；后端 PyJWT 二次验签（p6.1/p6.2c）"
+          ]
+        },
+        {
+          "id": "gw-route",
+          "title": "配置驱动路由",
+          "description": [
+            "routes.yaml 多上游：office 兜底 + rag 前缀",
+            "public 白名单 + 每 IP 限流 600/分钟（p5.0）"
+          ]
+        },
+        {
+          "id": "gw-stream",
+          "title": "NDJSON 流式透传",
+          "description": [
+            "流式代理不缓冲；超时 180s；CORS 白名单",
+            "/tasks 事件逐行转发到前端（p2.2/p6.3）"
+          ]
+        },
+        {
+          "id": "gw-trust",
+          "title": "信任边界",
+          "description": [
+            "剥离客户端入站身份头（防伪造）",
+            "注入可信身份 + X-Internal-Auth 网关证明（p5.0）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "Agent 运行时\nFastAPI + LangGraph :8000",
+      "kind": "blue",
+      "columns": 4,
+      "items": [
+        {
+          "id": "rt-quota",
+          "title": "quota 门（token 池）",
+          "description": [
+            "两段式 reserve/settle 真账；钱包下限保护（p6.4/p6.11）",
+            "余额不足 interrupt 暂停，充值 Command 续跑（p4.2）"
+          ]
+        },
+        {
+          "id": "rt-planner",
+          "title": "planner 规划",
+          "description": [
+            "意图识别 + 复杂度打分（planner.yaml 确定性规则）",
+            "signals 打分明细可解释、可对账（p3.1）"
+          ]
+        },
+        {
+          "id": "rt-router",
+          "title": "router 路由",
+          "description": [
+            "复杂度 ≥ 3.0 → multi；否则 single（p3.1）",
+            "主意图 → 业务 Agent 类型映射"
+          ]
+        },
+        {
+          "id": "rt-decomposer",
+          "title": "decomposer 拆解",
+          "description": [
+            "多意图 → 子任务 DAG + 依赖边（先清洗后分析等）",
+            "Kahn 拓扑排序，有环 fail-fast（p3.2）"
+          ]
+        },
+        {
+          "id": "rt-react",
+          "title": "single · ReAct 循环",
+          "description": [
+            "Thought → Action → Observation 至终答，max 10 步",
+            "无效工具名纠错 + 重复调用拦截 + 观察摘要化（p6.7）"
+          ]
+        },
+        {
+          "id": "rt-orchestrator",
+          "title": "multi · Orchestrator 调度",
+          "description": [
+            "DAG 拓扑分层执行，层内串行基线（并行留后续）",
+            "子任务按 AgentSpec 装配脑与工具后跑 ReAct（p4.1/p5.1b）"
+          ]
+        },
+        {
+          "id": "rt-memory",
+          "title": "会话记忆",
+          "description": [
+            "近期 4 轮原文 + 更早轮摘要 + 指代消解提示",
+            "context_parts 分栏驱动上下文用量环（memory.py）"
+          ]
+        },
+        {
+          "id": "rt-events",
+          "title": "事件与落库",
+          "description": [
+            "NDJSON 事件协议全类型；message.trace 全量落库（p6.7）",
+            "worker 线程 + 队列驱动流，事件循环不阻塞（p6.3）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "LLM 决策脑\nmodels.yaml",
+      "kind": "blue",
+      "columns": 3,
+      "items": [
+        {
+          "id": "llm-brain",
+          "title": "LlmBrain",
+          "description": [
+            "任务 + ReAct 历史 + 工具清单 → 提示词",
+            "JSON 决策协议；混合流式：{ 开头等完整 / 自然语言边收边推",
+            "usage 累计供 token 结算（p5.1a/p6.3）"
+          ]
+        },
+        {
+          "id": "llm-registry",
+          "title": "模型注册表（12+4）",
+          "description": [
+            "12 个对话模型：DeepSeek 官方 + 硅基流动双渠道",
+            "4 个逻辑小模型：embedding / reranker / OCR / decision",
+            "上下文窗口感知；reasoning_effort 按模型档位折叠（p6.8）"
+          ]
+        },
+        {
+          "id": "llm-stub",
+          "title": "StubBrain 回落基线",
+          "description": [
+            "无 key / 模型不可用 → 确定性基线",
+            "测试环境永走它，零成本可测（p4.1/p5.1a）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "Agent Skills\nagents.yaml",
+      "kind": "blue",
+      "columns": 3,
+      "items": [
+        {
+          "id": "sk-specs",
+          "title": "7+1 个 AgentSpec",
+          "description": [
+            "general 兜底 + rag_retrieval / data_analysis / data_cleaning",
+            "report_generation / visualization / image_restore（p5.1b）"
+          ]
+        },
+        {
+          "id": "sk-assembly",
+          "title": "Skill = 提示词 + 工具白名单",
+          "description": [
+            "角色提示词写行为边界；按白名单裁剪可见工具",
+            "白名单未注册工具记 warning（能力缺失可见）"
+          ]
+        },
+        {
+          "id": "sk-discipline",
+          "title": "协议统一与兜底",
+          "description": [
+            "ReAct JSON 协议由 brain 统一保证，不写进角色提示词（防漂移）",
+            "未注册 agent_type 回落 general；查不到就如实告知，绝不编造"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "工具与外部系统\n（参考：工具/外部系统）",
+      "kind": "teal",
+      "columns": 4,
+      "items": [
+        {
+          "id": "tl-orders",
+          "title": "业务数据工具",
+          "description": [
+            "query_orders：锅圈订单具名查询（条件/分组/指标）",
+            "sales_report：销售报表口径工具（p6.20/p6.21）",
+            "db_query：只读兜底 SELECT（3s 超时、禁写）"
+          ]
+        },
+        {
+          "id": "tl-rag",
+          "title": "知识库工具",
+          "description": [
+            "rag_retrieve → 经共享网关打 RAG 系统",
+            "X-Internal-Token 信任边界；答案 + 来源清单（p5.0/p5.1a）"
+          ]
+        },
+        {
+          "id": "tl-doc",
+          "title": "文档工具",
+          "description": [
+            "read_document：md/txt/json/csv/docx/xlsx/pdf/图片",
+            "扫描件与图片走 OCR（deepseek-ocr，p6.24）",
+            "路径护栏：basename 拍平 + 用户目录隔离（p6.6）"
+          ]
+        },
+        {
+          "id": "tl-table",
+          "title": "表格与产出工具",
+          "description": [
+            "clean_table → analyze_table → render_chart（数字只来自表）",
+            "write_document：md/docx，文末带来源和行数（p6.15~p6.17）",
+            "统一兜底：重试 ≤2、CAPABILITY_MISSING 如实降级（tools.py）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "数据归属\n（真相源）",
+      "kind": "teal",
+      "columns": 4,
+      "items": [
+        {
+          "id": "dt-mysql",
+          "title": "MySQL（office）",
+          "description": [
+            "user / sessions / messages(+trace) / tasks / token 账本",
+            "账本 = reserve/settle 两行配对；alembic 迁移 + 漂移护栏"
+          ]
+        },
+        {
+          "id": "dt-redis",
+          "title": "Redis",
+          "description": [
+            "缓存（db 独立，与 RAG 隔离）",
+            "compose 内网访问，不发布宿主端口"
+          ]
+        },
+        {
+          "id": "dt-chroma",
+          "title": "Chroma",
+          "description": [
+            "向量库；REQUIRE_CHROMA=false 可降级",
+            "与 RAG 同机共享（server 127.0.0.1:8001）"
+          ]
+        },
+        {
+          "id": "dt-docs",
+          "title": "文档目录",
+          "description": [
+            "data/upload/<username>/ 按用户隔离",
+            "上传白名单 + 10MB 上限 + is_relative_to 防穿越（p6.6）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "运行约束",
+      "kind": "gray",
+      "columns": 4,
+      "items": [
+        {
+          "id": "rc-compose",
+          "title": "Docker 六容器",
+          "description": [
+            "frontend / gateway / backend / mysql / redis / chroma",
+            "同 office-net；中间件不发布宿主端口（避 RAG 冲突）"
+          ]
+        },
+        {
+          "id": "rc-network",
+          "title": "网络边界",
+          "description": [
+            "backend / mysql / redis / chroma 仅内网可达",
+            "网关是唯一入口；后端 8000 不对外（设计 §13.3）"
+          ]
+        },
+        {
+          "id": "rc-config",
+          "title": "配置驱动 + 热更",
+          "description": [
+            "planner / agents / models / routes 四个 yaml",
+            "挂载只读；改后 recreate 生效（lru_cache 需 restart backend）"
+          ]
+        },
+        {
+          "id": "rc-shared",
+          "title": "共享中间件",
+          "description": [
+            "与 rag-qa-system 同机（4C4G，中间件共享省内存）",
+            "RAG 经 host.docker.internal 访问；部署 Phase 7 待启动"
+          ]
+        }
+      ]
+    }
+  ]
+}

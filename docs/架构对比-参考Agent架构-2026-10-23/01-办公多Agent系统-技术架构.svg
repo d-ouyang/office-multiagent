@@ -1,0 +1,257 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="3020" viewBox="0 0 1800 3020" role="img" aria-labelledby="title desc"><title id="title">智能办公助手 · 多 Agent 系统｜现有技术架构（与参考教程图同构）</title><desc id="desc">现状描述 · 基线 tag v1.0.0-p6.24c（2026-10-23）｜分层与参考图六大组件对应：用户 → 接入/网关 → Agent 运行时 → LLM → Agent Skills → 工具/外部 → 数据｜主流程：登录 → /tasks NDJSON 流 → quota 门 → planner → router → ReAct 或 DAG → 工具 → 终答流 → 落库结算</desc><rect width="100%" height="100%" fill="white"/><g font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Arial, sans-serif">
+<text x="48" y="62" font-size="34" text-anchor="start" fill="#172B45" font-weight="600">智能办公助手 · 多 Agent 系统｜现有技术架构（与参考教程图同构）</text>
+<text x="48" y="106" font-size="21" text-anchor="start" fill="#536680" font-weight="400">现状描述 · 基线 tag v1.0.0-p6.24c（2026-10-23）｜分层与参考图六大组件对应：用户 → 接入/网关 → Agent 运行时 → LLM → Agent Skills → 工具/外部 → 数据</text>
+<text x="48" y="136" font-size="21" text-anchor="start" fill="#536680" font-weight="400">｜主流程：登录 → /tasks NDJSON 流 → quota 门 → planner → router → ReAct 或 DAG → 工具 → 终答流 → 落库结算</text>
+<rect x="48" y="192" width="1704" height="264" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="297.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">用户层</text>
+<text x="143.0" y="333.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">（参考：用</text>
+<text x="143.0" y="369.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">户）</text>
+<rect x="238.0" y="210" width="736.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="606.0" y="248" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">登录页 LoginPage</text>
+<text x="606.0" y="285" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">账号密码 → 网关签发 JWT（sub=employee_id）</text>
+<text x="606.0" y="315" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">token 本地存储；401 自动回登录页（p6.1）</text>
+<rect x="996.0" y="210" width="736.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1364.0" y="248" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">工作台 WorkspacePage</text>
+<text x="1364.0" y="285" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">聊天输入 + 📎 附件 chip（p6.12）；消息编辑回填/复制</text>
+<text x="1364.0" y="315" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">打字机 + Markdown + Agent 徽章（p6.2a/p6.10）</text>
+<text x="1364.0" y="345" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">思考流 / 工具调用折叠 / 过程透明（p6.7）</text>
+<text x="1364.0" y="375" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">模型下拉切换 + 上下文用量环（p6.5/p6.24）</text>
+<text x="1364.0" y="405" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">会话列表（新建/置顶/删除）+ 钱包流水（p6.12）</text>
+<rect x="48" y="480" width="1704" height="264" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="567.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">接入与安全</text>
+<text x="143.0" y="603.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">层</text>
+<text x="143.0" y="639.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">网关 NestJ</text>
+<text x="143.0" y="675.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">S :3001</text>
+<rect x="238.0" y="498" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="416.5" y="536" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">认证单点</text>
+<text x="416.5" y="573" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">POST /auth/login 校验 of</text>
+<text x="416.5" y="603" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">fice user 表（bcrypt）</text>
+<text x="416.5" y="633" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">JWT 签发 + /auth/me；后端</text>
+<text x="416.5" y="663" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400"> PyJWT 二次验签（p6.1/p6.</text>
+<text x="416.5" y="693" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">2c）</text>
+<rect x="617.0" y="498" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="795.5" y="536" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">配置驱动路由</text>
+<text x="795.5" y="573" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">routes.yaml 多上游：offic</text>
+<text x="795.5" y="603" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">e 兜底 + rag 前缀</text>
+<text x="795.5" y="633" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">public 白名单 + 每 IP 限流</text>
+<text x="795.5" y="663" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400"> 600/分钟（p5.0）</text>
+<rect x="996.0" y="498" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1174.5" y="536" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">NDJSON 流式透传</text>
+<text x="1174.5" y="573" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">流式代理不缓冲；超时 180s；</text>
+<text x="1174.5" y="603" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">CORS 白名单</text>
+<text x="1174.5" y="633" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">/tasks 事件逐行转发到前端（</text>
+<text x="1174.5" y="663" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">p2.2/p6.3）</text>
+<rect x="1375.0" y="498" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1553.5" y="536" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">信任边界</text>
+<text x="1553.5" y="573" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">剥离客户端入站身份头（防伪造</text>
+<text x="1553.5" y="603" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">）</text>
+<text x="1553.5" y="633" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">注入可信身份 + X-Internal-</text>
+<text x="1553.5" y="663" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">Auth 网关证明（p5.0）</text>
+<rect x="48" y="768" width="1704" height="546" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="978.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">Agent 运行</text>
+<text x="143.0" y="1014.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">时</text>
+<text x="143.0" y="1050.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">FastAPI +</text>
+<text x="143.0" y="1086.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600"> LangGrap</text>
+<text x="143.0" y="1122.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">h :8000</text>
+<rect x="238.0" y="786" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="416.5" y="824" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">quota 门（token 池）</text>
+<text x="416.5" y="861" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">两段式 reserve/settle 真</text>
+<text x="416.5" y="891" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">账；钱包下限保护（p6.4/p6.1</text>
+<text x="416.5" y="921" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">1）</text>
+<text x="416.5" y="951" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">余额不足 interrupt 暂停，</text>
+<text x="416.5" y="981" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">充值 Command 续跑（p4.2）</text>
+<rect x="617.0" y="786" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="795.5" y="824" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">planner 规划</text>
+<text x="795.5" y="861" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">意图识别 + 复杂度打分（plan</text>
+<text x="795.5" y="891" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">ner.yaml 确定性规则）</text>
+<text x="795.5" y="921" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">signals 打分明细可解释、可</text>
+<text x="795.5" y="951" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">对账（p3.1）</text>
+<rect x="996.0" y="786" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1174.5" y="824" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">router 路由</text>
+<text x="1174.5" y="861" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">复杂度 ≥ 3.0 → multi；否则</text>
+<text x="1174.5" y="891" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400"> single（p3.1）</text>
+<text x="1174.5" y="921" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">主意图 → 业务 Agent 类型映</text>
+<text x="1174.5" y="951" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">射</text>
+<rect x="1375.0" y="786" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1553.5" y="824" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">decomposer 拆解</text>
+<text x="1553.5" y="861" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">多意图 → 子任务 DAG + 依赖</text>
+<text x="1553.5" y="891" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">边（先清洗后分析等）</text>
+<text x="1553.5" y="921" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">Kahn 拓扑排序，有环 fail-f</text>
+<text x="1553.5" y="951" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">ast（p3.2）</text>
+<rect x="238.0" y="1036" width="357.0" height="260" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="416.5" y="1074" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">single · ReAct 循环</text>
+<text x="416.5" y="1111" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">Thought → Action → Obser</text>
+<text x="416.5" y="1141" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">vation 至终答，max 10 步</text>
+<text x="416.5" y="1171" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">无效工具名纠错 + 重复调用拦</text>
+<text x="416.5" y="1201" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">截 + 观察摘要化（p6.7）</text>
+<rect x="617.0" y="1036" width="357.0" height="260" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="795.5" y="1074" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">multi · Orchestrator</text>
+<text x="795.5" y="1106" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600"> 调度</text>
+<text x="795.5" y="1143" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">DAG 拓扑分层执行，层内串行基</text>
+<text x="795.5" y="1173" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">线（并行留后续）</text>
+<text x="795.5" y="1203" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">子任务按 AgentSpec 装配脑</text>
+<text x="795.5" y="1233" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">与工具后跑 ReAct（p4.1/p5.</text>
+<text x="795.5" y="1263" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">1b）</text>
+<rect x="996.0" y="1036" width="357.0" height="260" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1174.5" y="1074" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">会话记忆</text>
+<text x="1174.5" y="1111" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">近期 4 轮原文 + 更早轮摘要 </text>
+<text x="1174.5" y="1141" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">+ 指代消解提示</text>
+<text x="1174.5" y="1171" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">context_parts 分栏驱动上下</text>
+<text x="1174.5" y="1201" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">文用量环（memory.py）</text>
+<rect x="1375.0" y="1036" width="357.0" height="260" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1553.5" y="1074" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">事件与落库</text>
+<text x="1553.5" y="1111" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">NDJSON 事件协议全类型；mes</text>
+<text x="1553.5" y="1141" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">sage.trace 全量落库（p6.7</text>
+<text x="1553.5" y="1171" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">）</text>
+<text x="1553.5" y="1201" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">worker 线程 + 队列驱动流，</text>
+<text x="1553.5" y="1231" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">事件循环不阻塞（p6.3）</text>
+<rect x="48" y="1338" width="1704" height="294" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="1458.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">LLM 决策脑</text>
+<text x="143.0" y="1494.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">models.ya</text>
+<text x="143.0" y="1530.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">ml</text>
+<rect x="238.0" y="1356" width="483.3333333333333" height="258" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="479.66666666666663" y="1394" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">LlmBrain</text>
+<text x="479.66666666666663" y="1431" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">任务 + ReAct 历史 + 工具清单 → 提示词</text>
+<text x="479.66666666666663" y="1461" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">JSON 决策协议；混合流式：{ 开头等完整 </text>
+<text x="479.66666666666663" y="1491" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">/ 自然语言边收边推</text>
+<text x="479.66666666666663" y="1521" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">usage 累计供 token 结算（p5.1a/p6.3</text>
+<text x="479.66666666666663" y="1551" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">）</text>
+<rect x="743.3333333333333" y="1356" width="483.3333333333333" height="258" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="984.9999999999999" y="1394" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">模型注册表（12+4）</text>
+<text x="984.9999999999999" y="1431" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">12 个对话模型：DeepSeek 官方 + 硅基流</text>
+<text x="984.9999999999999" y="1461" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">动双渠道</text>
+<text x="984.9999999999999" y="1491" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">4 个逻辑小模型：embedding / reranke</text>
+<text x="984.9999999999999" y="1521" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">r / OCR / decision</text>
+<text x="984.9999999999999" y="1551" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">上下文窗口感知；reasoning_effort 按</text>
+<text x="984.9999999999999" y="1581" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">模型档位折叠（p6.8）</text>
+<rect x="1248.6666666666665" y="1356" width="483.3333333333333" height="258" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1490.3333333333333" y="1394" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">StubBrain 回落基线</text>
+<text x="1490.3333333333333" y="1431" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">无 key / 模型不可用 → 确定性基线</text>
+<text x="1490.3333333333333" y="1461" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">测试环境永走它，零成本可测（p4.1/p5.1a</text>
+<text x="1490.3333333333333" y="1491" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">）</text>
+<rect x="48" y="1656" width="1704" height="234" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="1728.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">Agent Ski</text>
+<text x="143.0" y="1764.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">lls</text>
+<text x="143.0" y="1800.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">agents.ya</text>
+<text x="143.0" y="1836.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">ml</text>
+<rect x="238.0" y="1674" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="479.66666666666663" y="1712" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">7+1 个 AgentSpec</text>
+<text x="479.66666666666663" y="1749" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">general 兜底 + rag_retrieval / dat</text>
+<text x="479.66666666666663" y="1779" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">a_analysis / data_cleaning</text>
+<text x="479.66666666666663" y="1809" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">report_generation / visualization</text>
+<text x="479.66666666666663" y="1839" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400"> / image_restore（p5.1b）</text>
+<rect x="743.3333333333333" y="1674" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="984.9999999999999" y="1712" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">Skill = 提示词 + 工具白名单</text>
+<text x="984.9999999999999" y="1749" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">角色提示词写行为边界；按白名单裁剪可见工</text>
+<text x="984.9999999999999" y="1779" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">具</text>
+<text x="984.9999999999999" y="1809" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">白名单未注册工具记 warning（能力缺失可</text>
+<text x="984.9999999999999" y="1839" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">见）</text>
+<rect x="1248.6666666666665" y="1674" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1490.3333333333333" y="1712" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">协议统一与兜底</text>
+<text x="1490.3333333333333" y="1749" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">ReAct JSON 协议由 brain 统一保证，不</text>
+<text x="1490.3333333333333" y="1779" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">写进角色提示词（防漂移）</text>
+<text x="1490.3333333333333" y="1809" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">未注册 agent_type 回落 general；查不</text>
+<text x="1490.3333333333333" y="1839" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">到就如实告知，绝不编造</text>
+<rect x="48" y="1914" width="1704" height="384" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="2043.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">工具与外部</text>
+<text x="143.0" y="2079.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">系统</text>
+<text x="143.0" y="2115.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">（参考：工</text>
+<text x="143.0" y="2151.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">具/外部系统</text>
+<text x="143.0" y="2187.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">）</text>
+<rect x="238.0" y="1932" width="357.0" height="348" rx="10" fill="#E7F5F0" stroke="#A4B5CB"/>
+<text x="416.5" y="1970" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">业务数据工具</text>
+<text x="416.5" y="2007" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">query_orders：锅圈订单具名</text>
+<text x="416.5" y="2037" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">查询（条件/分组/指标）</text>
+<text x="416.5" y="2067" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">sales_report：销售报表口径</text>
+<text x="416.5" y="2097" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">工具（p6.20/p6.21）</text>
+<text x="416.5" y="2127" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">db_query：只读兜底 SELECT</text>
+<text x="416.5" y="2157" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">（3s 超时、禁写）</text>
+<rect x="617.0" y="1932" width="357.0" height="348" rx="10" fill="#E7F5F0" stroke="#A4B5CB"/>
+<text x="795.5" y="1970" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">知识库工具</text>
+<text x="795.5" y="2007" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">rag_retrieve → 经共享网关</text>
+<text x="795.5" y="2037" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">打 RAG 系统</text>
+<text x="795.5" y="2067" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">X-Internal-Token 信任边界</text>
+<text x="795.5" y="2097" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">；答案 + 来源清单（p5.0/p5</text>
+<text x="795.5" y="2127" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">.1a）</text>
+<rect x="996.0" y="1932" width="357.0" height="348" rx="10" fill="#E7F5F0" stroke="#A4B5CB"/>
+<text x="1174.5" y="1970" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">文档工具</text>
+<text x="1174.5" y="2007" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">read_document：md/txt/js</text>
+<text x="1174.5" y="2037" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">on/csv/docx/xlsx/pdf/图</text>
+<text x="1174.5" y="2067" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">片</text>
+<text x="1174.5" y="2097" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">扫描件与图片走 OCR（deepse</text>
+<text x="1174.5" y="2127" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">ek-ocr，p6.24）</text>
+<text x="1174.5" y="2157" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">路径护栏：basename 拍平 + </text>
+<text x="1174.5" y="2187" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">用户目录隔离（p6.6）</text>
+<rect x="1375.0" y="1932" width="357.0" height="348" rx="10" fill="#E7F5F0" stroke="#A4B5CB"/>
+<text x="1553.5" y="1970" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">表格与产出工具</text>
+<text x="1553.5" y="2007" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">clean_table → analyze_ta</text>
+<text x="1553.5" y="2037" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">ble → render_chart（数字</text>
+<text x="1553.5" y="2067" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">只来自表）</text>
+<text x="1553.5" y="2097" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">write_document：md/docx</text>
+<text x="1553.5" y="2127" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">，文末带来源和行数（p6.15~p</text>
+<text x="1553.5" y="2157" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">6.17）</text>
+<text x="1553.5" y="2187" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">统一兜底：重试 ≤2、CAPABIL</text>
+<text x="1553.5" y="2217" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">ITY_MISSING 如实降级（too</text>
+<text x="1553.5" y="2247" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">ls.py）</text>
+<rect x="48" y="2322" width="1704" height="294" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="2460.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">数据归属</text>
+<text x="143.0" y="2496.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">（真相源）</text>
+<rect x="238.0" y="2340" width="357.0" height="258" rx="10" fill="#E7F5F0" stroke="#A4B5CB"/>
+<text x="416.5" y="2378" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">MySQL（office）</text>
+<text x="416.5" y="2415" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">user / sessions / messag</text>
+<text x="416.5" y="2445" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">es(+trace) / tasks / tok</text>
+<text x="416.5" y="2475" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">en 账本</text>
+<text x="416.5" y="2505" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">账本 = reserve/settle 两</text>
+<text x="416.5" y="2535" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">行配对；alembic 迁移 + 漂</text>
+<text x="416.5" y="2565" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">移护栏</text>
+<rect x="617.0" y="2340" width="357.0" height="258" rx="10" fill="#E7F5F0" stroke="#A4B5CB"/>
+<text x="795.5" y="2378" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">Redis</text>
+<text x="795.5" y="2415" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">缓存（db 独立，与 RAG 隔离</text>
+<text x="795.5" y="2445" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">）</text>
+<text x="795.5" y="2475" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">compose 内网访问，不发布宿</text>
+<text x="795.5" y="2505" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">主端口</text>
+<rect x="996.0" y="2340" width="357.0" height="258" rx="10" fill="#E7F5F0" stroke="#A4B5CB"/>
+<text x="1174.5" y="2378" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">Chroma</text>
+<text x="1174.5" y="2415" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">向量库；REQUIRE_CHROMA=fa</text>
+<text x="1174.5" y="2445" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">lse 可降级</text>
+<text x="1174.5" y="2475" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">与 RAG 同机共享（server 12</text>
+<text x="1174.5" y="2505" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">7.0.0.1:8001）</text>
+<rect x="1375.0" y="2340" width="357.0" height="258" rx="10" fill="#E7F5F0" stroke="#A4B5CB"/>
+<text x="1553.5" y="2378" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">文档目录</text>
+<text x="1553.5" y="2415" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">data/upload/&lt;username&gt;/ </text>
+<text x="1553.5" y="2445" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">按用户隔离</text>
+<text x="1553.5" y="2475" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">上传白名单 + 10MB 上限 + i</text>
+<text x="1553.5" y="2505" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">s_relative_to 防穿越（p6.</text>
+<text x="1553.5" y="2535" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">6）</text>
+<rect x="48" y="2640" width="1704" height="264" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="2781.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">运行约束</text>
+<rect x="238.0" y="2658" width="357.0" height="228" rx="10" fill="#F1F3F6" stroke="#A4B5CB"/>
+<text x="416.5" y="2696" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">Docker 六容器</text>
+<text x="416.5" y="2733" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">frontend / gateway / bac</text>
+<text x="416.5" y="2763" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">kend / mysql / redis / c</text>
+<text x="416.5" y="2793" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">hroma</text>
+<text x="416.5" y="2823" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">同 office-net；中间件不发</text>
+<text x="416.5" y="2853" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">布宿主端口（避 RAG 冲突）</text>
+<rect x="617.0" y="2658" width="357.0" height="228" rx="10" fill="#F1F3F6" stroke="#A4B5CB"/>
+<text x="795.5" y="2696" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">网络边界</text>
+<text x="795.5" y="2733" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">backend / mysql / redis </text>
+<text x="795.5" y="2763" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">/ chroma 仅内网可达</text>
+<text x="795.5" y="2793" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">网关是唯一入口；后端 8000 </text>
+<text x="795.5" y="2823" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">不对外（设计 §13.3）</text>
+<rect x="996.0" y="2658" width="357.0" height="228" rx="10" fill="#F1F3F6" stroke="#A4B5CB"/>
+<text x="1174.5" y="2696" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">配置驱动 + 热更</text>
+<text x="1174.5" y="2733" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">planner / agents / model</text>
+<text x="1174.5" y="2763" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">s / routes 四个 yaml</text>
+<text x="1174.5" y="2793" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">挂载只读；改后 recreate 生</text>
+<text x="1174.5" y="2823" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">效（lru_cache 需 restart </text>
+<text x="1174.5" y="2853" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">backend）</text>
+<rect x="1375.0" y="2658" width="357.0" height="228" rx="10" fill="#F1F3F6" stroke="#A4B5CB"/>
+<text x="1553.5" y="2696" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">共享中间件</text>
+<text x="1553.5" y="2733" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">与 rag-qa-system 同机（4C</text>
+<text x="1553.5" y="2763" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">4G，中间件共享省内存）</text>
+<text x="1553.5" y="2793" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">RAG 经 host.docker.inter</text>
+<text x="1553.5" y="2823" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">nal 访问；部署 Phase 7 待</text>
+<text x="1553.5" y="2853" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">启动</text>
+<text x="48" y="2948" font-size="19" text-anchor="start" fill="#536680" font-weight="400">蓝：应用与编排职责（对应参考图 用户/Agent运行时/LLM/Agent Skills）　teal：工具与数据归属（对应参考图 工具·外部系统）　灰：运行约束；每卡首行列出实现要点，括号内为迭代 tag</text>
+<text x="48" y="2977" font-size="19" text-anchor="start" fill="#536680" font-weight="400">架构图生产 SOP · office-multiagent 现状梳理 v1.0 · 2026-10-23 · 事实来源：backend/app、gateway/src、frontend/src、docker-compose.yml 实读</text>
+</g></svg>

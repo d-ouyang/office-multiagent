@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "project_name": "智能办公助手（office-multiagent）",
+  "task": {
+    "request_excerpt": "根据现有的已经实现的和后续待实现的功能，比较一下图片里的架构和我目前差多少？而且我的项目是否有必要弄图中的架构，给出具体建议。然后你画出我的项目的架构图我来比较一下。",
+    "scope_origin": "user_explicit",
+    "purposes": [
+      "technical_overview",
+      "development"
+    ],
+    "scope_quote": "画出我的项目的架构图我来比较一下",
+    "explicit_view_count": null,
+    "count_quote": ""
+  },
+  "scope_changes": [],
+  "views": [
+    {
+      "view_id": "technical",
+      "kind": "technical",
+      "title": "项目现有技术架构（与参考图同构）",
+      "audience": "项目负责人兼研发（欧阳鼎本人，用于和参考教程架构图逐一对比）",
+      "question": "office-multiagent 已实现哪些组件、各组件职责与接口是什么、数据归谁所有，并能和参考图的六大组件一一对应？",
+      "basis": "用户原话「画出我的项目的架构图我来比较一下」——明确用于与参考 Agent 架构图对比，读者为开发者本人，因此只选技术视图，不捆绑业务视图",
+      "required_formats": []
+    },
+    {
+      "view_id": "gap",
+      "kind": "technical",
+      "title": "参考架构差距对比图（20 步闭环逐项映射）",
+      "audience": "项目负责人兼研发",
+      "question": "参考架构六大组件与约 20 步执行闭环中，项目哪些已实现、哪些部分实现、哪些整体缺失——到底差多少？",
+      "basis": "用户原话「比较一下图片里的架构和我目前差多少」——差距对比图直接回答该问题，按参考图组件分区、步骤编号映射，标注 ✅/⚠️/❌",
+      "required_formats": []
+    }
+  ]
+}

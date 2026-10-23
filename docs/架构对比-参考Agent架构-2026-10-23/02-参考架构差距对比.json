@@ -1,0 +1,276 @@
+{
+  "title": "参考教程架构 vs 智能办公助手现状｜差距对比（六大组件 · 20 步闭环映射）",
+  "subtitle": "现状描述 · 项目基线 v1.0.0-p6.24c（2026-10-23）｜参考源：48 页 Agent 搭建教程图（用户 / Agent 运行时 / LLM / Agent Skills / MCP 工具协议 / 工具·外部系统，规划→执行→观察→再规划→完成闭环）｜✅ 已实现（对齐或超出）　⚠️ 部分实现　❌ 整体缺失",
+  "baseline": "对比日期 2026-10-23 · 结论：20 步中 17 步完全对齐、3 步部分对齐；MCP 协议层整体缺失（工具为进程内函数注册）；项目另多有认证/配额/流式/透明等教程之外的工程能力",
+  "legend": "蓝：参考组件分区（按教程图六大组件组织）　teal：工具与外部系统　灰：差距盘点结论；每卡首行为教程步骤编号与名称，前缀即状态",
+  "layers": [
+    {
+      "label": "参考组件 ①\n用户\n提出需求 · 接取结果",
+      "kind": "blue",
+      "columns": 2,
+      "items": [
+        {
+          "id": "gap-s1",
+          "title": "① 提出问题 ✅",
+          "description": [
+            "项目：聊天输入 + 📎 随消息附件（p6.6/p6.12）",
+            "附件以 prompt 前缀注入，引导 read_document 读取"
+          ]
+        },
+        {
+          "id": "gap-s20",
+          "title": "⑳ 返回结果 ✅",
+          "description": [
+            "项目：NDJSON 流 + 打字机 + Markdown（p6.3/p6.10）",
+            "Agent 徽章 + 过程事件 + trace 落库（p6.7）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "参考组件 ②\nAgent 运行时\n任务管理 · 状态控制",
+      "kind": "blue",
+      "columns": 4,
+      "items": [
+        {
+          "id": "gap-s2",
+          "title": "② 接收请求 ✅",
+          "description": [
+            "网关 JWT 鉴权 → /tasks NDJSON 流式受理",
+            "session 按登录身份自动创建（p6.1/p6.2c）"
+          ]
+        },
+        {
+          "id": "gap-s3",
+          "title": "③ 上下文加载 ✅",
+          "description": [
+            "memory.prepare_turn：近期 4 轮原文 + 更早摘要 + 指代消解",
+            "上下文用量实时可见（system/工具/规则/历史分栏，p6.24）"
+          ]
+        },
+        {
+          "id": "gap-s4",
+          "title": "④ 记忆检索 ⚠️",
+          "description": [
+            "已有：会话级历史（MySQL messages，按 session 归属校验）",
+            "缺失：跨会话长期记忆、用户画像/偏好记忆（教程的短期+长期两档只覆盖了短期）"
+          ]
+        },
+        {
+          "id": "gap-s5",
+          "title": "⑤ 意图识别 ✅",
+          "description": [
+            "planner：关键词意图 + 复杂度打分（planner.yaml 确定性规则）",
+            "signals 打分明细可解释、可对账（p3.1）"
+          ]
+        },
+        {
+          "id": "gap-s6",
+          "title": "⑥ 任务拆解与规划 ✅",
+          "description": [
+            "router 阈值路由（3.0）+ decomposer 意图依赖 DAG（p3.1/p3.2）",
+            "LLM 增强分解留 DecisionModel 插槽，规则打底已可用"
+          ]
+        },
+        {
+          "id": "gap-s12",
+          "title": "⑫ 生成下一步行动 ✅",
+          "description": [
+            "ReAct next_step：LLM 每步决定调工具或给终答",
+            "A/B 二选一协议由 brain 统一保证（p5.1a）"
+          ]
+        },
+        {
+          "id": "gap-s13",
+          "title": "⑬⑱ 判断是否完成 ✅",
+          "description": [
+            "final 即完成；max_iterations 强制阶段结论",
+            "连续无效工具名收尾 + 重复调用拦截（p6.7）"
+          ]
+        },
+        {
+          "id": "gap-s15",
+          "title": "⑮⑲ 整合最终结果 ✅",
+          "description": [
+            "multi：子任务结果汇总；single：直接终答",
+            "数字只来自工具返回，缺数据如实标注"
+          ]
+        },
+        {
+          "id": "gap-s19",
+          "title": "⑳ 附：状态与记忆更新 ⚠️",
+          "description": [
+            "已有：消息 + task + token 账本落库（p6.2c/p6.4）",
+            "缺失：长期记忆写回（教程「更新任务状态和记忆」的后半句）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "参考组件 ③\nLLM 大模型\n理解 · 规划 · 推理 · 生成",
+      "kind": "blue",
+      "columns": 3,
+      "items": [
+        {
+          "id": "gap-llm-reason",
+          "title": "理解与推理 ✅",
+          "description": [
+            "LlmBrain + 12 个云端模型（DeepSeek 官方/硅基流动）",
+            "思考流（reasoning_content）实时推前端（p6.3）"
+          ]
+        },
+        {
+          "id": "gap-llm-plan",
+          "title": "规划生成 ⚠️",
+          "description": [
+            "规划由确定性规则打底（意图/复杂度/DAG）",
+            "LLM 分解与歧义消解 = DecisionModel 插槽，尚未启用"
+          ]
+        },
+        {
+          "id": "gap-llm-gen",
+          "title": "生成与协议 ✅",
+          "description": [
+            "JSON 决策协议 + 自然语言终答直出（可流式）",
+            "解析失败/模型不可用 → 如实停止，不编造（p5.1a/p6.7）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "参考组件 ④\nAgent Skills\n能力管理 · 任务路由",
+      "kind": "blue",
+      "columns": 3,
+      "items": [
+        {
+          "id": "gap-s7",
+          "title": "⑦ 判断是否需要外部能力 ✅",
+          "description": [
+            "ReAct 循环内由 LLM 自决：A 调工具 / B 直接答",
+            "提示词明示：总结/分析/问答类不调工具（p6.7）"
+          ]
+        },
+        {
+          "id": "gap-s8",
+          "title": "⑧ 加载 Skill 上下文 ✅",
+          "description": [
+            "agents.yaml AgentSpec = 角色提示词 + 工具白名单",
+            "按 agent_type 装配，白名单裁剪可见工具（p5.1b）"
+          ]
+        },
+        {
+          "id": "gap-sk-route",
+          "title": "能力路由 ✅",
+          "description": [
+            "planner.yaml 意图 → agent 映射表",
+            "未注册 agent_type 回落 general（不猜、不编）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "参考组件 ⑤\nMCP 工具协议\n工具发现 · 协议调用",
+      "kind": "blue",
+      "columns": 3,
+      "items": [
+        {
+          "id": "gap-s9",
+          "title": "⑨ 发起工具调用 ✅（形态不同）",
+          "description": [
+            "run_react action → ToolRegistry.call 进程内调用",
+            "未走 MCP 协议；等价能力已具备（含重试与降级）"
+          ]
+        },
+        {
+          "id": "gap-s10",
+          "title": "⑩ 工具发现与选择 ⚠️",
+          "description": [
+            "已有：静态注册表 9 工具 + 按 Agent 白名单裁剪",
+            "缺失：MCP 式动态发现 / 远程工具目录（Tool/Resource/Service）"
+          ]
+        },
+        {
+          "id": "gap-s16",
+          "title": "⑯⑰ 返回执行结果 ✅",
+          "description": [
+            "observation 摘要化（上限 24000 字）后再进 LLM 上下文",
+            "失败返回结构化错误；重试 ≤2 次（p6.7/p4.1）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "参考组件 ⑥\n工具 / 外部系统\n执行任务 · 获取数据",
+      "kind": "teal",
+      "columns": 3,
+      "items": [
+        {
+          "id": "gap-s11",
+          "title": "⑪ 调用具体工具 ✅",
+          "description": [
+            "9 个真实工具：订单/报表/知识库/文档(+OCR)/清洗/分析/图表/写文档/只读 SQL",
+            "覆盖教程列举的搜索、数据查询、企业系统、文件四类场景"
+          ]
+        },
+        {
+          "id": "gap-s14",
+          "title": "⑭ 结果解析与校验 ⚠️",
+          "description": [
+            "已有：JSON 提取 + 无效 action 纠错 + 重复调用检测",
+            "缺失：独立结果校验器（如终答数字必须来自 observation 的对账）"
+          ]
+        },
+        {
+          "id": "gap-ext",
+          "title": "外部系统 ✅",
+          "description": [
+            "RAG 系统：HTTP + 内部密钥，经共享网关（p5.0）",
+            "锅圈业务库（MySQL）、OCR 模型（硅基流动）"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "差距盘点\n（结论）",
+      "kind": "gray",
+      "columns": 4,
+      "items": [
+        {
+          "id": "gap-sum-ok",
+          "title": "完全对齐 17/20 步 ✅",
+          "description": [
+            "①②③⑤⑥⑦⑧⑨⑪⑫⑬⑮⑯⑰⑱⑲⑳",
+            "主干闭环全通，多数实现强于教程（配额/流式/透明）"
+          ]
+        },
+        {
+          "id": "gap-sum-partial",
+          "title": "部分对齐 3/20 步 ⚠️",
+          "description": [
+            "④ 记忆检索：仅会话级，无长期记忆",
+            "⑩ 工具发现：静态注册表，无动态发现",
+            "⑭ 结果校验：有解析纠错，无独立校验器"
+          ]
+        },
+        {
+          "id": "gap-sum-missing",
+          "title": "整体缺失 1 层 ❌",
+          "description": [
+            "MCP 工具协议层：工具为进程内函数注册",
+            "对外复用现走 RAG 共享网关 HTTP + 内部密钥",
+            "是否引入见《架构对比与实施建议》分项裁决"
+          ]
+        },
+        {
+          "id": "gap-sum-extra",
+          "title": "超出教程的工程能力 ✅",
+          "description": [
+            "认证单点 + 多用户隔离；token 两段式配额 + 断点续跑",
+            "NDJSON 真流式 + trace 落库 + 过程透明",
+            "13 模型注册表；文档上传/读取/OCR；六容器部署"
+          ]
+        }
+      ]
+    }
+  ]
+}

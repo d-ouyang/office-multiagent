@@ -1,0 +1,211 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="2626" viewBox="0 0 1800 2626" role="img" aria-labelledby="title desc"><title id="title">参考教程架构 vs 智能办公助手现状｜差距对比（六大组件 · 20 步闭环映射）</title><desc id="desc">现状描述 · 项目基线 v1.0.0-p6.24c（2026-10-23）｜参考源：48 页 Agent 搭建教程图（用户 / Agent 运行时 / LLM / Agent Skills / MCP 工具协议 / 工具·外部系统，规划→执行→观察→再规划→完成闭环）｜✅ 已实现（对齐或超出）　⚠️ 部分实现　❌ 整体缺失</desc><rect width="100%" height="100%" fill="white"/><g font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Arial, sans-serif">
+<text x="48" y="62" font-size="34" text-anchor="start" fill="#172B45" font-weight="600">参考教程架构 vs 智能办公助手现状｜差距对比（六大组件 · 20 步闭环映射）</text>
+<text x="48" y="106" font-size="21" text-anchor="start" fill="#536680" font-weight="400">现状描述 · 项目基线 v1.0.0-p6.24c（2026-10-23）｜参考源：48 页 Agent 搭建教程图（用户 / Agent 运行时 / LLM / Agent Skills / MCP 工具协议 / 工具·外</text>
+<text x="48" y="136" font-size="21" text-anchor="start" fill="#536680" font-weight="400">部系统，规划→执行→观察→再规划→完成闭环）｜✅ 已实现（对齐或超出）　⚠️ 部分实现　❌ 整体缺失</text>
+<rect x="48" y="192" width="1704" height="180" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="237.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">参考组件 ①</text>
+<text x="143.0" y="273.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">用户</text>
+<text x="143.0" y="309.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">提出需求 ·</text>
+<text x="143.0" y="345.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600"> 接取结果</text>
+<rect x="238.0" y="210" width="736.0" height="138" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="606.0" y="248" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">① 提出问题 ✅</text>
+<text x="606.0" y="285" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">项目：聊天输入 + 📎 随消息附件（p6.6/p6.12）</text>
+<text x="606.0" y="315" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">附件以 prompt 前缀注入，引导 read_document 读取</text>
+<rect x="996.0" y="210" width="736.0" height="138" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1364.0" y="248" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑳ 返回结果 ✅</text>
+<text x="1364.0" y="285" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">项目：NDJSON 流 + 打字机 + Markdown（p6.3/p6.10）</text>
+<text x="1364.0" y="315" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">Agent 徽章 + 过程事件 + trace 落库（p6.7）</text>
+<rect x="48" y="396" width="1704" height="764" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="715.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">参考组件 ②</text>
+<text x="143.0" y="751.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">Agent 运行</text>
+<text x="143.0" y="787.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">时</text>
+<text x="143.0" y="823.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">任务管理 ·</text>
+<text x="143.0" y="859.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600"> 状态控制</text>
+<rect x="238.0" y="414" width="357.0" height="258" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="416.5" y="452" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">② 接收请求 ✅</text>
+<text x="416.5" y="489" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">网关 JWT 鉴权 → /tasks ND</text>
+<text x="416.5" y="519" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">JSON 流式受理</text>
+<text x="416.5" y="549" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">session 按登录身份自动创建</text>
+<text x="416.5" y="579" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">（p6.1/p6.2c）</text>
+<rect x="617.0" y="414" width="357.0" height="258" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="795.5" y="452" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">③ 上下文加载 ✅</text>
+<text x="795.5" y="489" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">memory.prepare_turn：近期</text>
+<text x="795.5" y="519" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400"> 4 轮原文 + 更早摘要 + 指代</text>
+<text x="795.5" y="549" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">消解</text>
+<text x="795.5" y="579" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">上下文用量实时可见（system/</text>
+<text x="795.5" y="609" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">工具/规则/历史分栏，p6.24）</text>
+<rect x="996.0" y="414" width="357.0" height="258" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1174.5" y="452" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">④ 记忆检索 ⚠️</text>
+<text x="1174.5" y="489" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">已有：会话级历史（MySQL mes</text>
+<text x="1174.5" y="519" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">sages，按 session 归属校验</text>
+<text x="1174.5" y="549" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">）</text>
+<text x="1174.5" y="579" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">缺失：跨会话长期记忆、用户画</text>
+<text x="1174.5" y="609" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">像/偏好记忆（教程的短期+长期</text>
+<text x="1174.5" y="639" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">两档只覆盖了短期）</text>
+<rect x="1375.0" y="414" width="357.0" height="258" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1553.5" y="452" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑤ 意图识别 ✅</text>
+<text x="1553.5" y="489" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">planner：关键词意图 + 复杂</text>
+<text x="1553.5" y="519" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">度打分（planner.yaml 确定</text>
+<text x="1553.5" y="549" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">性规则）</text>
+<text x="1553.5" y="579" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">signals 打分明细可解释、可</text>
+<text x="1553.5" y="609" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">对账（p3.1）</text>
+<rect x="238.0" y="694" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="416.5" y="732" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑥ 任务拆解与规划 ✅</text>
+<text x="416.5" y="769" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">router 阈值路由（3.0）+ de</text>
+<text x="416.5" y="799" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">composer 意图依赖 DAG（p3</text>
+<text x="416.5" y="829" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">.1/p3.2）</text>
+<text x="416.5" y="859" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">LLM 增强分解留 DecisionMo</text>
+<text x="416.5" y="889" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">del 插槽，规则打底已可用</text>
+<rect x="617.0" y="694" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="795.5" y="732" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑫ 生成下一步行动 ✅</text>
+<text x="795.5" y="769" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">ReAct next_step：LLM 每步</text>
+<text x="795.5" y="799" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">决定调工具或给终答</text>
+<text x="795.5" y="829" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">A/B 二选一协议由 brain 统</text>
+<text x="795.5" y="859" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">一保证（p5.1a）</text>
+<rect x="996.0" y="694" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1174.5" y="732" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑬⑱ 判断是否完成 ✅</text>
+<text x="1174.5" y="769" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">final 即完成；max_iterati</text>
+<text x="1174.5" y="799" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">ons 强制阶段结论</text>
+<text x="1174.5" y="829" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">连续无效工具名收尾 + 重复调</text>
+<text x="1174.5" y="859" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">用拦截（p6.7）</text>
+<rect x="1375.0" y="694" width="357.0" height="228" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1553.5" y="732" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑮⑲ 整合最终结果 ✅</text>
+<text x="1553.5" y="769" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">multi：子任务结果汇总；sing</text>
+<text x="1553.5" y="799" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">le：直接终答</text>
+<text x="1553.5" y="829" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">数字只来自工具返回，缺数据如</text>
+<text x="1553.5" y="859" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">实标注</text>
+<rect x="238.0" y="944" width="357.0" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="416.5" y="982" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑳ 附：状态与记忆更新 ⚠️</text>
+<text x="416.5" y="1019" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">已有：消息 + task + token</text>
+<text x="416.5" y="1049" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400"> 账本落库（p6.2c/p6.4）</text>
+<text x="416.5" y="1079" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">缺失：长期记忆写回（教程「更</text>
+<text x="416.5" y="1109" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">新任务状态和记忆」的后半句）</text>
+<rect x="48" y="1184" width="1704" height="234" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="1238.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">参考组件 ③</text>
+<text x="143.0" y="1274.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">LLM 大模型</text>
+<text x="143.0" y="1310.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">理解 · 规</text>
+<text x="143.0" y="1346.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">划 · 推理 </text>
+<text x="143.0" y="1382.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">· 生成</text>
+<rect x="238.0" y="1202" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="479.66666666666663" y="1240" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">理解与推理 ✅</text>
+<text x="479.66666666666663" y="1277" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">LlmBrain + 12 个云端模型（DeepSeek </text>
+<text x="479.66666666666663" y="1307" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">官方/硅基流动）</text>
+<text x="479.66666666666663" y="1337" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">思考流（reasoning_content）实时推前</text>
+<text x="479.66666666666663" y="1367" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">端（p6.3）</text>
+<rect x="743.3333333333333" y="1202" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="984.9999999999999" y="1240" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">规划生成 ⚠️</text>
+<text x="984.9999999999999" y="1277" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">规划由确定性规则打底（意图/复杂度/DAG）</text>
+<text x="984.9999999999999" y="1307" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">LLM 分解与歧义消解 = DecisionModel </text>
+<text x="984.9999999999999" y="1337" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">插槽，尚未启用</text>
+<rect x="1248.6666666666665" y="1202" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1490.3333333333333" y="1240" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">生成与协议 ✅</text>
+<text x="1490.3333333333333" y="1277" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">JSON 决策协议 + 自然语言终答直出（可流</text>
+<text x="1490.3333333333333" y="1307" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">式）</text>
+<text x="1490.3333333333333" y="1337" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">解析失败/模型不可用 → 如实停止，不编造</text>
+<text x="1490.3333333333333" y="1367" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">（p5.1a/p6.7）</text>
+<rect x="48" y="1442" width="1704" height="234" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="1496.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">参考组件 ④</text>
+<text x="143.0" y="1532.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">Agent Ski</text>
+<text x="143.0" y="1568.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">lls</text>
+<text x="143.0" y="1604.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">能力管理 ·</text>
+<text x="143.0" y="1640.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600"> 任务路由</text>
+<rect x="238.0" y="1460" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="479.66666666666663" y="1498" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑦ 判断是否需要外部能力 ✅</text>
+<text x="479.66666666666663" y="1535" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">ReAct 循环内由 LLM 自决：A 调工具 / </text>
+<text x="479.66666666666663" y="1565" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">B 直接答</text>
+<text x="479.66666666666663" y="1595" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">提示词明示：总结/分析/问答类不调工具（p</text>
+<text x="479.66666666666663" y="1625" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">6.7）</text>
+<rect x="743.3333333333333" y="1460" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="984.9999999999999" y="1498" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑧ 加载 Skill 上下文 ✅</text>
+<text x="984.9999999999999" y="1535" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">agents.yaml AgentSpec = 角色提示词 </text>
+<text x="984.9999999999999" y="1565" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">+ 工具白名单</text>
+<text x="984.9999999999999" y="1595" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">按 agent_type 装配，白名单裁剪可见工</text>
+<text x="984.9999999999999" y="1625" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">具（p5.1b）</text>
+<rect x="1248.6666666666665" y="1460" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1490.3333333333333" y="1498" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">能力路由 ✅</text>
+<text x="1490.3333333333333" y="1535" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">planner.yaml 意图 → agent 映射表</text>
+<text x="1490.3333333333333" y="1565" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">未注册 agent_type 回落 general（不猜</text>
+<text x="1490.3333333333333" y="1595" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">、不编）</text>
+<rect x="48" y="1700" width="1704" height="234" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="1754.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">参考组件 ⑤</text>
+<text x="143.0" y="1790.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">MCP 工具协</text>
+<text x="143.0" y="1826.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">议</text>
+<text x="143.0" y="1862.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">工具发现 ·</text>
+<text x="143.0" y="1898.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600"> 协议调用</text>
+<rect x="238.0" y="1718" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="479.66666666666663" y="1756" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑨ 发起工具调用 ✅（形态不同）</text>
+<text x="479.66666666666663" y="1793" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">run_react action → ToolRegistry.c</text>
+<text x="479.66666666666663" y="1823" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">all 进程内调用</text>
+<text x="479.66666666666663" y="1853" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">未走 MCP 协议；等价能力已具备（含重试与</text>
+<text x="479.66666666666663" y="1883" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">降级）</text>
+<rect x="743.3333333333333" y="1718" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="984.9999999999999" y="1756" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑩ 工具发现与选择 ⚠️</text>
+<text x="984.9999999999999" y="1793" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">已有：静态注册表 9 工具 + 按 Agent 白</text>
+<text x="984.9999999999999" y="1823" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">名单裁剪</text>
+<text x="984.9999999999999" y="1853" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">缺失：MCP 式动态发现 / 远程工具目录（T</text>
+<text x="984.9999999999999" y="1883" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">ool/Resource/Service）</text>
+<rect x="1248.6666666666665" y="1718" width="483.3333333333333" height="198" rx="10" fill="#ECF2FC" stroke="#A4B5CB"/>
+<text x="1490.3333333333333" y="1756" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑯⑰ 返回执行结果 ✅</text>
+<text x="1490.3333333333333" y="1793" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">observation 摘要化（上限 24000 字）</text>
+<text x="1490.3333333333333" y="1823" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">后再进 LLM 上下文</text>
+<text x="1490.3333333333333" y="1853" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">失败返回结构化错误；重试 ≤2 次（p6.7/p</text>
+<text x="1490.3333333333333" y="1883" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">4.1）</text>
+<rect x="48" y="1958" width="1704" height="234" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="2012.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">参考组件 ⑥</text>
+<text x="143.0" y="2048.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">工具 / 外</text>
+<text x="143.0" y="2084.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">部系统</text>
+<text x="143.0" y="2120.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">执行任务 ·</text>
+<text x="143.0" y="2156.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600"> 获取数据</text>
+<rect x="238.0" y="1976" width="483.3333333333333" height="198" rx="10" fill="#E7F5F0" stroke="#A4B5CB"/>
+<text x="479.66666666666663" y="2014" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑪ 调用具体工具 ✅</text>
+<text x="479.66666666666663" y="2051" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">9 个真实工具：订单/报表/知识库/文档(+O</text>
+<text x="479.66666666666663" y="2081" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">CR)/清洗/分析/图表/写文档/只读 SQL</text>
+<text x="479.66666666666663" y="2111" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">覆盖教程列举的搜索、数据查询、企业系统、</text>
+<text x="479.66666666666663" y="2141" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">文件四类场景</text>
+<rect x="743.3333333333333" y="1976" width="483.3333333333333" height="198" rx="10" fill="#E7F5F0" stroke="#A4B5CB"/>
+<text x="984.9999999999999" y="2014" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">⑭ 结果解析与校验 ⚠️</text>
+<text x="984.9999999999999" y="2051" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">已有：JSON 提取 + 无效 action 纠错 +</text>
+<text x="984.9999999999999" y="2081" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400"> 重复调用检测</text>
+<text x="984.9999999999999" y="2111" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">缺失：独立结果校验器（如终答数字必须来自</text>
+<text x="984.9999999999999" y="2141" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400"> observation 的对账）</text>
+<rect x="1248.6666666666665" y="1976" width="483.3333333333333" height="198" rx="10" fill="#E7F5F0" stroke="#A4B5CB"/>
+<text x="1490.3333333333333" y="2014" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">外部系统 ✅</text>
+<text x="1490.3333333333333" y="2051" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">RAG 系统：HTTP + 内部密钥，经共享网关</text>
+<text x="1490.3333333333333" y="2081" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">（p5.0）</text>
+<text x="1490.3333333333333" y="2111" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">锅圈业务库（MySQL）、OCR 模型（硅基流</text>
+<text x="1490.3333333333333" y="2141" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">动）</text>
+<rect x="48" y="2216" width="1704" height="294" rx="10" fill="#F7F9FC" stroke="#DCE5EF"/>
+<text x="143.0" y="2354.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">差距盘点</text>
+<text x="143.0" y="2390.0" font-size="27" text-anchor="middle" fill="#172B45" font-weight="600">（结论）</text>
+<rect x="238.0" y="2234" width="357.0" height="258" rx="10" fill="#F1F3F6" stroke="#A4B5CB"/>
+<text x="416.5" y="2272" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">完全对齐 17/20 步 ✅</text>
+<text x="416.5" y="2309" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">①②③⑤⑥⑦⑧⑨⑪⑫⑬⑮⑯⑰⑱⑲⑳</text>
+<text x="416.5" y="2339" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">主干闭环全通，多数实现强于教</text>
+<text x="416.5" y="2369" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">程（配额/流式/透明）</text>
+<rect x="617.0" y="2234" width="357.0" height="258" rx="10" fill="#F1F3F6" stroke="#A4B5CB"/>
+<text x="795.5" y="2272" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">部分对齐 3/20 步 ⚠️</text>
+<text x="795.5" y="2309" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">④ 记忆检索：仅会话级，无长期</text>
+<text x="795.5" y="2339" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">记忆</text>
+<text x="795.5" y="2369" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">⑩ 工具发现：静态注册表，无动</text>
+<text x="795.5" y="2399" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">态发现</text>
+<text x="795.5" y="2429" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">⑭ 结果校验：有解析纠错，无独</text>
+<text x="795.5" y="2459" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">立校验器</text>
+<rect x="996.0" y="2234" width="357.0" height="258" rx="10" fill="#F1F3F6" stroke="#A4B5CB"/>
+<text x="1174.5" y="2272" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">整体缺失 1 层 ❌</text>
+<text x="1174.5" y="2309" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">MCP 工具协议层：工具为进程内</text>
+<text x="1174.5" y="2339" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">函数注册</text>
+<text x="1174.5" y="2369" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">对外复用现走 RAG 共享网关 H</text>
+<text x="1174.5" y="2399" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">TTP + 内部密钥</text>
+<text x="1174.5" y="2429" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">是否引入见《架构对比与实施建</text>
+<text x="1174.5" y="2459" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">议》分项裁决</text>
+<rect x="1375.0" y="2234" width="357.0" height="258" rx="10" fill="#F1F3F6" stroke="#A4B5CB"/>
+<text x="1553.5" y="2272" font-size="26" text-anchor="middle" fill="#172B45" font-weight="600">超出教程的工程能力 ✅</text>
+<text x="1553.5" y="2309" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">认证单点 + 多用户隔离；toke</text>
+<text x="1553.5" y="2339" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">n 两段式配额 + 断点续跑</text>
+<text x="1553.5" y="2369" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">NDJSON 真流式 + trace 落</text>
+<text x="1553.5" y="2399" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">库 + 过程透明</text>
+<text x="1553.5" y="2429" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">13 模型注册表；文档上传/读取</text>
+<text x="1553.5" y="2459" font-size="22" text-anchor="middle" fill="#172B45" font-weight="400">/OCR；六容器部署</text>
+<text x="48" y="2554" font-size="19" text-anchor="start" fill="#536680" font-weight="400">蓝：参考组件分区（按教程图六大组件组织）　teal：工具与外部系统　灰：差距盘点结论；每卡首行为教程步骤编号与名称，前缀即状态</text>
+<text x="48" y="2583" font-size="19" text-anchor="start" fill="#536680" font-weight="400">对比日期 2026-10-23 · 结论：20 步中 17 步完全对齐、3 步部分对齐；MCP 协议层整体缺失（工具为进程内函数注册）；项目另多有认证/配额/流式/透明等教程之外的工程能力</text>
+</g></svg>
