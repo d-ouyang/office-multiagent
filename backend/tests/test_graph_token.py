@@ -16,7 +16,8 @@ def _pool(balance: int) -> tuple[TokenPool, object]:
         c.execute(
             text(
                 "CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER)"
+                "user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, "
+                "created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
             )
         )
         c.execute(text("INSERT INTO wallet (user_id, balance) VALUES (1, :b)"), {"b": balance})
@@ -63,3 +64,58 @@ def test_run_task_sufficient_settles_full_refund():
     assert result["status"] == "done"
     assert result["route"] == "single"
     assert tp.balance(1) == 1000  # reserve 100 后 settle actual=0 全额退回
+
+
+# --------------------------------------------------------------------------- #
+# p4.3c：multi 路由 token 汇总（此前 multi_node 不返回 tokens_used → settle 全额退回，
+# 多 Agent 真实消耗不计账，§十四 对账恒等式破洞）
+# --------------------------------------------------------------------------- #
+
+class _FakeUsageBrain:
+    """带 usage 的假脑（每子任务 7 token）：验证 multi 汇总与落账。"""
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.usage = {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7, "calls": 1}
+
+    def next_step(self, task, history):
+        from app.orchestration.react import Step
+
+        return Step(thought="t", final="done")
+
+
+def test_multi_route_aggregates_subtask_tokens(monkeypatch):
+    monkeypatch.setattr("app.orchestration.graph.make_brain", lambda *a, **k: _FakeUsageBrain())
+    result, _events = run_task("先清洗，再分析，再出报表")
+    assert result["route"] == "multi"
+    n = len(result["dag"]["subtasks"])
+    assert n >= 2
+    assert result["tokens_used"] == 7 * n  # 各子任务用量之和
+
+
+def test_multi_route_settles_actual_usage(monkeypatch):
+    # 真账：reserve 100 → settle actual=21 → 净扣 21；ledger 两行配对如实记录
+    tp, _ = _pool(1000)
+    monkeypatch.setattr("app.orchestration.graph.make_brain", lambda *a, **k: _FakeUsageBrain())
+    result, _events = run_task("先清洗，再分析，再出报表", user_id=1, estimate=100, token_pool=tp)
+    assert result["status"] == "done"
+    assert result["route"] == "multi"
+    n = len(result["dag"]["subtasks"])
+    assert tp.balance(1) == 1000 - 7 * n
+    settle_rows = [r for r in tp.recent(1, limit=10) if r["settle"] is not None]
+    assert len(settle_rows) == 1
+    assert settle_rows[0]["reserve"] == 100 and settle_rows[0]["settle"] == 7 * n
+
+
+def test_multi_route_stub_baseline_settles_zero(monkeypatch):
+    # StubBrain 无 usage → 汇总 0 → 全额退回（与 single 基线一致，回归不变）
+    tp, _ = _pool(1000)
+    result, _events = run_task("先清洗，再分析，再出报表", user_id=1, estimate=100, token_pool=tp)
+    assert result["route"] == "multi"
+    assert result["tokens_used"] == 0
+    assert tp.balance(1) == 1000
+
+
+def test_dag_max_concurrency_config_default():
+    from app.core.config import settings
+
+    assert settings.dag_max_concurrency == 3  # p4.3c：默认 3，1=串行回落

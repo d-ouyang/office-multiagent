@@ -76,6 +76,7 @@ class AgentResult:
     steps: list[Step]
     iterations: int
     hit_cap: bool = False
+    tokens_used: int = 0       # p4.3c：本次 ReAct 的真实 LLM 用量（brain.usage 汇总；StubBrain 为 0）
 
 
 class StubBrain:

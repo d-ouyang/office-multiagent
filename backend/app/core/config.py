@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     # token 池（§十四）：/tasks 默认预扣估算（LLM 用量事前估不准，用门槛值兜底；
     # settle 时按真实 usage 补差）
     token_estimate_default: int = 2000
+    # DAG 层内最大并行子任务数（p4.3c；防 LLM 渠道限流，1=串行回落基线）
+    dag_max_concurrency: int = 3
 
     # ---- 连接层加固（p1.2a）----
     mysql_pool_size: int = 5

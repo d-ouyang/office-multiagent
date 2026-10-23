@@ -121,13 +121,17 @@ def build_graph(
                 reasoning_effort=_effort_for(state),
             )
             # 必须用主 emitter：子 emitter 的 seq 独立从 1 开始，会让主事件流 seq 乱序
-            return run_react(
+            res = run_react(
                 compose_subtask_text(st.intent, upstream or {}),
                 brain,
                 spec_tools,
                 emitter=emitter,
                 emit=emit,
             )
+            # p4.3c：带出本子任务真实用量，供 multi_node 汇总进 tokens_used（§十四 对账）
+            usage = getattr(brain, "usage", None) or {}
+            res.tokens_used = int(usage.get("total_tokens", 0))
+            return res
 
         return _run
 
@@ -206,11 +210,20 @@ def build_graph(
                 for s in state.get("dag", {}).get("subtasks", [])
             ]
         )
-        results = run_dag(dag, emitter=emitter, emit=emit, agent_runner=spec_agent_runner(tools, state))
+        results = run_dag(
+            dag,
+            emitter=emitter,
+            emit=emit,
+            agent_runner=spec_agent_runner(tools, state),
+            max_concurrency=settings.dag_max_concurrency,  # p4.3c：层内并行度配置化
+        )
         summary = "；".join(f"{k}:{v.final}" for k, v in results.items())
+        # p4.3c：汇总各子任务真实用量（此前 multi 不返回 tokens_used，settle 时
+        # actual=0 全额退回，多 Agent 消耗不计账——§十四 对账恒等式破洞）
+        total_tokens = sum(int(getattr(r, "tokens_used", 0) or 0) for r in results.values())
         emit(emitter.content_delta(f"多 Agent 汇总 → {summary}"))
         emit(emitter.status("orchestrator", "done"))
-        return {"result": f"[multi] {summary}"}
+        return {"result": f"[multi] {summary}", "tokens_used": total_tokens}
 
     g = StateGraph(TaskState)
     g.add_node("planner", planner_node)
