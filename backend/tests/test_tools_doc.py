@@ -98,9 +98,11 @@ def test_read_xlsx_sheet_preview(doc_dir):
 
 
 def test_unsupported_format_is_honest(doc_dir):
+    # p6.24 起 .jpg/.png/.webp 已进白名单（扫描件/图片走 OCR）——不支持格式改用 .exe
+    (doc_dir / "virus.exe").write_bytes(b"MZ")
     tool = make_read_document_tool(base_dir=str(doc_dir))
     with pytest.raises(ValueError, match="不支持"):
-        tool("photo.jpg")
+        tool("virus.exe")
 
 
 def test_missing_file_is_honest(doc_dir):

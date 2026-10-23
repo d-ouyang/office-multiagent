@@ -25,7 +25,7 @@ from ..core.token_pool import TokenPool
 from ..core.db import get_engine
 from .agents import build_default_registry, build_registry_for_spec, get_agent_spec
 from .brain import make_brain
-from .orchestrator import run_dag
+from .orchestrator import compose_subtask_text, run_dag
 from .react import run_react
 
 logger = logging.getLogger(__name__)
@@ -96,9 +96,13 @@ def build_graph(
     )
 
     def spec_agent_runner(base, state):
-        """multi 的子任务执行器：按子任务 agent_type 取 AgentSpec（角色提示词+工具白名单）。"""
+        """multi 的子任务执行器：按子任务 agent_type 取 AgentSpec（角色提示词+工具白名单）。
 
-        def _run(st):
+        p4.3a：接上游结果——任务文本 = intent + 直接上游的 final 摘要（compose_subtask_text），
+        下游不再"只看 intent 盲跑"。
+        """
+
+        def _run(st, upstream=None):
             spec = get_agent_spec(st.agent_type)
             spec_tools = build_registry_for_spec(spec, base)
             brain = make_brain(
@@ -112,7 +116,13 @@ def build_graph(
                 reasoning_effort=_effort_for(state),
             )
             # 必须用主 emitter：子 emitter 的 seq 独立从 1 开始，会让主事件流 seq 乱序
-            return run_react(f"{st.intent} 任务", brain, spec_tools, emitter=emitter, emit=emit)
+            return run_react(
+                compose_subtask_text(st.intent, upstream or {}),
+                brain,
+                spec_tools,
+                emitter=emitter,
+                emit=emit,
+            )
 
         return _run
 
