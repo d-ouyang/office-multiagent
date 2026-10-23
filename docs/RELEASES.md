@@ -5,6 +5,24 @@
 
 ---
 
+## v1.0.0-p6.29 — P1 两件套：轻量结果校验器 + 显式长期记忆（2026-10-23）
+
+**类型**：功能（对照参考架构差距分析的拍板项：⑭ 结果校验器 + ④ 长期记忆）
+
+### 交付内容
+- **轻量结果校验器**：`orchestration/validator.py`——终答数字 vs 工具观察（含任务原文）对账，不新增 LLM 调用、不阻断、不重跑；只校验"硬数字"（≥1000 或带小数）压误报，万/亿/千分位/尾零归一化；对不上发 `result_validator` observation 事件 + WARNING（随 trace 落库）；single 按主任务、multi 按子任务各自对账；`RESULT_VALIDATION` 开关。
+- **显式长期记忆**：迁移 `0011_user_memory`（只增不改、无 update_time/deleted）+ `user_memory_repo`（幂等去重、满了如实拒绝不淘汰、越权 404 同形）；`remember`/`recall` 工具（仅登录用户挂载，4 类 Agent 白名单可见）；每轮注入【用户长期记忆】块并计入 context_usage memory 分栏；用户 API `GET/POST/DELETE /api/v1/memory`；前端个人中心"长期记忆"视图（列表/添加/删除）。
+
+### 验证状态
+- pytest **320 passed / 3 skipped**（新增 validator 12 例 + user_memory 13 例）；vitest **80 passed**；tsc 干净。
+- 真机：迁移至 `0011_user_memory (head)`；/memory 增查删全链路；真任务让 Agent 记偏好 → `source=agent` 落库 → 同会话追问正确答出（context_usage 出现 memory 分栏）；编造/推导数字场景 → 校验器事件如实标出 `179.51、4.3`（multi:report）；任务原文数字不误报（98765 未标）。Playwright 截图核对记忆视图。
+
+### 文件
+新增：`backend/app/orchestration/validator.py`、`backend/app/core/user_memory_repo.py`、`backend/app/orchestration/tools_memory.py`、`backend/migrations/versions/0011_user_memory.py`、`backend/tests/test_validator.py`、`backend/tests/test_user_memory.py`。
+修改：`graph.py`（_validate_and_flag）、`agents.py`/`config/agents.yaml`（记忆工具挂载）、`routes.py`（/memory 端点 + 注入）、`orchestration/memory.py`（user_memory_block + context_items）、`config.py`（5 项配置）、`db/init.sql`、前端 `api.ts`/`AccountPanel.tsx`/`styles.css`。
+
+---
+
 ## v1.0.0-p6.28 — 管理端体验补齐（审计日志 / 分页 / 统一下拉框 / 代续跑确认）（2026-10-23）
 
 **类型**：功能（对照 RAG 管理端差距分析后的四项补齐）

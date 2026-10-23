@@ -183,6 +183,12 @@ def build_default_registry(
             "filters 与 analyze_table 相同。饼图超过 8 类会把其余并成「其他」，且不能有负数。"
         ),
     )
+    # p6.29：显式长期记忆（仅登录用户场景挂载；匿名=无记忆能力，工具不可见）
+    if user_id is not None:
+        from .tools_memory import register_memory_tools
+        from ..core.user_memory_repo import UserMemoryRepo
+
+        register_memory_tools(reg, UserMemoryRepo(engine), int(user_id))
     return reg
 
 

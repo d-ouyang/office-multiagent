@@ -154,6 +154,52 @@ export async function getQuota(): Promise<{
   return res.json();
 }
 
+// --------------------------------------------------------------------------- //
+// p6.29：显式长期记忆（用户可查可删）
+// --------------------------------------------------------------------------- //
+
+export interface MemoryItem {
+  id: number;
+  content: string;
+  source: string; // agent=助手帮记 / user=手动添加
+  created_at: string;
+}
+
+export async function listMemory(): Promise<MemoryItem[]> {
+  const res = await fetch('/api/v1/memory', { headers: authHeaders() });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  const data = await res.json();
+  return data.memories ?? [];
+}
+
+export async function addMemory(content: string): Promise<MemoryItem> {
+  const res = await fetch('/api/v1/memory', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ content }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(String(data?.detail?.message ?? data?.detail ?? `保存失败（HTTP ${res.status}）`));
+  }
+  return data as MemoryItem;
+}
+
+export async function deleteMemory(id: number): Promise<void> {
+  const res = await fetch(`/api/v1/memory/${id}`, { method: 'DELETE', headers: authHeaders() });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(String(data?.detail?.message ?? `删除失败（HTTP ${res.status}）`));
+  }
+}
+
 /** 登录态检查（/auth/me）：有效返回用户，无效/未登录清 token 返回 null。 */
 export async function checkSession(): Promise<LoginUser | null> {
   const t = getToken();

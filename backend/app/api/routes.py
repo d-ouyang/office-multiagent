@@ -326,6 +326,69 @@ def my_quota(authorization: str | None = Header(default=None)):
     }
 
 
+# --------------------------------------------------------------------------- #
+# 显式长期记忆（p6.29）：用户可查可删；只增不改
+# --------------------------------------------------------------------------- #
+class MemoryCreate(BaseModel):
+    content: str
+
+
+@router.get("/memory")
+def list_memory(
+    keyword: str = Query(default="", max_length=64),
+    authorization: str | None = Header(default=None),
+):
+    """我的长期记忆列表（新的在前）。keyword 可选过滤。"""
+    from ..core.db import get_engine
+    from ..core.user_memory_repo import UserMemoryRepo
+
+    user = _current_user(authorization)
+    repo = UserMemoryRepo(get_engine())
+    rows = repo.list_for(user["id"], keyword=keyword)
+    return {"memories": rows, "total": repo.count(user["id"])}
+
+
+@router.post("/memory")
+def create_memory(body: MemoryCreate, authorization: str | None = Header(default=None)):
+    """手动添加一条记忆（source=user）。内容为空/超长/已满如实 4xx。"""
+    from ..core.db import get_engine
+    from ..core.user_memory_repo import UserMemoryRepo
+
+    user = _current_user(authorization)
+    repo = UserMemoryRepo(get_engine())
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(400, detail={"code": "EMPTY_CONTENT", "message": "记忆内容不能为空"})
+    if len(content) > settings.user_memory_content_chars:
+        raise HTTPException(
+            400,
+            detail={
+                "code": "CONTENT_TOO_LONG",
+                "message": f"最多 {settings.user_memory_content_chars} 字（当前 {len(content)} 字）",
+            },
+        )
+    from ..core.user_memory_repo import MemoryFull
+
+    try:
+        row = repo.add(user["id"], content, source="user")
+    except MemoryFull as e:
+        raise HTTPException(409, detail={"code": "MEMORY_FULL", "message": str(e)}) from e
+    return row
+
+
+@router.delete("/memory/{memory_id}")
+def delete_memory(memory_id: int, authorization: str | None = Header(default=None)):
+    """删除自己的记忆。别人的（或不存在）一律 404——不泄露存在性。"""
+    from ..core.db import get_engine
+    from ..core.user_memory_repo import UserMemoryRepo
+
+    user = _current_user(authorization)
+    ok = UserMemoryRepo(get_engine()).delete(user["id"], memory_id)
+    if not ok:
+        raise HTTPException(404, detail={"code": "MEMORY_NOT_FOUND", "message": "记忆不存在"})
+    return {"deleted": True}
+
+
 @router.post("/documents")
 async def upload_document(file: UploadFile = File(...), authorization: str | None = Header(default=None)):
     """p6.6：上传文档到自己的目录（data/upload/<username>/），供 read_document 工具读取。
@@ -684,6 +747,24 @@ def _stream_task(
     effective_text = _compose_task_text(remembered, attachments)
     if attachments:
         context_parts["current"] = effective_text
+
+    # p6.29：显式长期记忆注入——用户此前明确要求记住的信息拼进任务文本前部，
+    # 同时计入 context_usage 的 memory 分栏。查库失败不阻断任务（记忆是增强，不是依赖）。
+    try:
+        from ..core.user_memory_repo import UserMemoryRepo
+        from ..orchestration.memory import user_memory_block
+
+        mems = UserMemoryRepo(get_engine()).list_for(
+            user["id"], limit=settings.user_memory_inject_limit
+        )
+        if mems:
+            block = user_memory_block(mems, max_chars=settings.user_memory_inject_chars)
+            effective_text = f"{block}\n\n{effective_text}"
+            context_parts["memory"] = "\n".join(f"- {m.get('content', '')}" for m in mems)[
+                : settings.user_memory_inject_chars
+            ]
+    except Exception:  # noqa: BLE001 - 记忆注入失败不阻断任务
+        logging.getLogger(__name__).exception("长期记忆注入失败（忽略）")
 
     q: _queue.Queue = _queue.Queue()
     run_id = new_run_id()

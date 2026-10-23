@@ -66,6 +66,15 @@ def prepare_turn(history: list[dict[str, Any]], current: str) -> tuple[str, dict
     return "\n\n".join(blocks), parts
 
 
+def user_memory_block(mems: list[dict[str, Any]], *, max_chars: int = 1500) -> str:
+    """p6.29：把长期记忆拼成注入块（新的在前；总长截断并如实标注）。"""
+    lines = [f"- {m.get('content', '')}" for m in mems]
+    body = "\n".join(lines)[:max_chars]
+    if len("\n".join(lines)) > max_chars:
+        body += "…（长期记忆过多，已截断）"
+    return "【用户长期记忆】以下是用户此前明确要求记住的信息，回答时可参考（不是本次对话的内容）：\n" + body
+
+
 def context_items(
     parts: dict[str, str],
     *,
@@ -83,6 +92,8 @@ def context_items(
     ]
     if parts.get("coref"):
         rows.append(("coref", "指代说明", parts["coref"], "#d2a8ff"))
+    if parts.get("memory"):
+        rows.append(("memory", "长期记忆", parts["memory"], "#e3b341"))
     return [
         {"key": key, "label": label, "tokens": estimate_tokens(text), "color": color}
         for key, label, text, color in rows

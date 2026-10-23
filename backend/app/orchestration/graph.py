@@ -30,6 +30,7 @@ from .brain import make_brain
 from .orchestrator import compose_subtask_text, run_dag
 from .react import run_react
 from .tools import ToolRegistry
+from .validator import check_and_report
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class TaskState(TypedDict, total=False):
     model: str | None            # p6.5：本次任务的对话模型（优先级：请求>会话>默认）
     effort: str | None           # low/medium/high/max，仅推理模型会传给 API
     context_parts: dict[str, str]
+    validation: dict[str, Any] | None  # p6.29：终答数字对账结果（None=未校验/跳过）
 
 
 def _emit_context(state: TaskState, system: str, tools, emitter: RunEventEmitter, emit: Callable[[Event], None]) -> None:
@@ -72,6 +74,34 @@ def _emit_context(state: TaskState, system: str, tools, emitter: RunEventEmitter
     items = context_items(parts, system=system, rules=_PROTOCOL_TMPL, tools=tool_text)
     used = sum(int(item["tokens"]) for item in items)
     emit(emitter.context_usage(window, used, items))
+
+
+def _validate_and_flag(
+    result: Any,
+    task: str,
+    *,
+    emitter: RunEventEmitter,
+    emit: Callable[[Event], None],
+    label: str,
+) -> dict[str, Any] | None:
+    """p6.29：终答数字对账（轻量结果校验器）。对不上时发 observation 事件 +
+    WARNING 日志，不阻断不重跑；事件随 trace 落库，历史重建可见。"""
+    report = check_and_report(
+        final=result.final,
+        observations=[s.observation or "" for s in result.steps],
+        task=task,
+        on_mismatch=lambda rep: emit(
+            emitter.observation(
+                "result_validator",
+                f"⚠️ 结果校验（{label}）：终答中的数字 {('、'.join(rep.unmatched))} "
+                "未在工具观察或任务原文中出现，可能为模型推断或笔误，请注意核对。",
+            )
+        ),
+        label=label,
+    )
+    if report.skipped:
+        return None
+    return {"checked": report.checked, "unmatched": report.unmatched}
 
 
 def _effort_for(state: TaskState) -> str | None:
@@ -230,7 +260,10 @@ def build_graph(
             state["text"], brain, spec_tools, emitter=emitter, emit=emit, should_cancel=should_cancel
         )
         usage = getattr(brain, "usage", None) or {}
-        return {"result": res.final, "tokens_used": int(usage.get("total_tokens", 0))}
+        validation = _validate_and_flag(
+            res, state["text"], emitter=emitter, emit=emit, label=f"single:{agent}"
+        )
+        return {"result": res.final, "tokens_used": int(usage.get("total_tokens", 0)), "validation": validation}
 
     def multi_node(state: TaskState) -> dict[str, Any]:
         emit(emitter.status("orchestrator", "running"))
@@ -257,9 +290,21 @@ def build_graph(
         # p4.3c：汇总各子任务真实用量（此前 multi 不返回 tokens_used，settle 时
         # actual=0 全额退回，多 Agent 消耗不计账——§十四 对账恒等式破洞）
         total_tokens = sum(int(getattr(r, "tokens_used", 0) or 0) for r in results.values())
+        # p6.29：每个子任务终答各自对账（观察取各子任务自己的 steps）
+        validations: dict[str, Any] = {}
+        for key, r in results.items():
+            rep = _validate_and_flag(
+                r, state["text"], emitter=emitter, emit=emit, label=f"multi:{key}"
+            )
+            if rep is not None:
+                validations[key] = rep
         emit(emitter.content_delta(f"多 Agent 汇总 → {summary}"))
         emit(emitter.status("orchestrator", "done"))
-        return {"result": f"[multi] {summary}", "tokens_used": total_tokens}
+        return {
+            "result": f"[multi] {summary}",
+            "tokens_used": total_tokens,
+            "validation": validations or None,
+        }
 
     g = StateGraph(TaskState)
     g.add_node("planner", planner_node)
@@ -425,6 +470,7 @@ def run_task(
             "dag": state.get("dag"),
             "tokens_used": int(state.get("tokens_used", 0)),
             "result": state.get("result", ""),
+            "validation": state.get("validation"),
         },
         events,
     )

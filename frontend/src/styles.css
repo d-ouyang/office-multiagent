@@ -694,6 +694,65 @@ button.account-link:hover {
   color: var(--text);
   font-size: 14px;
 }
+/* p6.29：长期记忆 */
+.account-form textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card2);
+  color: var(--text);
+  font-size: 13px;
+  resize: vertical;
+}
+.mem-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mem-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 26px 8px 0;
+}
+.mem-item + .mem-item {
+  border-top: 1px solid var(--border);
+}
+.mem-content {
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-word;
+}
+.mem-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+.mem-del {
+  position: absolute;
+  right: 0;
+  top: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mem-del:hover {
+  background: var(--card2);
+  color: var(--err);
+}
+.mem-del:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .account-err {
   margin: 0;
   color: var(--err);

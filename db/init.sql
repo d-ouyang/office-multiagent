@@ -260,3 +260,14 @@ CREATE TABLE IF NOT EXISTS `audit_log` (
   KEY `idx_audit_actor` (`actor_user_id`),
   KEY `idx_audit_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ===== 显式长期记忆（p6.29）：用户可查可删，只增不改 =====
+CREATE TABLE IF NOT EXISTS `user_memory` (
+  `id`         BIGINT       NOT NULL AUTO_INCREMENT,
+  `user_id`    BIGINT       NOT NULL,
+  `content`    VARCHAR(512) NOT NULL,
+  `source`     VARCHAR(16)  NOT NULL DEFAULT 'agent',
+  `created_at` DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  KEY `idx_user_memory_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

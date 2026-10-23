@@ -69,6 +69,15 @@ class Settings(BaseSettings):
     # DAG 层内最大并行子任务数（p4.3c；防 LLM 渠道限流，1=串行回落基线）
     dag_max_concurrency: int = 3
 
+    # ---- 轻量结果校验器（p6.29，P1 拍板：数字对账 observation，不阻断）----
+    result_validation: bool = True
+
+    # ---- 显式长期记忆（p6.29，P1 拍板：user_memory 表，用户可查可删）----
+    user_memory_max_items: int = 100     # 每用户上限；满了如实拒绝（不静默淘汰）
+    user_memory_content_chars: int = 300  # 单条内容长度上限
+    user_memory_inject_limit: int = 20   # 每轮注入提示词的最大条数
+    user_memory_inject_chars: int = 1500  # 注入块总字符上限（上下文卫生）
+
     # ---- 连接层加固（p1.2a）----
     mysql_pool_size: int = 5
     mysql_max_overflow: int = 10

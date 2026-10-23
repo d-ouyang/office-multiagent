@@ -21,19 +21,20 @@ def test_specs_loaded_all_seven():
 
 
 def test_spec_tools_whitelist():
-    assert get_agent_spec("rag_retrieval").tools == ["rag_retrieve"]
+    # p6.29：general/rag_retrieval/data_analysis/report_generation 四类挂显式长期记忆工具
+    assert get_agent_spec("rag_retrieval").tools == ["rag_retrieve", "remember", "recall"]
     assert get_agent_spec("data_analysis").tools == [
         "query_orders", "sales_report", "db_query", "clean_table", "analyze_table",
-        "write_document", "render_chart",
+        "write_document", "render_chart", "remember", "recall",
     ]
     assert get_agent_spec("data_cleaning").tools == ["db_query", "clean_table", "analyze_table"]
     assert get_agent_spec("general").tools == [
         "query_orders", "sales_report", "db_query", "rag_retrieve", "read_document",
-        "clean_table", "analyze_table", "write_document", "render_chart",
+        "clean_table", "analyze_table", "write_document", "render_chart", "remember", "recall",
     ]
     assert get_agent_spec("report_generation").tools == [
         "query_orders", "sales_report", "db_query", "rag_retrieve", "read_document",
-        "clean_table", "analyze_table", "write_document", "render_chart",
+        "clean_table", "analyze_table", "write_document", "render_chart", "remember", "recall",
     ]
 
 

@@ -1,8 +1,8 @@
 // 侧栏个人中心：点用户行向上弹出。只展示这个系统真实有的字段。
 import { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, KeyRound, LogOut, Settings } from 'lucide-react';
+import { Brain, ChevronLeft, ChevronRight, KeyRound, LogOut, Settings, Trash2 } from 'lucide-react';
 
-import { changePassword, getQuota, type LedgerEntry } from '../lib/api';
+import { addMemory, changePassword, deleteMemory, getQuota, listMemory, type LedgerEntry, type MemoryItem } from '../lib/api';
 import { formatLedgerTime, formatTokens } from '../lib/format';
 import type { SessionUser } from './AppSidebar';
 import { modelDisplayName } from './ModelPicker';
@@ -33,7 +33,7 @@ export function AccountPanel(props: {
   onClose: () => void;
   onLogout: () => void;
 }) {
-  const [view, setView] = useState<'home' | 'settings' | 'password' | 'usage'>('home');
+  const [view, setView] = useState<'home' | 'settings' | 'password' | 'usage' | 'memory'>('home');
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [ledgerError, setLedgerError] = useState<string | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
@@ -43,6 +43,12 @@ export function AccountPanel(props: {
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwOk, setPwOk] = useState(false);
   const [busy, setBusy] = useState(false);
+  // p6.29：长期记忆视图
+  const [memories, setMemories] = useState<MemoryItem[] | null>(null);
+  const [memError, setMemError] = useState<string | null>(null);
+  const [memInput, setMemInput] = useState('');
+  const [memBusy, setMemBusy] = useState(false);
+  const [memDeleting, setMemDeleting] = useState<number | null>(null);
   const role = ROLE_LABEL[props.user.role] ?? props.user.role;
   const initial = (props.user.username || '?').slice(0, 1).toUpperCase();
 
@@ -71,6 +77,52 @@ export function AccountPanel(props: {
       cancelled = true;
     };
   }, [view]);
+
+  useEffect(() => {
+    if (view !== 'memory') return;
+    let cancelled = false;
+    setMemories(null);
+    setMemError(null);
+    listMemory()
+      .then((rows) => {
+        if (!cancelled) setMemories(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setMemError('暂时读不到长期记忆');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [view]);
+
+  const submitMemory = async () => {
+    const content = memInput.trim();
+    if (!content) return;
+    setMemBusy(true);
+    setMemError(null);
+    try {
+      const row = await addMemory(content);
+      setMemories((rows) => [row, ...(rows ?? [])]);
+      setMemInput('');
+    } catch (e) {
+      setMemError((e as Error).message);
+    } finally {
+      setMemBusy(false);
+    }
+  };
+
+  const removeMemory = async (id: number) => {
+    setMemDeleting(id);
+    setMemError(null);
+    try {
+      await deleteMemory(id);
+      setMemories((rows) => (rows ?? []).filter((m) => m.id !== id));
+    } catch (e) {
+      setMemError((e as Error).message);
+    } finally {
+      setMemDeleting(null);
+    }
+  };
 
   const submitPassword = async () => {
     setPwError(null);
@@ -130,6 +182,11 @@ export function AccountPanel(props: {
             </div>
             <p className="account-note">余额不足时新任务会暂停。用量按实际结算入账，余额不会记成负数。</p>
           </div>
+          <button type="button" className="account-nav" onClick={() => setView('memory')}>
+            <Brain size={16} />
+            <span>长期记忆</span>
+            <ChevronRight size={16} className="account-chev" />
+          </button>
           <button type="button" className="account-nav" onClick={() => setView('settings')}>
             <Settings size={16} />
             <span>系统设置</span>
@@ -181,6 +238,63 @@ export function AccountPanel(props: {
                 ))}
               </ul>
             </>
+          )}
+        </>
+      )}
+      {view === 'memory' && (
+        <>
+          <button type="button" className="account-back" onClick={() => setView('home')}>
+            <ChevronLeft size={16} /> 长期记忆
+          </button>
+          <p className="account-note">
+            助手只在你明确要求记住时写入。每轮对话都会带上这些信息，删除后立即对助手不可见。
+          </p>
+          <form
+            className="account-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitMemory();
+            }}
+          >
+            <label>
+              添加一条记忆
+              <textarea
+                value={memInput}
+                maxLength={300}
+                rows={2}
+                placeholder="例如：报销口径以财务制度 2026 版为准"
+                onChange={(e) => setMemInput(e.target.value)}
+              />
+            </label>
+            {memError && <p className="account-err">{memError}</p>}
+            <button type="submit" className="send" disabled={memBusy || !memInput.trim()}>
+              {memBusy ? '保存中…' : '保存'}
+            </button>
+          </form>
+          {memories === null && !memError && <p className="account-note">正在读取…</p>}
+          {memories !== null && memories.length === 0 && (
+            <p className="account-note">还没有长期记忆。对话里说「记住…」，或直接在上面添加。</p>
+          )}
+          {memories !== null && memories.length > 0 && (
+            <ul className="mem-list">
+              {memories.map((m) => (
+                <li key={m.id} className="mem-item">
+                  <span className="mem-content">{m.content}</span>
+                  <span className="mem-meta">
+                    {m.source === 'user' ? '手动添加' : '助手记录'} · {formatLedgerTime(m.created_at)}
+                  </span>
+                  <button
+                    type="button"
+                    className="mem-del"
+                    aria-label="删除这条记忆"
+                    disabled={memDeleting === m.id}
+                    onClick={() => void removeMemory(m.id)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
         </>
       )}
