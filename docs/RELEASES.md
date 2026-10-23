@@ -5,6 +5,27 @@
 
 ---
 
+## v1.0.0-p4.3 — DAG 结果传递 + 层内并行 + multi token 汇总（2026-10-23）
+
+**类型**：功能（Phase 4 补齐：p4.1 遗留项落地）
+**Tag 提交**：见 `git show v1.0.0-p4.3`
+**分刀 tag**：`v1.0.0-p4.3a`（结果传递）→ `v1.0.0-p4.3b`（层内并行 + seq 线程安全）→ `v1.0.0-p4.3c`（token 汇总 + 并行度配置）
+
+### 交付内容
+- **结果传递**：`run_dag` 把直接上游 `AgentResult` 交给子任务 runner；`compose_subtask_text` 拼「intent + 上游摘要」（单上游截断 2000 字；上游 `hit_cap` 如实标注"未完成"）——「先清洗再分析」不再盲跑。
+- **层内并行**：同层无依赖子任务 `ThreadPoolExecutor` 并行（`DAG_MAX_CONCURRENCY` 默认 3，1=串行回落）；`EventSequence` 加锁保证并发 seq 不重复；结果按子任务序重建，汇总文本确定。
+- **multi token 汇总**：`AgentResult.tokens_used` + `multi_node` 汇总——修复 multi 路由 settle `actual=0` 全额退回的账目破洞（真跑验证 3 子任务 15577 tokens 如实入账）。
+- **顺带修复（真跑冒烟抓到）**：非流式 brain 漏 p6.3 混合策略——模型输出协议 B 的自然语言终答时，非流式路径当"无法解析"直接停掉；两条路径判定一致后 multi 并行子任务恢复正常产出。
+- **取舍**：multi 子任务块状推送思考/终答（并行下避免多 Agent 字符级交错）；单 Agent 路径逐字流不变。
+
+### 验证状态
+- ✅ pytest 229 passed / vitest 64 / jest 36 三套全绿；三轮真 LLM 冒烟（结果链完整、并行 seq 唯一连续、token 如实入账）。
+
+### 已知遗留
+- 多 Agent 并行态前端可视化（delta 事件带 subtask_id 归属 + 分 Agent 打字机）——独立迭代，不在本范围。
+
+---
+
 ## v1.0.0-p6.24c — 扫描识别读不到字时再试一次（2026-10-22）
 
 **类型**：修复

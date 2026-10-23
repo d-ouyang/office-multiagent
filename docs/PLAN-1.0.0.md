@@ -89,6 +89,7 @@
 - **v1.0.0-p4.1（已完成）**：`orchestration/tools.py`（重试+能力缺失不胡编）+ `react.py`（ReAct 循环 + max_iterations 防跑飞 + Brain 协议 + StubBrain 基线）+ `orchestrator.py`（DAG 拓扑分层 + run_dag 调度汇总）；graph single→run_react / multi→run_dag。**后端编排闭环真跑通过**（uvicorn+curl：/tasks 复杂任务按拓扑序推 NDJSON）。测试 57 passed。闭环抓到并修 /tasks 漏 import encode_line。
 - **v1.0.0-p4.2（已完成）**：`core/token_pool.py`（reserve/settle 原子扣减 + ledger）+ `graph.py` quota 门（`interrupt()` 暂停 + `Command(resume=...)` 续跑）+ `/tasks` 增 `user_id`/`estimate`。测试 65 passed。**Phase 4 至此全部完成**。
 - **v1.0.0-p4.3（待开工，2026-10-23 立项）**：DAG 结果传递 + 层内并行（设计文档 §四.3「支持串行/并行后汇总」的遗留项）。三项缺口：① 上游结果未传下游（`graph.py` 子任务文本只有 intent）② 层内串行（`orchestrator.py` p4.1 注释明示留待后续）③ multi 路由 `tokens_used` 未汇总导致 settle 全额退回。详细清单与验收见 `docs/PLAN-p4.3-DAG结果传递与层内并行.md`。
+- **v1.0.0-p4.3（已完成，2026-10-23）**：DAG 结果传递 + 层内并行 + multi token 汇总（设计文档 §四.3「支持串行/并行后汇总」的遗留项，分 a/b/c 三刀）。三项缺口全修：① 上游结果未传下游（compose_subtask_text）② 层内串行（ThreadPoolExecutor 并行，`DAG_MAX_CONCURRENCY` 默认 3，1=串行回落）③ multi 路由 tokens_used 未汇总导致 settle 全额退回。顺带修复非流式 brain 漏 p6.3 混合策略的 bug（真跑冒烟抓到）。详细清单见 `docs/PLAN-p4.3-DAG结果传递与层内并行.md`，分刀总结见 `docs/iterations/v1.0.0-p4.3a/b/c-*.md`。三套测试全绿（pytest 229 / vitest 64 / jest 36）。
 - **测试**：超时强制中止给阶段结论；余额不足→中断事件+续跑恢复；反向验证护栏（拆掉后断言转红，§11.6）。
 - **Tag**：`v1.0.0-p4.1` / `p4.2`。
 
@@ -124,7 +125,7 @@
 | 1     | 后端核心骨架（p1.1 / p1.2a / p1.2b / p1.2c） | ✅ 完成 | v1.0.0-p1.2c |
 | 2     | 流式协议 + 中间层（网关 + 前端可视化） | ✅ 完成 | v1.0.0-p2.1b |
 | 3     | Planner + Router + DAG 拆分 | ✅ 完成 | v1.0.0-p3.2 |
-| 4     | 多 Agent 协调 + 兜底 + 续跑 + token 池 | ✅ 完成 | v1.0.0-p4.2 |
+| 4     | 多 Agent 协调 + 兜底 + 续跑 + token 池 + DAG 结果传递/并行 | ✅ 完成 | v1.0.0-p4.3c |
 | 5     | 办公能力补齐                      | 🚧 进行中 | v1.0.0-p5.2 |
 | 6     | Token 池 + 模型权限 + 前端精细化 + 压缩 | 🚧 进行中 | v1.0.0-p6.24c |
 | 7     | 部署到远程服务器                    | ⏳ 待开始 | —           |
