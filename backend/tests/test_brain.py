@@ -84,11 +84,23 @@ def test_llm_brain_final_step():
 
 
 def test_llm_brain_bad_json_stops_honestly():
-    chat = FakeChat(["我觉觉得应该查一下（不是 JSON）"])
+    # 真解析失败 = 以 { 开头但不是合法 JSON（协议 A 的残缺输出）——如实停止，不猜不编
+    chat = FakeChat(['{"thought":"查库","action":'])
     brain = LlmBrain(model_id="deepseek-chat", tools=_registry(), chat_fn=chat)
     step = brain.next_step("任务", [])
     assert step.final is not None and "无法解析" in step.final
     assert step.action is None  # 不猜动作、不编数据
+
+
+def test_llm_brain_natural_language_is_final_non_streaming():
+    # p4.3b：非流式路径与流式一致——非 JSON 输出 = 协议 B 的自然语言终答
+    # （此前非流式把它当"无法解析"停掉，multi 并行子任务因此全部哑火，真跑冒烟抓到）
+    chat = FakeChat(["公司年假制度：入职满一年 5 天。"])
+    brain = LlmBrain(model_id="deepseek-chat", tools=_registry(), chat_fn=chat)
+    step = brain.next_step("任务", [])
+    assert step.final == "公司年假制度：入职满一年 5 天。"
+    assert step.action is None
+    assert step.streamed is False  # 非流式：由 run_react 整段发一次
 
 
 def test_llm_brain_llm_error_stops_honestly():

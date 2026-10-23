@@ -205,11 +205,16 @@ class LlmBrain:
 
         data = extract_json(res.content)
         if data is None:
-            logger.warning("LLM brain 输出无法解析为 JSON，如实停止（不编造）")
-            return Step(
-                thought="模型输出无法解析",
-                final="模型输出无法解析为决策 JSON，已停止本次任务（未编造结论）。请稍后重试。",
-            )
+            if looks_like_json(res.content):
+                # 以 { 开头但不是合法 JSON → 真解析失败，如实停止（不编造）
+                logger.warning("LLM brain 输出无法解析为 JSON，如实停止（不编造）")
+                return Step(
+                    thought="模型输出无法解析",
+                    final="模型输出无法解析为决策 JSON，已停止本次任务（未编造结论）。请稍后重试。",
+                )
+            # 非 JSON 输出 = 协议 B 的自然语言终答（p6.3 混合策略；此前非流式路径漏了
+            # 这条，与流式路径 looks_like_json 判定不一致，p4.3b 真跑冒烟抓到）
+            return Step(thought="", final=res.content, streamed=False)
         return self._step_from_json(data, thought_streamed=False)
 
     def _next_step_streaming(self, messages: list[dict[str, str]]) -> Step:

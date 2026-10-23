@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from enum import Enum
@@ -56,14 +57,20 @@ class Event(BaseModel):
 
 
 class EventSequence:
-    """每个 run 一个单调自增 seq。"""
+    """每个 run 一个单调自增 seq。
+
+    p4.3b：加锁——并行子任务（层内 ThreadPoolExecutor）会并发调 next()，
+    无锁的 `self._n += 1` 读-改-写竞争会产生重复 seq（前端按 seq 排序会乱）。
+    """
 
     def __init__(self, start: int = 0) -> None:
         self._n = start
+        self._lock = threading.Lock()
 
     def next(self) -> int:
-        self._n += 1
-        return self._n
+        with self._lock:
+            self._n += 1
+            return self._n
 
 
 class RunEventEmitter:

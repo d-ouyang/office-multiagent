@@ -100,6 +100,11 @@ def build_graph(
 
         p4.3a：接上游结果——任务文本 = intent + 直接上游的 final 摘要（compose_subtask_text），
         下游不再"只看 intent 盲跑"。
+
+        p4.3b：并行安全——multi 子任务脑走【非流式】（stream=False）。层内并行时若各子任务
+        逐字推 content_delta，多 Agent 的终答会字符级交错成乱码；块状推送下每个子任务的
+        思考/终答是完整事件，并行只加速执行、不破坏可读性。单 Agent 路径（single_node）
+        仍是逐字流（打字机），不受影响。
         """
 
         def _run(st, upstream=None):
@@ -110,7 +115,7 @@ def build_graph(
                 fallback_answer=f"[{st.agent_type}] 完成 {st.intent}",
                 system_prompt=spec.system_prompt,
                 model_id=state.get("model"),
-                stream=True,
+                stream=False,
                 on_content=lambda c: emit(emitter.content_delta(c)),
                 on_thought=lambda t: emit(emitter.thinking_delta(t)),
                 reasoning_effort=_effort_for(state),

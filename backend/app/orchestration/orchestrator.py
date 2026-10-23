@@ -5,10 +5,15 @@
 p4.3a：上游结果传递给下游——`run_dag` 把已完成的直接上游 `AgentResult` 交给
 `agent_runner(subtask, upstream)`，`compose_subtask_text` 负责拼进子任务文本
 （摘要 + 截断 + 上游失败如实标注，遵循 observation 摘要化纪律）。
+
+p4.3b：层内并行落地——同层无依赖子任务用 ThreadPoolExecutor 并行（ReAct 是同步
+函数，走线程池而非裸 asyncio.gather）；`max_concurrency<=1` 或单任务层回落串行
+基线（确定性可测）。事件 seq 由 EventSequence 加锁保证并发下不重复（events.py）。
 """
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..core.decomposer import DAG, Subtask
 from ..core.events import Event, RunEventEmitter
@@ -17,6 +22,9 @@ from .tools import ToolRegistry
 
 #: 单个上游结果进下游任务文本的截断上限（p6.7/p6.9 教训：进 LLM 上下文必须摘要化）
 UPSTREAM_MAX_CHARS = 2000
+
+#: 层内默认最大并行子任务数（防 LLM 渠道限流；planner.yaml max_intents=3 天然上限也就 3）
+DEFAULT_MAX_CONCURRENCY = 3
 
 
 def compose_subtask_text(
@@ -72,26 +80,63 @@ def topo_levels(dag: DAG) -> list[list[Subtask]]:
     return levels
 
 
+def _upstream_of(st: Subtask, results: dict[str, AgentResult]) -> dict[str, AgentResult]:
+    """取该子任务已完成的【直接】上游结果（按 depends_on 过滤）。"""
+    return {dep: results[dep] for dep in st.depends_on if dep in results}
+
+
+def _run_subtask(
+    st: Subtask,
+    agent_runner: Callable[[Subtask, dict[str, AgentResult]], AgentResult],
+    upstream: dict[str, AgentResult],
+    emitter: RunEventEmitter,
+    emit: Callable[[Event], None],
+) -> tuple[str, AgentResult]:
+    """跑一个子任务并推 running/done 状态（供线程池与串行两条路径共用）。"""
+    emit(emitter.status(st.agent_type, "running", subtask_id=st.id))
+    res = agent_runner(st, upstream)
+    emit(emitter.status(st.agent_type, "done", subtask_id=st.id))
+    return st.id, res
+
+
 def run_dag(
     dag: DAG,
     *,
     emitter: RunEventEmitter,
     emit: Callable[[Event], None],
     agent_runner: Callable[[Subtask, dict[str, AgentResult]], AgentResult],
+    max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
 ) -> dict[str, AgentResult]:
-    """按拓扑层执行各子任务（层内串行基线），返回 {subtask_id: AgentResult}。
+    """按拓扑层执行各子任务，返回 {subtask_id: AgentResult}（按 dag.subtasks 顺序，确定性）。
 
     p4.3a：`agent_runner(subtask, upstream)`——upstream 是该子任务已完成的直接上游
     结果（按 depends_on 过滤，无依赖传空 dict）；下游据此接上一步的产出。
+
+    p4.3b：层内并行——同层子任务无依赖，用 ThreadPoolExecutor 并行跑（ReAct 是同步
+    函数，线程池是正确姿势；裸 asyncio.gather 包同步函数不会并行）。层间仍串行，
+    依赖顺序不受影响。`max_concurrency<=1` 或层内只有 1 个子任务时走串行基线。
     """
     results: dict[str, AgentResult] = {}
     for level in topo_levels(dag):
-        for st in level:
-            emit(emitter.status(st.agent_type, "running", subtask_id=st.id))
-            upstream = {dep: results[dep] for dep in st.depends_on if dep in results}
-            results[st.id] = agent_runner(st, upstream)
-            emit(emitter.status(st.agent_type, "done", subtask_id=st.id))
-    return results
+        if len(level) <= 1 or max_concurrency <= 1:
+            # 串行基线：单任务层或显式关并行（回落开关，行为与 p4.1 一致）
+            for st in level:
+                st_id, res = _run_subtask(st, agent_runner, _upstream_of(st, results), emitter, emit)
+                results[st_id] = res
+            continue
+        # 层内并行：先取好各子任务的上游快照（本层依赖都已满足，results 不再变动）
+        upstreams = {st.id: _upstream_of(st, results) for st in level}
+        workers = min(len(level), max_concurrency)
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dag") as pool:
+            futures = [
+                pool.submit(_run_subtask, st, agent_runner, upstreams[st.id], emitter, emit)
+                for st in level
+            ]
+            for fut in as_completed(futures):
+                st_id, res = fut.result()  # 子任务异常在这里抛出（与串行一致：失败即中断）
+                results[st_id] = res
+    # 并行完成顺序不固定 → 按 dag.subtasks 顺序重建，保证汇总文本确定（可对账）
+    return {st.id: results[st.id] for st in dag.subtasks}
 
 
 def default_agent_runner(

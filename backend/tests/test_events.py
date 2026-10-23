@@ -110,3 +110,27 @@ def test_done_carries_optional_usage():
     bare = em.done()
     assert "tokens_used" not in bare.data
     assert "model" not in bare.data
+
+
+def test_event_sequence_thread_safe_no_duplicates():
+    # p4.3b：层内并行子任务并发调 next()——无锁读-改-写会产生重复 seq（前端按 seq 排序会乱）
+    import threading
+
+    seq = EventSequence()
+    collected: list[int] = []
+    guard = threading.Lock()
+
+    def worker():
+        vals = [seq.next() for _ in range(200)]
+        with guard:
+            collected.extend(vals)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(collected) == 1600
+    assert len(set(collected)) == 1600          # 无重复
+    assert sorted(collected) == list(range(1, 1601))  # 无跳号无重号
