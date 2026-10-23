@@ -2,7 +2,7 @@
 // 注意：管理端 token 与工作台 token 相互独立，退出只退管理端。
 import { useState } from 'react';
 
-import { adminChangePassword, adminClearToken, type LoginUser } from '../lib/api';
+import { adminChangePassword, adminClearToken, adminLogout, type LoginUser } from '../lib/api';
 
 export default function AdminProfilePanel({
   user,
@@ -101,8 +101,11 @@ export default function AdminProfilePanel({
             type="button"
             className="admin-btn ghost"
             onClick={() => {
-              adminClearToken();
-              onLogout();
+              // 先记账再清本地 token（登出也是一条审计）
+              void adminLogout().finally(() => {
+                adminClearToken();
+                onLogout();
+              });
             }}
           >
             退出管理端

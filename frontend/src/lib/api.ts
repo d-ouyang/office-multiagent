@@ -193,16 +193,19 @@ export function adminAuthHeaders(): Record<string, string> {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-/** 管理端登录：复用同一账号体系，但校验 admin/superadmin 角色（fail-closed）。 */
+/**
+ * 管理端登录（p6.28a）：走后端 /admin/login（账密+角色+审计都在后端）。
+ * 与工作台登录（网关 /auth/login）是两条路径，token 分别存放。
+ */
 export async function adminLogin(username: string, password: string): Promise<LoginUser> {
-  const res = await fetch('/api/v1/auth/login', {
+  const res = await fetch('/api/v1/admin/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(String(data?.error?.message ?? data?.message ?? `登录失败（HTTP ${res.status}）`));
+    throw new Error(String(data?.detail?.message ?? data?.message ?? `登录失败（HTTP ${res.status}）`));
   }
   const user = data.user as LoginUser;
   if (user.role !== 'admin' && user.role !== 'superadmin') {
@@ -210,6 +213,15 @@ export async function adminLogin(username: string, password: string): Promise<Lo
   }
   adminSetToken(String(data.access_token));
   return user;
+}
+
+/** 管理端登出（记账；token 无状态，真正失效靠清本地 token）。 */
+export async function adminLogout(): Promise<void> {
+  try {
+    await fetch('/api/v1/admin/logout', { method: 'POST', headers: adminAuthHeaders() });
+  } catch {
+    /* 登出记账失败不影响本地退出 */
+  }
 }
 
 export async function adminCheckSession(): Promise<LoginUser | null> {
@@ -231,16 +243,16 @@ export async function adminCheckSession(): Promise<LoginUser | null> {
   }
 }
 
-/** 管理端个人中心改密：成功后轮换 admin token（旧 admin token 同时失效）。 */
+/** 管理端个人中心改密（p6.28a）：后端验旧密→改密→踢旧登录态→返回新 admin token。 */
 export async function adminChangePassword(oldPassword: string, newPassword: string): Promise<void> {
-  const res = await fetch('/api/v1/auth/password', {
+  const res = await fetch('/api/v1/admin/password', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...adminAuthHeaders() },
     body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(String(data?.message ?? data?.error?.message ?? `修改失败（HTTP ${res.status}）`));
+    throw new Error(String(data?.detail?.message ?? data?.message ?? `修改失败（HTTP ${res.status}）`));
   }
   if (data.access_token) adminSetToken(String(data.access_token));
 }
@@ -318,17 +330,21 @@ export interface AdminUser {
   balance: number;
 }
 
-export async function adminListUsers(q?: string): Promise<AdminUser[]> {
-  const qs = new URLSearchParams();
+export async function adminListUsers(
+  q?: string,
+  page = 1,
+  pageSize = 20,
+): Promise<{ users: AdminUser[]; total: number; page: number; page_size: number }> {
+  const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (q?.trim()) qs.set('q', q.trim());
   const res = await fetch(`/api/v1/admin/users?${qs.toString()}`, { headers: adminAuthHeaders() });
   if (res.status === 401) {
-    clearToken();
+    adminClearToken();
     throw new Error('UNAUTHORIZED');
   }
   if (res.status === 403) throw new Error('FORBIDDEN');
   const data = await res.json();
-  return data.users ?? [];
+  return { users: data.users ?? [], total: data.total ?? 0, page: data.page ?? page, page_size: data.page_size ?? pageSize };
 }
 
 export async function adminRecharge(userId: number, amount: number, note?: string): Promise<number> {
@@ -409,11 +425,54 @@ export function adminUsage(days = 7): Promise<{ days: number; series: UsagePoint
   return adminGet(`/api/v1/admin/usage?days=${days}`);
 }
 
-export async function adminTasks(status?: string, limit = 30): Promise<AdminTaskRow[]> {
-  const qs = new URLSearchParams({ limit: String(limit) });
+export async function adminTasks(
+  status?: string,
+  page = 1,
+  pageSize = 20,
+): Promise<{ tasks: AdminTaskRow[]; total: number; page: number; page_size: number }> {
+  const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (status) qs.set('status', status);
-  const data = await adminGet<{ tasks: AdminTaskRow[] }>(`/api/v1/admin/tasks?${qs.toString()}`);
-  return data.tasks ?? [];
+  const data = await adminGet<{ tasks: AdminTaskRow[]; total: number; page: number; page_size: number }>(
+    `/api/v1/admin/tasks?${qs.toString()}`,
+  );
+  return { tasks: data.tasks ?? [], total: data.total ?? 0, page: data.page ?? page, page_size: data.page_size ?? pageSize };
+}
+
+// --------------------------------------------------------------------------- //
+// p6.28a：审计日志
+// --------------------------------------------------------------------------- //
+
+export interface AuditRow {
+  id: number;
+  actor_user_id: number | null;
+  actor_username: string;
+  actor_role: string | null;
+  action: string;
+  action_label: string;
+  target_type: string;
+  target_id: string | null;
+  target_label: string | null;
+  detail: Record<string, unknown> | null;
+  ip: string | null;
+  created_at: string;
+}
+
+export async function adminAuditLogs(params: {
+  action?: string;
+  target_type?: string;
+  keyword?: string;
+  page?: number;
+  page_size?: number;
+} = {}): Promise<{ logs: AuditRow[]; total: number; page: number; page_size: number; actions: Array<{ value: string; label: string }>; target_types: string[] }> {
+  const qs = new URLSearchParams({ page: String(params.page ?? 1), page_size: String(params.page_size ?? 20) });
+  if (params.action) qs.set('action', params.action);
+  if (params.target_type) qs.set('target_type', params.target_type);
+  if (params.keyword?.trim()) qs.set('keyword', params.keyword.trim());
+  const data = await adminGet<{
+    logs: AuditRow[]; total: number; page: number; page_size: number;
+    actions: Array<{ value: string; label: string }>; target_types: string[];
+  }>(`/api/v1/admin/audit-logs?${qs.toString()}`);
+  return { ...data, logs: data.logs ?? [], total: data.total ?? 0 };
 }
 
 /** 系统状态（公开接口，不需要 token 也能看；这里带上 token 无害） */

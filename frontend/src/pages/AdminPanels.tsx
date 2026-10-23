@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { consumeNdjson } from '../lib/consume';
+import Select from '../components/ui/Select';
+import Pager from '../components/ui/Pager';
+import ConfirmDialog, { type ConfirmSpec } from '../components/ui/ConfirmDialog';
 import {
   adminListUsers,
   adminOverview,
@@ -16,7 +19,9 @@ import {
   adminSavePoolModels,
   adminDeletePool,
   adminSetUserPool,
+  adminAuditLogs,
   type ModelPool,
+  type AuditRow,
   getHealth,
   type AdminOverview,
   type AdminTaskRow,
@@ -38,12 +43,13 @@ const STATUS: Record<string, string> = {
 };
 const REASON: Record<string, string> = { quota: '配额不足', user: '用户主动', error: '中途报错', input: '待补充' };
 
-export type AdminTab = 'users' | 'usage' | 'tasks' | 'system' | 'pools';
+export type AdminTab = 'users' | 'usage' | 'tasks' | 'pools' | 'audit' | 'system';
 export const ADMIN_TABS: Array<{ key: AdminTab; label: string; hint: string }> = [
   { key: 'users', label: '用户与额度', hint: '用户列表 / 充值 / 流水' },
   { key: 'usage', label: '用量概览', hint: '消耗指标与近 N 天趋势' },
   { key: 'tasks', label: '任务监控', hint: '全局任务 / 暂停原因 / 代续跑' },
   { key: 'pools', label: '模型池', hint: '池定义 / 模型归属 / 用户分配' },
+  { key: 'audit', label: '审计日志', hint: '谁在什么时候做了什么（只读）' },
   { key: 'system', label: '系统状态', hint: '服务健康 / 模型清单' },
 ];
 
@@ -51,6 +57,9 @@ export const ADMIN_TABS: Array<{ key: AdminTab; label: string; hint: string }> =
 
 export function UsersTab() {
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [pools, setPools] = useState<ModelPool[]>([]);
   const [q, setQ] = useState('');
   const [error, setError] = useState('');
@@ -61,29 +70,31 @@ export function UsersTab() {
   const [ledgerFor, setLedgerFor] = useState<number | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
 
-  const load = useCallback(async (kw: string) => {
+  const load = useCallback(async (kw: string, pg = page, size = pageSize) => {
     try {
-      setUsers(await adminListUsers(kw));
+      const data = await adminListUsers(kw, pg, size);
+      setUsers(data.users);
+      setTotal(data.total);
       setError('');
     } catch (e) {
       const msg = (e as Error).message;
       setError(msg === 'FORBIDDEN' ? '需要管理员权限' : `加载失败：${msg}`);
     }
-  }, []);
+  }, [page, pageSize]);
 
   useEffect(() => {
-    void load('');
+    void load('', page, pageSize);
     adminModelPools()
       .then((d) => setPools(d.pools))
       .catch(() => setPools([]));
-  }, [load]);
+  }, [load, page, pageSize]);
 
   /** p6.27c：分配用户的模型池（null=不限制）。 */
   const changePool = async (u: AdminUser, poolId: number | null) => {
     try {
       await adminSetUserPool(u.id, poolId);
       setNotice(`已将 ${u.username} 移到 ${poolId ? pools.find((p) => p.id === poolId)?.name ?? poolId : '不限制'}`);
-      await load(q);
+      await load(q, page, pageSize);
       setTimeout(() => setNotice(''), 3000);
     } catch (e) {
       setError(`分配失败：${(e as Error).message}`);
@@ -103,7 +114,7 @@ export function UsersTab() {
       const balance = await adminRecharge(u.id, value, note[u.id]);
       setNotice(`已为 ${u.username} 充值 ${value.toLocaleString()}，当前余额 ${balance.toLocaleString()}`);
       setAmount((prev) => ({ ...prev, [u.id]: '' }));
-      await load(q);
+      await load(q, page, pageSize);
       setTimeout(() => setNotice(''), 4000);
     } catch (e) {
       setError(`充值失败：${(e as Error).message}`);
@@ -133,8 +144,8 @@ export function UsersTab() {
             if (e.key === 'Enter') void load(q);
           }}
         />
-        <button type="button" className="admin-btn" onClick={() => void load(q)}>搜索</button>
-        <button type="button" className="admin-btn ghost" onClick={() => { setQ(''); void load(''); }}>重置</button>
+        <button type="button" className="admin-btn" onClick={() => { setPage(1); void load(q, 1, pageSize); }}>搜索</button>
+        <button type="button" className="admin-btn ghost" onClick={() => { setQ(''); setPage(1); void load('', 1, pageSize); }}>重置</button>
       </div>
 
       {error && <div className="banner err">{error}</div>}
@@ -160,16 +171,16 @@ export function UsersTab() {
               <td>{u.username}</td>
               <td><span className={`badge ${u.role === 'admin' || u.role === 'superadmin' ? 'agent' : ''}`}>{u.role}</span></td>
               <td>
-                <select
-                  className="admin-pool-select"
-                  value={u.model_pool_id ?? ''}
-                  onChange={(e) => void changePool(u, e.target.value ? Number(e.target.value) : null)}
-                >
-                  <option value="">不限制</option>
-                  {pools.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
+                <Select
+                  width={120}
+                  value={u.model_pool_id ? String(u.model_pool_id) : ''}
+                  placeholder="不限制"
+                  options={[
+                    { value: '', label: '不限制', hint: '全部模型' },
+                    ...pools.map((p) => ({ value: String(p.id), label: p.name, hint: `${p.user_count} 人` })),
+                  ]}
+                  onChange={(v) => void changePool(u, v ? Number(v) : null)}
+                />
               </td>
               <td className="num">{u.balance.toLocaleString()}</td>
               <td>
@@ -209,6 +220,11 @@ export function UsersTab() {
           )}
         </tbody>
       </table>
+
+      <Pager total={total} page={page} pageSize={pageSize}
+        onPage={(p) => setPage(p)}
+        onPageSize={(n) => { setPageSize(n); setPage(1); }}
+      />
 
       {ledgerFor !== null && (
         <div className="admin-ledger">
@@ -327,15 +343,45 @@ function Stat({ label, value, hint, tone }: { label: string; value: string; hint
 
 /* ------------------------------ 任务监控 ------------------------------ */
 
+const TASK_STATUS_OPTIONS = [
+  { value: '', label: '全部状态' },
+  { value: 'done', label: '完成' },
+  { value: 'paused_user', label: '用户暂停' },
+  { value: 'paused_insufficient_quota', label: '配额暂停' },
+  { value: 'paused_error', label: '出错暂停' },
+  { value: 'resumed', label: '已续跑' },
+];
+
 export function TasksTab() {
   const [rows, setRows] = useState<AdminTaskRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [filter, setFilter] = useState<string>('');
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
+  const [result, setResult] = useState<{ title: string; lines: string[] } | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<AdminTaskRow | null>(null);
 
-  /** p6.27b：代续跑——以管理员身份替用户重跑，流式消费只取结果，不展示完整对话。 */
-  const resumeFor = async (r: AdminTaskRow) => {
+  const load = useCallback(async (status: string, pg = page, size = pageSize) => {
+    try {
+      const data = await adminTasks(status || undefined, pg, size);
+      setRows(data.tasks);
+      setTotal(data.total);
+      setError('');
+    } catch (e) {
+      setError(`加载失败：${(e as Error).message}`);
+    }
+  }, [page, pageSize]);
+
+  useEffect(() => {
+    void load(filter, page, pageSize);
+  }, [filter, page, pageSize, load]);
+
+  /** p6.28d：确认后代续跑——流式消费只取结果，完成后弹结果窗（不再是"点了啥都看不见"）。 */
+  const resumeConfirmed = async (r: AdminTaskRow) => {
+    setConfirm(null);
     setResuming(r.id);
     setMsg('');
     try {
@@ -346,55 +392,63 @@ export function TasksTab() {
       }
       let doneStatus = '';
       let tokens = 0;
+      let newRunId = '';
       let errText = '';
       await consumeNdjson(res, (ev) => {
         if (ev.type === 'done') {
           doneStatus = String(ev.data.status ?? '');
           tokens = Number(ev.data.tokens_used ?? 0);
+          newRunId = String(ev.run_id ?? '');
         }
         if (ev.type === 'error') errText = String(ev.data?.message ?? '');
       });
       if (errText) throw new Error(errText);
-      setMsg(
-        `已代 ${r.username ?? '用户'} 续跑「${(r.text || '').slice(0, 18)}…」→ ` +
-          `${STATUS[doneStatus] ?? (doneStatus || '完成')}${tokens ? `（${tokens.toLocaleString()} tokens）` : ''}`,
-      );
-      await load(filter);
+      const lines = [
+        `任务：${(r.text || '').slice(0, 60)}`,
+        `归属用户：${r.username ?? '—'}`,
+        `终态：${STATUS[doneStatus] ?? (doneStatus || '完成')}`,
+        tokens ? `消耗：${tokens.toLocaleString()} tokens（记在该用户账上）` : '消耗：—',
+        newRunId ? `新任务 ID：${newRunId}` : '',
+      ].filter(Boolean);
+      setResult({ title: '代续跑已完成', lines });
+      setMsg(`已代 ${r.username ?? '用户'} 续跑，终态 ${STATUS[doneStatus] ?? doneStatus}`);
+      await load(filter, page, pageSize);
     } catch (e) {
-      setMsg(`代续跑失败：${(e as Error).message}`);
+      setResult({ title: '代续跑未完成', lines: [(e as Error).message] });
     } finally {
       setResuming(null);
     }
   };
 
-  const load = useCallback(async (status: string) => {
-    try {
-      setRows(await adminTasks(status || undefined, 30));
-      setError('');
-    } catch (e) {
-      setError(`加载失败：${(e as Error).message}`);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load(filter);
-  }, [filter, load]);
+  const confirmSpec: ConfirmSpec | null = confirm
+    ? {
+        title: '确认代该用户续跑这个任务？',
+        text: '续跑 = 按原请求【重新跑一遍】，不是从暂停处接着跑。',
+        bullets: [
+          `任务：${(confirm.text || '').slice(0, 50)}`,
+          `归属：${confirm.username ?? '—'}（${confirm.pause_reason ? REASON[confirm.pause_reason] ?? confirm.pause_reason : '未知'}暂停）`,
+          '已完成的步骤会重新执行，消耗记在原用户账上',
+          `操作会留痕：审计日志记录操作人（你）与原任务 ID ${confirm.id.slice(0, 12)}…`,
+        ],
+        confirmText: '确认续跑',
+        danger: true,
+      }
+    : null;
 
   return (
     <>
       <div className="admin-toolbar">
-        <select className="admin-search" value={filter} onChange={(e) => setFilter(e.target.value)}>
-          <option value="">全部状态</option>
-          <option value="done">完成</option>
-          <option value="paused_user">用户暂停</option>
-          <option value="paused_insufficient_quota">配额暂停</option>
-          <option value="paused_error">出错暂停</option>
-          <option value="resumed">已续跑</option>
-        </select>
-        <button type="button" className="admin-btn ghost" onClick={() => void load(filter)}>刷新</button>
+        <Select
+          width={150}
+          value={filter}
+          placeholder="全部状态"
+          options={TASK_STATUS_OPTIONS}
+          onChange={(v) => { setFilter(v); setPage(1); }}
+        />
+        <button type="button" className="admin-btn ghost" onClick={() => void load(filter, page, pageSize)}>刷新</button>
       </div>
       {error && <div className="banner err">{error}</div>}
-      {msg && <div className={`banner ${msg.startsWith('代续跑失败') ? 'err' : 'ok'}`}>{msg}</div>}
+      {msg && <div className="banner ok">{msg}</div>}
       <table className="admin-table">
         <thead>
           <tr><th>时间</th><th>用户</th><th>状态</th><th>原因</th><th>任务摘要</th><th>tokens</th><th>操作</th></tr>
@@ -418,7 +472,7 @@ export function TasksTab() {
                     type="button"
                     className="admin-btn"
                     disabled={resuming === r.id}
-                    onClick={() => void resumeFor(r)}
+                    onClick={() => setConfirm(r)}
                     title="以管理员身份替该用户重跑（消耗记在原用户头上）"
                   >
                     {resuming === r.id ? '续跑中…' : '代续跑'}
@@ -432,6 +486,29 @@ export function TasksTab() {
           {rows.length === 0 && <tr><td colSpan={7} className="admin-empty">暂无任务</td></tr>}
         </tbody>
       </table>
+      <Pager total={total} page={page} pageSize={pageSize}
+        onPage={(p) => setPage(p)}
+        onPageSize={(n) => { setPageSize(n); setPage(1); }}
+      />
+      <ConfirmDialog
+        spec={confirmSpec}
+        busy={resuming !== null}
+        onConfirm={() => confirm && void resumeConfirmed(confirm)}
+        onCancel={() => setConfirm(null)}
+      />
+      {result && (
+        <div className="ui-confirm-mask" onClick={() => setResult(null)}>
+          <div className="ui-confirm" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <h3>{result.title}</h3>
+            <ul className="ui-confirm-bullets">
+              {result.lines.map((l, i) => <li key={i}>{l}</li>)}
+            </ul>
+            <div className="ui-confirm-actions">
+              <button type="button" className="admin-btn" onClick={() => setResult(null)}>知道了</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -663,6 +740,150 @@ export function ModelPoolsTab() {
           )}
         </section>
       </div>
+    </>
+  );
+}
+
+/* ------------------------------ 审计日志（p6.28a） ------------------------------ */
+
+const TARGET_LABEL: Record<string, string> = {
+  auth: '登录态',
+  user: '用户',
+  task: '任务',
+  pool: '模型池',
+  admin: '管理员',
+};
+
+/** detail 按动作翻译成人话（排查的人不该自己翻译键名）。 */
+export function renderDetail(action: string, detail: Record<string, unknown> | null): string[] {
+  if (!detail) return [];
+  const out: string[] = [];
+  const push = (k: string, v: unknown) => out.push(`${k} ${v ?? '—'}`);
+  if (action === 'admin.recharge') {
+    push('充值', `${Number(detail.amount ?? 0).toLocaleString()} tokens`);
+    push('充值后余额', Number(detail.balance_after ?? 0).toLocaleString());
+    if (detail.note) push('备注', String(detail.note));
+  } else if (action === 'admin.user.pool.change') {
+    push('新模型池', detail.model_pool_id === null ? '不限制' : `#${detail.model_pool_id}`);
+  } else if (action === 'admin.task.resume') {
+    push('原任务归属', String(detail.owner_username ?? '—'));
+    push('任务内容', String(detail.text ?? '—'));
+  } else if (action === 'admin.pool.models.set') {
+    const enabled = Array.isArray(detail.enabled) ? detail.enabled : [];
+    push('启用模型', `${enabled.length} 个`);
+  } else if (action === 'admin.password.change') {
+    push('结果', '已修改，旧登录态已全部失效');
+  } else if (action === 'admin.login.failure') {
+    push('原因', detail.reason === 'bad_credentials' ? '用户名或密码错误' : String(detail.reason ?? '—'));
+    if (detail.admin === false) push('说明', '账密正确但非管理员角色');
+  } else if (action === 'admin.login.success') {
+    push('角色', String(detail.role ?? '—'));
+  }
+  return out;
+}
+
+export function AuditTab() {
+  const [rows, setRows] = useState<AuditRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [action, setAction] = useState('');
+  const [targetType, setTargetType] = useState('');
+  const [keyword, setKeyword] = useState('');
+  const [actions, setActions] = useState<Array<{ value: string; label: string }>>([]);
+  const [targetTypes, setTargetTypes] = useState<string[]>([]);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const data = await adminAuditLogs({ action: action || undefined, target_type: targetType || undefined, keyword, page, page_size: pageSize });
+      setRows(data.logs);
+      setTotal(data.total);
+      if (data.actions.length) setActions(data.actions);
+      if (data.target_types.length) setTargetTypes(data.target_types);
+      setError('');
+    } catch (e) {
+      setError(`加载失败：${(e as Error).message}`);
+    }
+  }, [action, targetType, keyword, page, pageSize]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <>
+      <div className="admin-toolbar">
+        <Select
+          width={170}
+          value={action}
+          placeholder="全部动作"
+          options={[{ value: '', label: '全部动作' }, ...actions.map((a) => ({ value: a.value, label: a.label }))]}
+          onChange={(v) => { setAction(v); setPage(1); }}
+        />
+        <Select
+          width={130}
+          value={targetType}
+          placeholder="全部对象"
+          options={[
+            { value: '', label: '全部对象' },
+            ...targetTypes.map((t) => ({ value: t, label: TARGET_LABEL[t] ?? t })),
+          ]}
+          onChange={(v) => { setTargetType(v); setPage(1); }}
+        />
+        <input
+          className="admin-search"
+          style={{ flex: '0 0 220px' }}
+          placeholder="操作人 / 对象 / 关键词"
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { setPage(1); void load(); }
+          }}
+        />
+        <button type="button" className="admin-btn ghost" onClick={() => void load()}>刷新</button>
+      </div>
+
+      <p className="admin-sub">
+        审计日志只读：没有修改/删除入口（后端仓储层也不提供）。登记的动作见下拉候选；敏感内容（密码/token）在写入时就会被拒绝。
+      </p>
+
+      {error && <div className="banner err">{error}</div>}
+      <table className="admin-table">
+        <thead>
+          <tr><th>时间</th><th>操作人</th><th>动作</th><th>对象</th><th>明细</th><th>IP</th></tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id}>
+              <td className="admin-muted nowrap">{(r.created_at ?? '').replace('T', ' ').slice(5, 19)}</td>
+              <td>
+                {r.actor_username}
+                {r.actor_role && <span className="admin-muted"> · {r.actor_role}</span>}
+              </td>
+              <td><span className="badge agent">{r.action_label ?? r.action}</span></td>
+              <td className="admin-muted">
+                {TARGET_LABEL[r.target_type] ?? r.target_type}
+                {r.target_label ? ` · ${r.target_label}` : ''}
+              </td>
+              <td>
+                <div className="audit-detail">
+                  {renderDetail(r.action, r.detail).length === 0 && <span>—</span>}
+                  {renderDetail(r.action, r.detail).map((line, i) => (
+                    <span key={i}>{line}</span>
+                  ))}
+                </div>
+              </td>
+              <td className="admin-muted">{r.ip ?? '—'}</td>
+            </tr>
+          ))}
+          {rows.length === 0 && <tr><td colSpan={6} className="admin-empty">暂无审计记录</td></tr>}
+        </tbody>
+      </table>
+      <Pager total={total} page={page} pageSize={pageSize}
+        onPage={(p) => setPage(p)}
+        onPageSize={(n) => { setPageSize(n); setPage(1); }}
+      />
     </>
   );
 }

@@ -8,6 +8,7 @@ import AdminLoginPage from './pages/AdminLoginPage';
 import AdminProfilePanel from './components/AdminProfilePanel';
 import {
   ADMIN_TABS,
+  AuditTab,
   ModelPoolsTab,
   SystemTab,
   TasksTab,
@@ -116,6 +117,7 @@ function AdminShell({ user, onLogout }: { user: LoginUser; onLogout: () => void 
           {tab === 'usage' && <UsageTab />}
           {tab === 'tasks' && <TasksTab />}
           {tab === 'pools' && <ModelPoolsTab />}
+          {tab === 'audit' && <AuditTab />}
           {tab === 'system' && <SystemTab />}
         </div>
       </main>

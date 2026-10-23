@@ -1,7 +1,7 @@
 """API 路由：/health 联动探测、/models 模型注册表、/plan 规划路由、/internal/auth/ping 内部鉴权自检、/demo/stream NDJSON 示例。"""
 import re
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -576,6 +576,22 @@ def _resume_task_impl(task_id: str, *, operator_id: int | None = None) -> Stream
     if effort is not None and effort not in _EFFORTS:
         effort = None
     repo.mark_task_resumed(task_id)  # 原任务标 resumed：刷新后不再反复提示旧暂停
+    if operator_id is not None:
+        from ..core import audit_repo
+
+        audit_repo.record_safe(
+            actor_user_id=int(operator_id),
+            actor_username=repo.username_of(int(operator_id)),
+            actor_role="admin",
+            action="admin.task.resume",
+            target_type="task",
+            target_id=task_id,
+            detail={
+                "owner_id": owner_id,
+                "owner_username": owner_name,
+                "text": text[:80],
+            },
+        )
     return _stream_task(
         user={"id": owner_id, "username": owner_name},
         session_id=str(task["session_id"]),
@@ -760,28 +776,37 @@ def _stream_task(
 @router.get("/admin/users")
 def admin_users(
     q: str | None = Query(default=None, max_length=64),
-    limit: int = Query(default=50, ge=1, le=200),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
     authorization: str | None = Header(default=None),
 ):
-    """用户列表（含余额）：用户名/工号模糊搜索。"""
+    """用户列表（含余额）：用户名/工号模糊搜索 + 分页（p6.28b）。"""
     _require_admin(authorization)
     from sqlalchemy import text as _text
 
     from ..core.db import get_engine
 
-    sql = (
-        "SELECT u.id, u.employee_id, u.username, u.role, u.model_pool_id, "
-        "COALESCE(w.balance, 0) AS balance "
+    base = (
         "FROM `user` u LEFT JOIN wallet w ON w.user_id = u.id"
     )
-    params: dict[str, Any] = {"l": limit}
+    where = ""
+    params: dict[str, Any] = {}
     if q and q.strip():
-        sql += " WHERE u.username LIKE :kw OR u.employee_id LIKE :kw"
+        where = " WHERE u.username LIKE :kw OR u.employee_id LIKE :kw"
         params["kw"] = f"%{q.strip()}%"
-    sql += " ORDER BY u.id LIMIT :l"
     eng = get_engine()
     with eng.connect() as conn:
-        rows = conn.execute(_text(sql), params).mappings().all()
+        total = int(
+            conn.execute(_text("SELECT COUNT(*) " + base + where), params).scalar() or 0
+        )
+        rows = conn.execute(
+            _text(
+                "SELECT u.id, u.employee_id, u.username, u.role, u.model_pool_id, "
+                "COALESCE(w.balance, 0) AS balance " + base + where +
+                " ORDER BY u.id LIMIT :l OFFSET :o"
+            ),
+            {**params, "l": page_size, "o": (page - 1) * page_size},
+        ).mappings().all()
     return {
         "users": [
             {
@@ -793,7 +818,10 @@ def admin_users(
                 "balance": int(r["balance"] or 0),
             }
             for r in rows
-        ]
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }
 
 
@@ -813,6 +841,7 @@ def admin_recharge(
         )
     from sqlalchemy import text as _text
 
+    from ..core import audit_repo
     from ..core.db import get_engine
     from ..core.token_pool import TokenPool
 
@@ -828,6 +857,16 @@ def admin_recharge(
         int(body.amount),
         note=(body.note or "").strip() or None,
         operator_id=int(admin["id"]),
+    )
+    audit_repo.record_safe(
+        actor_user_id=int(admin["id"]),
+        actor_username=str(admin["username"]),
+        actor_role=str(admin.get("role")),
+        action="admin.recharge",
+        target_type="user",
+        target_id=user_id,
+        target_label=str(user_id),
+        detail={"amount": int(body.amount), "balance_after": balance, "note": (body.note or "").strip() or None},
     )
     return {"ok": True, "user_id": user_id, "balance": balance}
 
@@ -974,29 +1013,38 @@ def admin_usage(
 @router.get("/admin/tasks")
 def admin_tasks(
     status: str | None = Query(default=None, max_length=32),
-    limit: int = Query(default=20, ge=1, le=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
     authorization: str | None = Header(default=None),
 ):
-    """最近任务（全局，含所属用户/暂停原因），用于管理端任务监控。"""
+    """最近任务（全局，含所属用户/暂停原因）+ 分页（p6.28b）。"""
     _require_admin(authorization)
     from sqlalchemy import text as _text
 
     from ..core.db import get_engine
 
-    sql = (
-        "SELECT t.id, t.status, t.pause_reason, t.text, t.tokens_used, t.created_at, "
-        "s.user_id, u.username "
+    base = (
         "FROM task t LEFT JOIN session s ON s.id = t.session_id "
         "LEFT JOIN `user` u ON u.id = s.user_id"
     )
-    params: dict[str, Any] = {"l": limit}
+    where = ""
+    params: dict[str, Any] = {}
     if status:
-        sql += " WHERE t.status = :st"
+        where = " WHERE t.status = :st"
         params["st"] = status
-    sql += " ORDER BY t.created_at DESC LIMIT :l"
     eng = get_engine()
     with eng.connect() as conn:
-        rows = conn.execute(_text(sql), params).mappings().all()
+        total = int(
+            conn.execute(_text("SELECT COUNT(*) " + base + where), params).scalar() or 0
+        )
+        rows = conn.execute(
+            _text(
+                "SELECT t.id, t.status, t.pause_reason, t.text, t.tokens_used, t.created_at, "
+                "s.user_id, u.username " + base + where +
+                " ORDER BY t.created_at DESC LIMIT :l OFFSET :o"
+            ),
+            {**params, "l": page_size, "o": (page - 1) * page_size},
+        ).mappings().all()
     return {
         "tasks": [
             {
@@ -1010,7 +1058,10 @@ def admin_tasks(
                 "created_at": _iso_or_none(r["created_at"]),
             }
             for r in rows
-        ]
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }
 
 
@@ -1021,6 +1072,236 @@ def _iso_or_none(value: Any) -> str | None:
         return value.isoformat() if hasattr(value, "isoformat") else str(value)
     except Exception:  # noqa: BLE001 - 展示字段，序列化失败不阻断
         return str(value)
+
+
+# --------------------------------------------------------------------------- #
+# 管理端 · 审计日志（p6.28a）：只读查询；写入由各管理端点埋点 + 登录路径
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/admin/audit-logs")
+def admin_audit_logs(
+    action: str | None = Query(default=None, max_length=48),
+    target_type: str | None = Query(default=None, max_length=24),
+    keyword: str | None = Query(default=None, max_length=64),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str | None = Header(default=None),
+):
+    """审计日志（只读）：按动作/对象/关键词筛选 + 分页；附带动作候选（白名单）。"""
+    _require_admin(authorization)
+    from ..core import audit_repo
+
+    offset = (page - 1) * page_size
+    rows, total = audit_repo.list_logs(
+        action=action, target_type=target_type, keyword=keyword, limit=page_size, offset=offset
+    )
+    return {
+        "logs": rows,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "actions": [
+            {"value": k, "label": v} for k, v in audit_repo.ACTION_LABELS.items()
+        ],
+        "target_types": list(audit_repo.TARGET_TYPES),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# 管理端 · 独立登录/登出/改密（p6.28a）
+# 登录放后端而不是网关：审计表在后端；JWT 与网关同密钥同 claims（sub=employee_id/tv），
+# 两端签发的 token 互通（compose 里 GATEWAY_JWT_SECRET 同时注入两端）。
+# --------------------------------------------------------------------------- #
+
+
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AdminPasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
+def _client_ip(request: Request) -> str | None:
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", None)
+    forwarded = None
+    try:
+        forwarded = request.headers.get("x-forwarded-for")
+    except Exception:  # noqa: BLE001 - 取不到代理头无所谓
+        forwarded = None
+    return (str(forwarded).split(",")[0].strip() if forwarded else host) or None
+
+
+@router.post("/admin/login")
+def admin_login(body: AdminLoginRequest, request: Request):
+    """管理端登录：账密校验 + admin 角色 + 审计（成功/失败都写——失败也是安全事件）。"""
+    import bcrypt
+    import jwt as pyjwt
+    from sqlalchemy import text as _text
+
+    from ..core import audit_repo
+    from ..core.db import get_engine
+
+    ip = _client_ip(request)
+    uname = (body.username or "").strip()
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            _text(
+                "SELECT id, employee_id, username, password_hash, role, token_version "
+                "FROM `user` WHERE username = :u"
+            ),
+            {"u": uname},
+        ).mappings().first()
+    ok = False
+    if row is not None:
+        try:
+            ok = bcrypt.checkpw(
+                (body.password or "").encode("utf-8"),
+                str(row["password_hash"]).encode("utf-8"),
+            )
+        except Exception:  # noqa: BLE001 - 哈希格式异常等：按账密错误处理
+            ok = False
+    is_admin = ok and str(row["role"]) in ("admin", "superadmin")
+    if ok:
+        audit_repo.record_safe(
+            actor_user_id=int(row["id"]),
+            actor_username=str(row["username"]),
+            actor_role=str(row["role"]),
+            action="admin.login.success" if is_admin else "admin.login.failure",
+            target_type="auth",
+            target_label=uname,
+            detail={"role": str(row["role"]), "admin": is_admin},
+            ip=ip,
+        )
+    else:
+        audit_repo.record_safe(
+            actor_user_id=int(row["id"]) if row is not None else None,
+            actor_username=uname or "(empty)",
+            actor_role=str(row["role"]) if row is not None else None,
+            action="admin.login.failure",
+            target_type="auth",
+            target_label=uname or "(empty)",
+            detail={"reason": "bad_credentials"},
+            ip=ip,
+        )
+    if not ok:
+        raise HTTPException(401, detail={"code": "BAD_CREDENTIALS", "message": "用户名或密码错误"})
+    if not is_admin:
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "该账号没有管理员权限"})
+    token = pyjwt.encode(
+        {
+            "sub": str(row["employee_id"]),
+            "username": str(row["username"]),
+            "role": str(row["role"]),
+            "uid": int(row["id"]),
+            "tv": int(row["token_version"] or 0),
+        },
+        settings.jwt_secret,
+        algorithm="HS256",
+    )
+    return {
+        "access_token": token,
+        "user": {
+            "employee_id": str(row["employee_id"]),
+            "username": str(row["username"]),
+            "role": str(row["role"]),
+        },
+    }
+
+
+@router.post("/admin/logout")
+def admin_logout(authorization: str | None = Header(default=None)):
+    """管理端登出（记账用；token 无状态，真正失效靠前端清 token / 改密踢号）。"""
+    user = _current_user(authorization)
+    from ..core import audit_repo
+
+    audit_repo.record_safe(
+        actor_user_id=int(user["id"]),
+        actor_username=str(user["username"]),
+        actor_role=str(user.get("role")),
+        action="admin.logout",
+        target_type="auth",
+        target_label=str(user["username"]),
+    )
+    return {"ok": True}
+
+
+@router.post("/admin/password")
+def admin_change_password(
+    body: AdminPasswordRequest, authorization: str | None = Header(default=None)
+):
+    """管理端改密（p6.28a）：验旧密 → 改新密 → token_version+1（踢掉旧登录态）
+    → 签发新 admin token 返回。审计只记"改了"，不记任何密码内容。"""
+    import bcrypt
+    import jwt as pyjwt
+    from sqlalchemy import text as _text
+
+    from ..core import audit_repo
+    from ..core.db import get_engine
+
+    user = _current_user(authorization)
+    if str(user.get("role")) not in ("admin", "superadmin"):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "需要管理员权限"})
+    if len(body.new_password or "") < 6:
+        raise HTTPException(400, detail={"code": "WEAK_PASSWORD", "message": "新密码至少 6 位"})
+    eng = get_engine()
+    with eng.begin() as conn:
+        row = conn.execute(
+            _text(
+                "SELECT id, employee_id, username, role, password_hash, token_version "
+                "FROM `user` WHERE id = :u"
+            ),
+            {"u": user["id"]},
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(404, detail={"code": "USER_NOT_FOUND", "message": "用户不存在"})
+        try:
+            ok = bcrypt.checkpw(
+                (body.old_password or "").encode("utf-8"),
+                str(row["password_hash"]).encode("utf-8"),
+            )
+        except Exception:  # noqa: BLE001
+            ok = False
+        if not ok:
+            raise HTTPException(400, detail={"code": "BAD_PASSWORD", "message": "当前密码不正确"})
+        new_hash = bcrypt.hashpw((body.new_password or "").encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        conn.execute(
+            _text(
+                "UPDATE `user` SET password_hash = :h, token_version = token_version + 1 WHERE id = :u"
+            ),
+            {"h": new_hash, "u": user["id"]},
+        )
+        fresh = conn.execute(
+            _text(
+                "SELECT id, employee_id, username, role, token_version FROM `user` WHERE id = :u"
+            ),
+            {"u": user["id"]},
+        ).mappings().first()
+    audit_repo.record_safe(
+        actor_user_id=int(user["id"]),
+        actor_username=str(user["username"]),
+        actor_role=str(user.get("role")),
+        action="admin.password.change",
+        target_type="admin",
+        target_label=str(user["username"]),
+        detail={"token_version_bumped": True},
+    )
+    token = pyjwt.encode(
+        {
+            "sub": str(fresh["employee_id"]),
+            "username": str(fresh["username"]),
+            "role": str(fresh["role"]),
+            "uid": int(fresh["id"]),
+            "tv": int(fresh["token_version"] or 0),
+        },
+        settings.jwt_secret,
+        algorithm="HS256",
+    )
+    return {"ok": True, "access_token": token}
 
 
 # --------------------------------------------------------------------------- #
@@ -1095,12 +1376,13 @@ def admin_model_pools(authorization: str | None = Header(default=None)):
 @router.post("/admin/model-pools")
 def admin_create_pool(body: CreatePoolRequest, authorization: str | None = Header(default=None)):
     """新建模型池（名字唯一，如 finance / trial）。"""
-    _require_admin(authorization)
+    admin = _require_admin(authorization)
     name = (body.name or "").strip()
     if not name or len(name) > 32:
         raise HTTPException(400, detail={"code": "BAD_NAME", "message": "池名 1~32 字符"})
     from sqlalchemy import text as _text
 
+    from ..core import audit_repo
     from ..core.db import get_engine
 
     eng = get_engine()
@@ -1114,6 +1396,11 @@ def admin_create_pool(body: CreatePoolRequest, authorization: str | None = Heade
         row = conn.execute(
             _text("SELECT id, name FROM model_pool WHERE name = :n"), {"n": name}
         ).first()
+    audit_repo.record_safe(
+        actor_user_id=int(admin["id"]), actor_username=str(admin["username"]),
+        actor_role=str(admin.get("role")), action="admin.pool.create",
+        target_type="pool", target_id=int(row[0]), target_label=name,
+    )
     return {"ok": True, "id": int(row[0]), "name": str(row[1])}
 
 
@@ -1124,9 +1411,10 @@ def admin_set_pool_models(
     authorization: str | None = Header(default=None),
 ):
     """全量设置某池的模型成员（enabled=true 的行入库，false 的不留）。"""
-    _require_admin(authorization)
+    admin = _require_admin(authorization)
     from sqlalchemy import text as _text
 
+    from ..core import audit_repo
     from ..core.db import get_engine
     from ..core.model_registry import load_registry
 
@@ -1156,15 +1444,21 @@ def admin_set_pool_models(
                 ),
                 {"p": pool_id, "m": name, "e": 1 if item.get("enabled") else 0},
             )
+    audit_repo.record_safe(
+        actor_user_id=int(admin["id"]), actor_username=str(admin["username"]),
+        actor_role=str(admin.get("role")), action="admin.pool.models.set",
+        target_type="pool", target_id=pool_id, detail={"enabled": rows},
+    )
     return {"ok": True, "pool_id": pool_id, "enabled_count": len(rows)}
 
 
 @router.delete("/admin/model-pools/{pool_id}")
 def admin_delete_pool(pool_id: int, authorization: str | None = Header(default=None)):
     """删除池；仍有用户在该池时拒绝（先把用户移走，避免静默失去模型可见性）。"""
-    _require_admin(authorization)
+    admin = _require_admin(authorization)
     from sqlalchemy import text as _text
 
+    from ..core import audit_repo
     from ..core.db import get_engine
 
     eng = get_engine()
@@ -1187,6 +1481,11 @@ def admin_delete_pool(pool_id: int, authorization: str | None = Header(default=N
             )
         conn.execute(_text("DELETE FROM pool_model WHERE pool_id = :p"), {"p": pool_id})
         conn.execute(_text("DELETE FROM model_pool WHERE id = :p"), {"p": pool_id})
+    audit_repo.record_safe(
+        actor_user_id=int(admin["id"]), actor_username=str(admin["username"]),
+        actor_role=str(admin.get("role")), action="admin.pool.delete",
+        target_type="pool", target_id=pool_id,
+    )
     return {"ok": True}
 
 
@@ -1197,9 +1496,10 @@ def admin_set_user_pool(
     authorization: str | None = Header(default=None),
 ):
     """分配用户的模型池（null=不限制，可见全部对话模型）。"""
-    _require_admin(authorization)
+    admin = _require_admin(authorization)
     from sqlalchemy import text as _text
 
+    from ..core import audit_repo
     from ..core.db import get_engine
 
     eng = get_engine()
@@ -1219,6 +1519,15 @@ def admin_set_user_pool(
             _text("UPDATE `user` SET model_pool_id = :p WHERE id = :u"),
             {"p": body.model_pool_id, "u": user_id},
         )
+    audit_repo.record_safe(
+        actor_user_id=int(admin["id"]),
+        actor_username=str(admin["username"]),
+        actor_role=str(admin.get("role")),
+        action="admin.user.pool.change",
+        target_type="user",
+        target_id=user_id,
+        detail={"model_pool_id": body.model_pool_id},
+    )
     return {"ok": True, "user_id": user_id, "model_pool_id": body.model_pool_id}
 
 

@@ -222,3 +222,41 @@ INSERT IGNORE INTO `wallet` (`user_id`, `balance`) VALUES (1, 100000);
 -- 池身份=名字；成员以 DB pool_model 显式配置优先，无记录回落 yaml。
 INSERT INTO model_pool (id, name) VALUES (1, 'default'), (2, 'staff'), (3, 'admin')
   ON DUPLICATE KEY UPDATE name = VALUES(name);
+
+-- ===== 审计日志（p6.28a）：只写只读，无 update_time/deleted_at =====
+CREATE TABLE IF NOT EXISTS `audit_log` (
+  `id`             BIGINT       NOT NULL AUTO_INCREMENT,
+  `actor_user_id`  BIGINT       NULL,
+  `actor_username` VARCHAR(64)  NOT NULL,
+  `actor_role`     VARCHAR(16)  NULL,
+  `action`         VARCHAR(48)  NOT NULL,
+  `target_type`    VARCHAR(24)  NOT NULL,
+  `target_id`      VARCHAR(64)  NULL,
+  `target_label`   VARCHAR(255) NULL,
+  `detail`         TEXT         NULL,
+  `ip`             VARCHAR(45)  NULL,
+  `created_at`     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  KEY `idx_audit_action` (`action`),
+  KEY `idx_audit_actor` (`actor_user_id`),
+  KEY `idx_audit_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ===== 审计日志（p6.28a）：只写只读，无 update_time/deleted_at =====
+CREATE TABLE IF NOT EXISTS `audit_log` (
+  `id`             BIGINT       NOT NULL AUTO_INCREMENT,
+  `actor_user_id`  BIGINT       NULL,
+  `actor_username` VARCHAR(64)  NOT NULL,
+  `actor_role`     VARCHAR(16)  NULL,
+  `action`         VARCHAR(48)  NOT NULL,
+  `target_type`    VARCHAR(24)  NOT NULL,
+  `target_id`      VARCHAR(64)  NULL,
+  `target_label`   VARCHAR(255) NULL,
+  `detail`         TEXT         NULL,
+  `ip`             VARCHAR(45)  NULL,
+  `created_at`     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  KEY `idx_audit_action` (`action`),
+  KEY `idx_audit_actor` (`actor_user_id`),
+  KEY `idx_audit_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

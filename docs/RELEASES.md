@@ -5,6 +5,25 @@
 
 ---
 
+## v1.0.0-p6.28 — 管理端体验补齐（审计日志 / 分页 / 统一下拉框 / 代续跑确认）（2026-10-23）
+
+**类型**：功能（对照 RAG 管理端差距分析后的四项补齐）
+**Tag 提交**：见 `git show v1.0.0-p6.28`
+
+### 交付内容
+- **审计日志（从 0 到 1）**：迁移 `0010_audit_log`（无 update_time/deleted_at）+ `core/audit_repo.py`（只写只读、动作白名单、敏感键值抛错拒绝）+ 8 类动作埋点（登录成败/登出/改密/充值/池分配/池增删成员/代续跑）+ `GET /admin/audit-logs`（筛选+分页）+ 前端审计板块（detail 按动作翻译成人话）。设计参考 RAG 的 audit_repo 三条结构性约束，代码未照搬。
+- **管理端独立登录落到后端**：`POST /admin/login`（账密+角色+审计）、`POST /admin/password`（改密踢号发新 token）、`POST /admin/logout`（记账）；网关 routes.yaml 公开 admin/login。
+- **列表分页**：users/tasks/audit-logs 全改 page/page_size + total；前端 `Pager`（总数/页码窗口/每页条数）。
+- **统一下拉框**：轻量 `Select`（浮层+hint+键盘可达）替换三处原生 select。
+- **代续跑确认与结果可见**：确认弹窗（讲清"重跑而非续跑、消耗记原用户、操作留痕"）+ 结果弹窗（终态/tokens/新任务 ID）。
+
+### 验证状态
+- ✅ pytest 295 / jest 40 / vitest 80；tsc 无错。
+- ✅ 真机：错误密码 401 且落审计、充值 8000 审计明细完整、审计页 7 条含 IP。
+- ✅ Playwright：确认弹窗文案、完整走通 确认→代续跑→结果弹窗（single / 3,716 tokens / 新任务 ID）、分页与下拉展开正常。
+
+---
+
 ## v1.0.0-p6.27 — 管理端独立应用 + 代续跑 + 模型池配置（2026-10-23）
 
 **类型**：功能

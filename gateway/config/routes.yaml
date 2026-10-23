@@ -8,6 +8,7 @@ upstreams:
     base_url: ${GATEWAY_BACKEND_URL:-http://backend:8000}
     routes:
       - { path: 'api/v1/auth/login', public: true }   # 登录免 token（p6.1；me 受保护走通配）
+      - { path: 'api/v1/admin/login', public: true } # p6.28a：管理端独立登录（后端自己校验账密+角色+审计）
       - { path: 'api/v1/health', public: true }
       - { path: 'api/v1/models', public: true }
       - { path: 'api/v1/demo/stream', public: true }
