@@ -5,6 +5,35 @@
 
 ---
 
+## v1.0.0-p6.25 — 管理端最小版 + 多原因暂停续跑（2026-10-23）
+
+**类型**：功能（两个 P0 断点）
+**Tag 提交**：见 `git show v1.0.0-p6.25`
+
+### 交付内容
+- **多原因暂停**：`core/runs.py` 运行登记（run_id→Event+owner）+ 协作式取消（ReAct 每步前、DAG 每层/每子任务前检查）→ `RunCancelled` 一路收尾为 `paused_user`；任务行记 `pause_reason/pause_payload`。
+  - `quota`（余额不足，原有 interrupt 路径）→ 充值后继续，零成本；
+  - `user`（用户点停止）→ 步骤边界停下，可继续；
+  - `error`（中途报错）→ 由"失败终态"改为可恢复的 `paused_error`，保留原文可重试；
+  - `input`（等用户补充信息）/`permission`（审批门）→ 枚举预留，未实现。
+- **续跑/重试**：`POST /tasks/{id}/resume` 按 `request_json`（text/attachments/model/effort）重跑，新任务 `retry_of` 指回原任务、原任务标 `resumed`；`GET /tasks/{id}` 与 `GET /tasks?status=` 供前端恢复横幅。
+- **管理端**：`GET /admin/users`（含余额、搜索）、`POST /admin/users/{id}/recharge`（1~1000万，钱包 upsert + `kind=recharge` 账本 + 操作人）、`GET /admin/users/{id}/ledger`。权限双闸：网关 `JwtAuthGuard` 前缀+角色，后端 `_require_admin` 权威校验。
+- **数据**：迁移 `0008_pause_and_recharge`（task 四列 + ledger kind/note）；`/quota` 流水带回 kind/note。
+- **前端**：侧栏「⚙ 管理」入口（仅管理员）→ 管理页（列表/充值/流水）；暂停横幅（原因+继续/暂不）；停止按钮改为"通知后端暂停"。
+- **结算纪律**：取消/报错按预扣额结算（不退），防"发起即暂停"套退款；`tokens_used` 同步记录。
+
+### 验证状态
+- ✅ 三套全绿：pytest 262 / jest 40 / vitest 67（tsc 无错）。
+- ✅ 真实全栈：普通用户 403；充值 10000 到账 + 账本 note 含操作人；用户暂停 → `paused_user` → 续跑 `done`（retry_of 正确、tokens 22170）；余额 100 → `paused_insufficient_quota`（payload 余额/缺额）→ 充值 50000 → 续跑成功 5019 tokens 入账。
+- 手动验证：`docs/手动验证-p6.25-管理端与暂停续跑.md`（7 组用例，预期值实测）。
+
+### 已知遗留
+- 续跑为"重跑式"（非断点续跑）：MemorySaver 跨重启失效；持久化 checkpoint 留后续。
+- 取消信号进程内（单实例）；多副本需换 Redis。
+- 预留未做：`input`（暂停等补充信息）、`permission`（审批门）。
+
+---
+
 ## v1.0.0-p4.3d — 子任务带上用户请求 + 护栏停止后强制收尾（2026-10-23）
 
 **类型**：修复（p4.3 收尾，真跑验证驱动）

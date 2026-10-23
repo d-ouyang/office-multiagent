@@ -9,7 +9,7 @@ from typing import Any
 
 from ..core import chroma_client, db, redis_client
 from ..core.config import settings
-from ..core.events import EventType, RunEventEmitter, encode_line, iter_ndjson
+from ..core.events import EventType, RunEventEmitter, encode_line, iter_ndjson, new_run_id
 from ..core.internal_auth import require_internal
 from ..core.decomposer import decompose
 from ..core.model_registry import get_dialogue_models
@@ -349,29 +349,49 @@ def own_document(name: str, authorization: str | None = Header(default=None)):
     return FileResponse(path, media_type=media, filename=filename, content_disposition_type="inline")
 
 
+class RechargeRequest(BaseModel):
+    amount: int          # 充值 token 数（>0，上限 1000 万防手滑）
+    note: str | None = None
+
+
+_MAX_RECHARGE = 10_000_000
+
+#: 可续跑/重试的暂停状态（p7.1）
+_RESUMABLE = {"paused_insufficient_quota", "paused_user", "paused_error", "failed"}
+
+
+def _pause_reason_of(status: str) -> str | None:
+    """任务状态 → 暂停原因枚举（quota/user/error/input；input 预留）。"""
+    if status == "paused_insufficient_quota":
+        return "quota"
+    if status == "paused_user":
+        return "user"
+    if status in ("paused_error", "failed"):
+        return "error"
+    return None
+
+
+def _require_admin(authorization: str | None) -> dict[str, Any]:
+    """管理端守卫（fail-closed）：非 admin/superadmin 一律 403。"""
+    user = _current_user(authorization)
+    if str(user.get("role") or "") not in ("admin", "superadmin"):
+        raise HTTPException(
+            403, detail={"code": "FORBIDDEN", "message": "需要管理员权限"}
+        )
+    return user
+
+
 @router.post("/tasks")
 async def tasks_stream(body: TaskRequest, authorization: str | None = Header(default=None)):
     """跑一次编排并以 NDJSON 流式返回事件（planner→路由→Agent→done）。
 
-    带 user_id 时前置 token 池 reserve（p4.2）：余额不足→quota_paused 中断；
-    完成 settle。受网关 JWT 保护。
-
-    p6.2c：按登录身份落库——session（不传则自动新建）+ 本轮 user/assistant 消息
-    + task 记录（run_id/终答/用量）。
-    p6.3 真流式管道：编排在 worker 线程里跑，事件经 sink 实时推 queue，
-    同步 gen 从 queue 逐条 yield（Starlette 自动丢线程池消费，事件循环不阻塞）；
-    LLM 的每个生成 chunk 即时变成 content_delta/thinking_delta 到前端（打字机）。
+    p6.2c：按登录身份落库（session + 消息 + task 记录）。
+    p6.3：worker 线程 + 队列真流式（事件循环不阻塞）。
+    p7.1：暂停信息落 task 行；暂停/失败不落消息（避免续跑时历史重复）。
     """
-    import logging
-    import queue as _queue
-    import threading
-
     from ..core.db import get_engine
     from ..core.session_repo import SessionRepo
-    from ..core.token_pool import TokenPool
-    from ..orchestration.graph import run_task
 
-    logger = logging.getLogger(__name__)
     user = _current_user(authorization)  # fail-closed：无有效身份不跑任务
     repo = SessionRepo(get_engine())
     session_id = body.session_id
@@ -381,11 +401,6 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
     else:
         session_id = repo.create_session(user["id"], body.model if hasattr(body, "model") else None)
 
-    # p6.4：token 池真账——用户 id 取自登录身份（body.user_id 仅测试覆盖用），
-    # estimate 用默认门槛值（真实用量在 settle 时补差，§十四 两段式）
-    pool = TokenPool(get_engine())
-    effective_user_id = body.user_id if body.user_id is not None else user["id"]
-    estimate = body.estimate or settings.token_estimate_default
     # p6.5：模型选择优先级 = 请求显式 > 会话默认 > 服务端默认；未知模型 400（fail-closed）
     effective_model = body.model
     if effective_model is not None and effective_model not in _known_model_ids():
@@ -396,59 +411,245 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
         raise HTTPException(400, detail={"code": "BAD_EFFORT", "message": f"未知力度：{body.effort}"})
     # p6.12：随消息附件——fail-closed 校验（自己目录内且存在），以 prompt 前缀注入任务文本
     validated_attachments = _validate_attachments(body.attachments, str(user["username"]))
+    return _stream_task(
+        user=user,
+        session_id=session_id,
+        text=body.text,
+        attachments=validated_attachments,
+        model=effective_model,
+        effort=body.effort,
+        estimate=body.estimate or settings.token_estimate_default,
+    )
+
+
+@router.post("/tasks/{task_id}/pause")
+def pause_task(task_id: str, authorization: str | None = Header(default=None)):
+    """用户主动暂停（p7.1）：给运行中的任务置取消标志，编排在步骤边界停下。
+
+    运行中的任务还没有 task 行，归属靠运行登记表里的 owner_id 校验（防越权暂停）。
+    """
+    from ..core import runs
+
+    user = _current_user(authorization)
+    if not runs.is_running(task_id):
+        raise HTTPException(
+            409, detail={"code": "NOT_RUNNING", "message": "任务不在运行中（可能已完成）"}
+        )
+    if not runs.cancel(task_id, user["id"]):
+        # 运行中但不是自己的任务：403（不泄露他人任务状态之外的信息）
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "无权暂停该任务"})
+    return {"ok": True, "task_id": task_id}
+
+
+@router.get("/tasks")
+def my_tasks(
+    status: str | None = Query(default=None),
+    session_id: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    authorization: str | None = Header(default=None),
+):
+    """我的任务列表（p7.1：刷新后还能看到"上次暂停"的横幅并继续）。"""
+    import json as _json
+
+    from ..core.db import get_engine
+    from ..core.session_repo import SessionRepo
+
+    user = _current_user(authorization)
+    rows = SessionRepo(get_engine()).list_tasks(
+        user["id"], status=status, session_id=session_id, limit=limit
+    )
+    for row in rows:
+        payload = row.get("pause_payload")
+        if payload:
+            try:
+                row["pause_payload"] = _json.loads(payload)
+            except (ValueError, TypeError):
+                pass  # 存量坏数据原样返回，不因此 500
+    return {"tasks": rows}
+
+
+@router.get("/tasks/{task_id}")
+def task_detail(task_id: str, authorization: str | None = Header(default=None)):
+    import json as _json
+
+    from ..core.db import get_engine
+    from ..core.session_repo import SessionRepo
+
+    user = _current_user(authorization)
+    repo = SessionRepo(get_engine())
+    task = repo.get_task(task_id)
+    if not task or not repo.task_belongs_to(task_id, user["id"]):
+        raise HTTPException(404, detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"})
+    payload = task.get("pause_payload")
+    if payload:
+        try:
+            task["pause_payload"] = _json.loads(payload)
+        except (ValueError, TypeError):
+            pass
+    return {"task": task}
+
+
+@router.post("/tasks/{task_id}/resume")
+def resume_task(task_id: str, authorization: str | None = Header(default=None)):
+    """继续/重试（p7.1）：按原请求重跑，新任务 retry_of 指回原任务，返回 NDJSON 流。
+
+    暂停原因不同、处理一致：
+      · quota（余额不足）——充值后继续，零成本（原本一步没跑）；
+      · user（用户主动暂停）——重跑已完成的步骤会重新计费，但跨重启可靠；
+      · error（中途报错）——同 user，先排查再重试。
+    真正的"断点续跑"（LangGraph 持久化 checkpoint）留作后续，见 docs。
+    """
+    import json as _json
+
+    from ..core.db import get_engine
+    from ..core.session_repo import SessionRepo
+
+    user = _current_user(authorization)
+    repo = SessionRepo(get_engine())
+    task = repo.get_task(task_id)
+    if not task or not repo.task_belongs_to(task_id, user["id"]):
+        raise HTTPException(404, detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"})
+    status = str(task.get("status") or "")
+    if status not in _RESUMABLE:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "NOT_RESUMABLE",
+                "message": f"当前状态（{status}）不可续跑：只有暂停或失败的任务可以继续",
+            },
+        )
+    try:
+        req = _json.loads(task.get("request_json") or "{}")
+    except (ValueError, TypeError):
+        req = {}
+    text = str(req.get("text") or task.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, detail={"code": "EMPTY_TASK", "message": "原任务没有可重跑的文本"})
+    attachments = _validate_attachments(req.get("attachments") or [], str(user["username"]))
+    model = req.get("model") or repo.get_session_model(str(task.get("session_id") or ""))
+    effort = req.get("effort")
+    if effort is not None and effort not in _EFFORTS:
+        effort = None
+    repo.mark_task_resumed(task_id)  # 原任务标 resumed：刷新后不再反复提示旧暂停
+    return _stream_task(
+        user=user,
+        session_id=str(task["session_id"]),
+        text=text,
+        attachments=attachments,
+        model=model,
+        effort=effort,
+        estimate=settings.token_estimate_default,
+        retry_of=task_id,
+    )
+
+
+def _stream_task(
+    *,
+    user: dict[str, Any],
+    session_id: str,
+    text: str,
+    attachments: list[str],
+    model: str | None,
+    effort: str | None,
+    estimate: int,
+    retry_of: str | None = None,
+) -> StreamingResponse:
+    """跑一次任务并流式返回（p7.1 抽成公共实现，/tasks 与 /tasks/{id}/resume 共用）。
+
+    落库规则：
+      · done → 记 user/assistant 消息 + task 行；
+      · 暂停/失败 → 只记 task 行（带 pause_reason/payload）——不写消息，避免续跑时
+        历史里出现"半截对话"导致上下文重复。
+    """
+    import json as _json
+    import logging
+    import queue as _queue
+    import threading
+
+    from ..core import runs
+    from ..core.db import get_engine
+    from ..core.session_repo import SessionRepo
+    from ..core.token_pool import TokenPool
+    from ..orchestration.graph import run_task
     from ..orchestration.memory import prepare_turn
 
-    prior = repo.list_messages(session_id) if session_id else []
-    remembered, context_parts = prepare_turn(prior, body.text)
-    effective_text = _compose_task_text(remembered, validated_attachments)
-    if validated_attachments:
+    logger = logging.getLogger(__name__)
+    repo = SessionRepo(get_engine())
+    pool = TokenPool(get_engine())
+
+    prior = repo.list_messages(session_id)
+    remembered, context_parts = prepare_turn(prior, text)
+    effective_text = _compose_task_text(remembered, attachments)
+    if attachments:
         context_parts["current"] = effective_text
+
     q: _queue.Queue = _queue.Queue()
+    run_id = new_run_id()
+    cancel_ev = runs.register(run_id, user["id"])
 
     def worker() -> None:
         try:
             result, events = run_task(
                 effective_text,
-                user_id=effective_user_id,
+                user_id=user["id"],
                 estimate=estimate,
                 token_pool=pool,
                 sink=q.put,
-                model=effective_model,
-                effort=body.effort,
+                model=model,
+                effort=effort,
                 username=str(user["username"]),
                 context_parts=context_parts,
+                run_id=run_id,
+                cancel_event=cancel_ev,
             )
-            # p6.2c/p6.7：落库（user 消息 + assistant 终答+过程事件 trace + task 记录）。
+            status = str(result.get("status") or "done")
             # 落库失败不影响已完成的流（任务结果已推给用户），但必须 ERROR 级可见
-            # ——p6.7 教训：异常只进 debug 日志等于"失败不可见"。
             try:
-                import json as _json
-
                 trace = _json.dumps(
                     [_json.loads(ev.model_dump_json()) for ev in events], ensure_ascii=False
                 )
-                # p6.12：user 消息 trace 存附件列表（历史重建时前端渲染附件 chip）；
-                # 正文仍存原始输入（不混入 prompt 前缀）。
-                user_trace = (
-                    _json.dumps({"attachments": validated_attachments}, ensure_ascii=False)
-                    if validated_attachments
-                    else None
-                )
-                repo.append_message(session_id, "user", body.text, trace=user_trace)
-                repo.append_message(session_id, "assistant", result.get("result", ""), trace=trace)
+                if status == "done":
+                    user_trace = (
+                        _json.dumps({"attachments": attachments}, ensure_ascii=False)
+                        if attachments
+                        else None
+                    )
+                    repo.append_message(session_id, "user", text, trace=user_trace)
+                    repo.append_message(session_id, "assistant", result.get("result", ""), trace=trace)
+                payload = None
+                if status == "paused_insufficient_quota":
+                    ev = next((e for e in events if e.type == EventType.QUOTA_PAUSED), None)
+                    payload = _json.dumps(ev.data if ev else {}, ensure_ascii=False)
+                elif status == "paused_user":
+                    payload = _json.dumps({"message": "用户主动暂停"}, ensure_ascii=False)
+                elif status in ("paused_error", "failed"):
+                    payload = _json.dumps({"error": result.get("error") or ""}, ensure_ascii=False)
                 repo.record_task(
-                    result.get("run_id", ""),
+                    result.get("run_id", run_id),
                     session_id,
-                    body.text,
+                    text,
                     result.get("result", ""),
                     int(result.get("tokens_used", 0)),
-                    str(result.get("status", "done")),
+                    status,
+                    pause_reason=_pause_reason_of(status),
+                    pause_payload=payload,
+                    retry_of=retry_of,
+                    request_json=_json.dumps(
+                        {
+                            "text": text,
+                            "attachments": attachments,
+                            "model": model,
+                            "effort": effort,
+                        },
+                        ensure_ascii=False,
+                    ),
                 )
             except Exception:  # noqa: BLE001 - 落库失败：ERROR 级记录，流照常结束
                 logger.exception("会话落库失败 session_id=%s（任务结果已推给用户，但历史将缺失）", session_id)
         except Exception:  # noqa: BLE001 - worker 兜底：流以 None 收尾，异常进日志
             logger.exception("run_task worker 异常")
         finally:
+            runs.finish(run_id)
             q.put(None)  # 哨兵：流结束
 
     threading.Thread(target=worker, daemon=True, name="run_task").start()
@@ -461,6 +662,109 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
             yield encode_line(ev)
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+# --------------------------------------------------------------------------- #
+# 管理端（p7.1 最小版）：用户列表 + 充值 + 账本。后端按 role 强制校验（网关再挡一层）
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/admin/users")
+def admin_users(
+    q: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=50, ge=1, le=200),
+    authorization: str | None = Header(default=None),
+):
+    """用户列表（含余额）：用户名/工号模糊搜索。"""
+    _require_admin(authorization)
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+
+    sql = (
+        "SELECT u.id, u.employee_id, u.username, u.role, u.model_pool_id, "
+        "COALESCE(w.balance, 0) AS balance "
+        "FROM `user` u LEFT JOIN wallet w ON w.user_id = u.id"
+    )
+    params: dict[str, Any] = {"l": limit}
+    if q and q.strip():
+        sql += " WHERE u.username LIKE :kw OR u.employee_id LIKE :kw"
+        params["kw"] = f"%{q.strip()}%"
+    sql += " ORDER BY u.id LIMIT :l"
+    eng = get_engine()
+    with eng.connect() as conn:
+        rows = conn.execute(_text(sql), params).mappings().all()
+    return {
+        "users": [
+            {
+                "id": int(r["id"]),
+                "employee_id": r["employee_id"],
+                "username": r["username"],
+                "role": r["role"],
+                "model_pool_id": r["model_pool_id"],
+                "balance": int(r["balance"] or 0),
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.post("/admin/users/{user_id}/recharge")
+def admin_recharge(
+    user_id: int,
+    body: RechargeRequest,
+    authorization: str | None = Header(default=None),
+):
+    """充值：余额 + amount，账本记 kind=recharge（带操作人与备注）。"""
+    admin = _require_admin(authorization)
+    if body.amount <= 0:
+        raise HTTPException(400, detail={"code": "BAD_AMOUNT", "message": "充值数量必须大于 0"})
+    if body.amount > _MAX_RECHARGE:
+        raise HTTPException(
+            400, detail={"code": "AMOUNT_TOO_LARGE", "message": f"单次充值不能超过 {_MAX_RECHARGE}"}
+        )
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+    from ..core.token_pool import TokenPool
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        exists = conn.execute(
+            _text("SELECT 1 FROM `user` WHERE id = :u"), {"u": user_id}
+        ).first()
+    if not exists:
+        raise HTTPException(404, detail={"code": "USER_NOT_FOUND", "message": "用户不存在"})
+    balance = TokenPool(eng).credit(
+        user_id,
+        int(body.amount),
+        note=(body.note or "").strip() or None,
+        operator_id=int(admin["id"]),
+    )
+    return {"ok": True, "user_id": user_id, "balance": balance}
+
+
+@router.get("/admin/users/{user_id}/ledger")
+def admin_user_ledger(
+    user_id: int,
+    limit: int = Query(default=20, ge=1, le=100),
+    authorization: str | None = Header(default=None),
+):
+    """某用户的账本流水（任务账 + 充值）。"""
+    _require_admin(authorization)
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+    from ..core.token_pool import TokenPool
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        exists = conn.execute(
+            _text("SELECT 1 FROM `user` WHERE id = :u"), {"u": user_id}
+        ).first()
+    if not exists:
+        raise HTTPException(404, detail={"code": "USER_NOT_FOUND", "message": "用户不存在"})
+    return {"ledger": TokenPool(eng).recent(user_id, limit=limit)}
 
 
 @router.get("/internal/auth/ping", dependencies=[Depends(require_internal)])

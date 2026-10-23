@@ -10,8 +10,8 @@ import { toPromptModel, type DialogueModel } from '../components/ModelPicker';
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import type { StreamEvent } from '../types';
 import ContextRing from '../components/ContextRing';
-import { deriveContextUsage, deriveCurrentAgent, agentLabel } from '../lib/derive';
-import { authHeaders, clearToken, createSession, deleteSession, getMessages, getQuota, listSessions, updateSession } from '../lib/api';
+import { deriveContextUsage, deriveCurrentAgent, agentLabel, pauseText } from '../lib/derive';
+import { authHeaders, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, updateSession } from '../lib/api';
 
 const EFFORTS = ['低', '高', '最大'] as const;
 const EFFORT_API: Record<string, string> = { 低: 'low', 高: 'high', 最大: 'max' };
@@ -36,12 +36,13 @@ function parseCreatedAt(raw: string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
+export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUser; onLogout: () => void; onOpenAdmin?: () => void }) {
   const { events, status, error, start, stop, reset } = useNdjsonStream('/api/v1/demo/stream');
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [currentId, setCurrentId] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
+  const [paused, setPaused] = useState<{ taskId: string; message: string } | null>(null);
   const [usage, setUsage] = useState<{ month_tokens: number; month_count: number; total_tokens: number; total_count: number } | null>(null);
   const [modelName, setModelName] = useState('DeepSeek V3');
   const [previewPath, setPreviewPath] = useState<string | null>(null);
@@ -184,11 +185,28 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     } catch (e) {
       if ((e as Error).message === 'UNAUTHORIZED') onLogout();
     }
+    // p7.1：刷新/切会话后，若本会话有"暂停/失败"的任务，横幅提示可继续
+    try {
+      const t = await latestPausedTask(sid);
+      setPaused(t ? { taskId: t.id, message: pauseText(String(t.status), (t.pause_payload as Record<string, unknown>) ?? {}) } : null);
+    } catch {
+      setPaused(null);
+    }
   }, [status, stop, reset, onLogout]);
 
   useEffect(() => {
     if ((status === 'done' || status === 'error') && events.length && !sealedRef.current) {
       sealedRef.current = true;
+      // p7.1：暂停/失败也要把本轮事件固化，并在横幅里给出"继续/重试"入口
+      const done = [...events].reverse().find((e) => e.type === 'done');
+      const doneStatus = String(done?.data?.status ?? '');
+      if (doneStatus.startsWith('paused') || doneStatus === 'failed') {
+        const quota = [...events].reverse().find((e) => e.type === 'quota_paused');
+        const payload = (quota?.data ?? done?.data ?? {}) as Record<string, unknown>;
+        setPaused({ taskId: done?.run_id ?? '', message: pauseText(doneStatus, payload) });
+      } else {
+        setPaused(null);
+      }
       setMessages((prev) => [...prev, { role: 'assistant', events, streaming: false, createdAt: Date.now() }]);
       if (status === 'done') {
         listSessions()
@@ -200,6 +218,34 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     }
   }, [status, events, reset, refreshQuota]);
 
+  /** p7.1：暂停——先通知后端（协作式取消），再断本地流；横幅给出继续入口。 */
+  const onPauseClick = () => {
+    const id = events.find((e) => e.run_id)?.run_id ?? '';
+    if (id) {
+      void pauseTask(id).then((ok) => {
+        if (ok) setPaused({ taskId: id, message: '任务已按你的要求暂停，可点「继续」重跑' });
+      });
+    }
+    stop();
+  };
+
+  /** p7.1：继续/重试——按原任务重跑，后端新任务 retry_of 指回原任务。 */
+  const onResume = () => {
+    if (!paused?.taskId) return;
+    const taskId = paused.taskId;
+    setPaused(null);
+    sealedRef.current = false;
+    void start({
+      url: `/api/v1/tasks/${encodeURIComponent(taskId)}/resume`,
+      method: 'POST',
+      headers: authHeaders(),
+      on401: () => {
+        clearToken();
+        onLogout();
+      },
+    });
+  };
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages.length, events.length, status]);
@@ -208,6 +254,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
     const trimmed = text.trim();
     if ((!trimmed && paths.length === 0) || (status === 'streaming' && !force)) return;
     sealedRef.current = false;
+    setPaused(null); // 新任务发出 → 收起上一次的暂停横幅
     try {
       const sid = await ensureSession();
       setMessages((prev) => [
@@ -417,6 +464,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
           if (status === 'streaming') stop();
           onLogout();
         }}
+        onOpenAdmin={onOpenAdmin}
       />
       <main className="chat-main">
         <header className="chat-header">
@@ -449,6 +497,19 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
         </div>
         {uploadError && <div className="banner warn">{uploadError}</div>}
         {error && <div className="banner err">{error}</div>}
+        {paused && (
+          <div className="banner warn pause-banner">
+            <span>⏸ {paused.message}</span>
+            <span className="pause-actions">
+              <button type="button" className="admin-btn" onClick={onResume} disabled={status === 'streaming'}>
+                继续
+              </button>
+              <button type="button" className="admin-btn ghost" onClick={() => setPaused(null)}>
+                暂不
+              </button>
+            </span>
+          </div>
+        )}
         <div
           className={`composer-wrap${dragOver ? ' drag' : ''}`}
           onDragOver={(e) => {
@@ -477,7 +538,7 @@ export function WorkspacePage({ user, onLogout }: { user: SessionUser; onLogout:
               const effort = detail.effort ? EFFORT_API[detail.effort] : undefined;
               void dispatchTask(text, paths, detail.model?.key, false, effort);
             }}
-            onStop={stop}
+            onStop={onPauseClick}
             onAttach={onAttach}
             onModelChange={(m) => void onModelChange(m)}
             incoming={incoming}

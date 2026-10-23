@@ -1414,3 +1414,64 @@ button.ghost {
 .ledger-tokens {
   color: var(--err);
 }
+
+/* ============ 管理端（p7.1：用户列表 + 充值） ============ */
+.admin-entry {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 10px;
+  padding: 7px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.admin-entry:hover { color: var(--accent); border-color: var(--accent); }
+
+.admin-page { max-width: 1180px; margin: 0 auto; padding: 28px 24px 60px; }
+.admin-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.admin-header h2 { margin: 0 0 4px; font-size: 20px; }
+.admin-sub { color: var(--muted); font-size: 12px; margin: 2px 0 0; }
+.admin-back {
+  border: 1px solid var(--border); background: var(--card); color: var(--text);
+  border-radius: 10px; padding: 7px 12px; cursor: pointer; font-size: 13px;
+}
+.admin-back:hover { border-color: var(--accent); }
+
+.admin-toolbar { display: flex; gap: 8px; margin: 18px 0 14px; }
+.admin-search {
+  flex: 0 0 280px; background: var(--card); border: 1px solid var(--border);
+  color: var(--text); border-radius: 10px; padding: 8px 12px; font-size: 13px;
+}
+.admin-search:focus { outline: none; border-color: var(--accent); }
+.admin-btn {
+  border: 1px solid var(--accent); background: var(--accent); color: #0b1220;
+  border-radius: 8px; padding: 7px 12px; cursor: pointer; font-size: 12px; font-weight: 600;
+}
+.admin-btn:disabled { opacity: .55; cursor: default; }
+.admin-btn.ghost { background: transparent; color: var(--text); border-color: var(--border); font-weight: 400; }
+.admin-btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+.admin-table {
+  width: 100%; border-collapse: collapse; background: var(--card);
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden; font-size: 13px;
+}
+.admin-table th, .admin-table td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+.admin-table th { background: var(--card2); color: var(--muted); font-weight: 500; font-size: 12px; }
+.admin-table tr:last-child td { border-bottom: none; }
+.admin-table .num { font-variant-numeric: tabular-nums; }
+.admin-table.compact { font-size: 12px; }
+.admin-ops { display: flex; gap: 6px; white-space: nowrap; }
+.admin-amount, .admin-note {
+  background: var(--card2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 6px 8px; font-size: 12px; width: 100%;
+}
+.admin-amount { max-width: 120px; }
+.admin-note { max-width: 160px; }
+.admin-muted { color: var(--muted); font-size: 12px; }
+.admin-empty { color: var(--muted); text-align: center; padding: 22px 0 !important; }
+.admin-ledger { margin-top: 22px; }
+.admin-ledger h3 { font-size: 15px; margin: 0 0 10px; }
+
+/* p7.1：暂停横幅 */
+.pause-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pause-actions { display: flex; gap: 8px; }

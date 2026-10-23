@@ -172,3 +172,23 @@ describe('deriveReplyMeta', () => {
     expect(meta.model).toBeUndefined();
   });
 });
+
+// p7.1：暂停文案
+import { pauseText } from './derive';
+
+describe('pauseText（p7.1 暂停原因）', () => {
+  it('quota 带余额与缺额', () => {
+    const t = pauseText('paused_insufficient_quota', { balance: 0, needed: 2000 });
+    expect(t).toContain('余额不足');
+    expect(t).toContain('0');
+    expect(t).toContain('2000');
+  });
+  it('user / error 各自文案', () => {
+    expect(pauseText('paused_user')).toContain('暂停');
+    expect(pauseText('paused_error')).toContain('出错');
+    expect(pauseText('failed')).toContain('重试');
+  });
+  it('未知状态兜底', () => {
+    expect(pauseText('weird')).toBe('任务已暂停');
+  });
+});

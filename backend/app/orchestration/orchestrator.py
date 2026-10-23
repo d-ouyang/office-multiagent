@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..core.decomposer import DAG, Subtask
 from ..core.events import Event, RunEventEmitter
+from ..core.runs import RunCancelled
 from .react import AgentResult, StubBrain, run_react
 from .tools import ToolRegistry
 
@@ -121,6 +122,7 @@ def run_dag(
     emit: Callable[[Event], None],
     agent_runner: Callable[[Subtask, dict[str, AgentResult]], AgentResult],
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, AgentResult]:
     """按拓扑层执行各子任务，返回 {subtask_id: AgentResult}（按 dag.subtasks 顺序，确定性）。
 
@@ -130,12 +132,18 @@ def run_dag(
     p4.3b：层内并行——同层子任务无依赖，用 ThreadPoolExecutor 并行跑（ReAct 是同步
     函数，线程池是正确姿势；裸 asyncio.gather 包同步函数不会并行）。层间仍串行，
     依赖顺序不受影响。`max_concurrency<=1` 或层内只有 1 个子任务时走串行基线。
+
+    p7.1：`should_cancel()`——每个子任务开始前检查，命中即抛 RunCancelled（用户暂停）。
     """
     results: dict[str, AgentResult] = {}
     for level in topo_levels(dag):
+        if should_cancel is not None and should_cancel():
+            raise RunCancelled("用户暂停")
         if len(level) <= 1 or max_concurrency <= 1:
             # 串行基线：单任务层或显式关并行（回落开关，行为与 p4.1 一致）
             for st in level:
+                if should_cancel is not None and should_cancel():
+                    raise RunCancelled("用户暂停")
                 st_id, res = _run_subtask(st, agent_runner, _upstream_of(st, results), emitter, emit)
                 results[st_id] = res
             continue

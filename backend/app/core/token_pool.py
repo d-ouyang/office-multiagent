@@ -36,11 +36,11 @@ class TokenPool:
             return int(row[0]) if row else 0
 
     def recent(self, user_id: int, limit: int = 10) -> list[dict]:
-        """最近流水（p6.4 /quota 展示用）。"""
+        """最近流水（p6.4 /quota 展示用；p7.1 带 kind/note 区分任务账与充值）。"""
         with self.engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT id, task_id, model, reserve, settle, created_at "
+                    "SELECT id, task_id, model, reserve, settle, kind, note, created_at "
                     "FROM token_ledger WHERE user_id=:u ORDER BY id DESC LIMIT :l"
                 ),
                 {"u": user_id, "l": limit},
@@ -51,10 +51,53 @@ class TokenPool:
                 "model": r["model"],
                 "reserve": r["reserve"],
                 "settle": r["settle"],
+                "kind": r.get("kind") or "task",
+                "note": r.get("note"),
                 "created_at": _iso_utc(r["created_at"]),
             }
             for r in rows
         ]
+
+    def credit(
+        self,
+        user_id: int,
+        amount: int,
+        *,
+        note: str | None = None,
+        operator_id: int | None = None,
+    ) -> int:
+        """充值（p7.1，管理端）：余额 +amount，账本记一条 kind=recharge。
+
+        - amount 必须 > 0（0/负数直接拒，防误操作把余额冲成负数）；
+        - 钱包不存在则建一条（新用户首次充值不必先建钱包）；
+        - 返回最新余额。
+        """
+        if amount <= 0:
+            raise ValueError("充值数量必须大于 0")
+        label = note or ""
+        if operator_id is not None:
+            label = f"{label}（操作人 {operator_id}）" if label else f"操作人 {operator_id}"
+        with self.engine.begin() as conn:
+            updated = conn.execute(
+                text("UPDATE wallet SET balance = balance + :a WHERE user_id=:u"),
+                {"a": amount, "u": user_id},
+            )
+            if updated.rowcount == 0:
+                conn.execute(
+                    text("INSERT INTO wallet (user_id, balance) VALUES (:u, :a)"),
+                    {"u": user_id, "a": amount},
+                )
+            conn.execute(
+                text(
+                    "INSERT INTO token_ledger (user_id, task_id, model, reserve, settle, kind, note) "
+                    "VALUES (:u, NULL, NULL, NULL, NULL, 'recharge', :n)"
+                ),
+                {"u": user_id, "n": label[:255] or None},
+            )
+            row = conn.execute(
+                text("SELECT balance FROM wallet WHERE user_id=:u"), {"u": user_id}
+            ).first()
+            return int(row[0]) if row else amount
 
     def reserve(
         self,

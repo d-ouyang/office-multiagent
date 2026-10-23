@@ -75,6 +75,12 @@ describe('Proxy e2e（NDJSON 透传 + 鉴权 + 多上游）', () => {
         res.end(JSON.stringify({ secret: true }));
         return;
       }
+      if (url.startsWith('/api/v1/admin/')) {
+        // p7.1：管理端路径（网关已拦非 admin；到这里的应当是管理员）
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ admin: true, path: url }));
+        return;
+      }
       res.writeHead(404);
       res.end();
     });
@@ -110,6 +116,24 @@ describe('Proxy e2e（NDJSON 透传 + 鉴权 + 多上游）', () => {
   });
 
   const token = () => new JwtService({ secret: JWT_SECRET }).sign({ sub: 1, username: 'u', role: 'user' });
+  const adminToken = () => new JwtService({ secret: JWT_SECRET }).sign({ sub: 1, username: 'root', role: 'admin' });
+
+  // p7.1：管理端角色闸门（网关第一道，后端再校验一次）
+  it('管理端路径：普通用户 403', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/admin/users')
+      .set('Authorization', `Bearer ${token()}`);
+    expect(res.status).toBe(403);
+    expect(res.body.message ?? res.body.error).toBeDefined();
+  });
+
+  it('管理端路径：admin 放行并转发', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/admin/users')
+      .set('Authorization', `Bearer ${adminToken()}`);
+    expect(res.status).toBe(200);
+    expect(res.body.admin).toBe(true);
+  });
 
   it('白名单 /api/v1/demo/stream 免 token，NDJSON 逐行透传且有序', async () => {
     const res = await request(app.getHttpServer()).get('/api/v1/demo/stream');

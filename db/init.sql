@@ -48,10 +48,14 @@ CREATE TABLE IF NOT EXISTS `task` (
   `id`          VARCHAR(64) NOT NULL,
   `session_id`  VARCHAR(64) NOT NULL,
   `complexity`  TINYINT     NULL,
-  `status`      VARCHAR(32) NOT NULL DEFAULT 'pending',  -- pending/running/paused_insufficient_quota/done/failed
+  `status`      VARCHAR(32) NOT NULL DEFAULT 'pending',  -- pending/running/paused_insufficient_quota/paused_user/paused_error/done/failed
   `text`        MEDIUMTEXT  NULL,                        -- p6.2c：用户输入原文
   `result`      MEDIUMTEXT  NULL,                        -- p6.2c：助手终答
   `tokens_used` BIGINT      NULL,                        -- p6.2c：实际 token 用量
+  `pause_reason`  VARCHAR(32) NULL,                      -- p7.1：quota/user/error/input
+  `pause_payload` TEXT        NULL,                      -- p7.1：暂停上下文（余额/缺额/错误信息 JSON）
+  `retry_of`      VARCHAR(64) NULL,                      -- p7.1：续跑/重试时指回原任务
+  `request_json`  TEXT        NULL,                      -- p7.1：原始请求（text/attachments/model/effort）
   `created_at`  DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   KEY `idx_task_session` (`session_id`)
@@ -139,6 +143,8 @@ CREATE TABLE IF NOT EXISTS `token_ledger` (
   `cache_read`    INT         NULL,
   `reserve`       INT         NULL,   -- 预扣
   `settle`        INT         NULL,   -- 结算差额（可负）
+  `kind`          VARCHAR(16) NOT NULL DEFAULT 'task',  -- p7.1：task=任务账 / recharge=充值
+  `note`          VARCHAR(255) NULL,                     -- p7.1：充值备注（操作人/原因）
   `created_at`    DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   KEY `idx_ledger_user` (`user_id`)

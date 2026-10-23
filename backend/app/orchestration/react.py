@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from ..core.events import Event, RunEventEmitter
+from ..core.runs import RunCancelled
 from .tools import ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -104,12 +105,16 @@ def run_react(
     emitter: RunEventEmitter | None = None,
     emit: Callable[[Event], None] | None = None,
     synthesize: Callable[[str, list[Step]], str] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> AgentResult:
     """跑 ReAct 循环；超 max_iterations 强制给阶段结论（§四.4 防跑飞）。
 
     p4.3d：`synthesize(reason, history)`——被护栏强制停止时（重复调用/无效工具名/超步数），
     用它把「已有观察」收尾成面向用户的结论。此前护栏直接把内部提示原文当终答，
     用户看到的是"已有工具结果，停止重复调用…"这类机器话（真跑见证）。不传则回落原文。
+
+    p7.1：`should_cancel()`——每一步开始前检查；命中即抛 `RunCancelled`（协作式取消），
+    由 run_task 收尾为 paused_user。检查点放在【LLM 调用之前】，保证暂停最多多跑一步。
     """
     history: list[Step] = []
     invalid_streak = 0  # p6.7：连续无效工具名计数（幻觉兜底）
@@ -130,6 +135,9 @@ def run_react(
             return fallback
 
     for i in range(1, max_iterations + 1):
+        if should_cancel is not None and should_cancel():
+            # p7.1：用户主动暂停——在 LLM 调用之前退出，最多多花一步
+            raise RunCancelled("用户暂停")
         step = brain.next_step(task, history)
         if emitter is not None and step.thought:
             _emit(emitter.thinking_delta(step.thought))

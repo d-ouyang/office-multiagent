@@ -16,7 +16,8 @@ def _make(balance: int) -> tuple[TokenPool, object]:
         c.execute(
             text(
                 "CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER)"
+                "user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, "
+                "kind TEXT DEFAULT 'task', note TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
             )
         )
         c.execute(

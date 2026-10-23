@@ -132,6 +132,9 @@ export interface LedgerEntry {
   model?: string | null;
   reserve?: number | null;
   settle?: number | null;
+  /** p7.1：task=任务账 / recharge=充值 */
+  kind?: string | null;
+  note?: string | null;
   created_at?: string;
 }
 
@@ -163,4 +166,108 @@ export async function checkSession(): Promise<LoginUser | null> {
   } catch {
     return null;
   }
+}
+
+// --------------------------------------------------------------------------- //
+// p7.1：暂停 / 续跑
+// --------------------------------------------------------------------------- //
+
+export interface PausedTask {
+  id: string;
+  session_id: string;
+  status: string;
+  text: string;
+  pause_reason?: string | null;
+  pause_payload?: Record<string, unknown> | null;
+  created_at?: string;
+}
+
+/** 请求暂停运行中的任务（按 run_id） */
+export async function pauseTask(runId: string): Promise<boolean> {
+  const res = await fetch(`/api/v1/tasks/${encodeURIComponent(runId)}/pause`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  return res.ok;
+}
+
+/** 我的任务列表（可按状态/会话过滤） */
+export async function listTasks(params: { status?: string; session_id?: string; limit?: number } = {}): Promise<PausedTask[]> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set('status', params.status);
+  if (params.session_id) qs.set('session_id', params.session_id);
+  qs.set('limit', String(params.limit ?? 20));
+  const res = await fetch(`/api/v1/tasks?${qs.toString()}`, { headers: authHeaders() });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  const data = await res.json();
+  return data.tasks ?? [];
+}
+
+/** 某会话最近一条"暂停/失败"任务（刷新后横幅还能出现） */
+export async function latestPausedTask(sessionId: string): Promise<PausedTask | null> {
+  const tasks = await listTasks({ session_id: sessionId, limit: 10 });
+  return tasks.find((t) => String(t.status).startsWith('paused') || t.status === 'failed') ?? null;
+}
+
+/** 续跑/重试：返回原始 Response 供 consumeNdjson 消费 */
+export async function resumeTaskResponse(taskId: string): Promise<Response> {
+  return fetch(`/api/v1/tasks/${encodeURIComponent(taskId)}/resume`, {
+    method: 'POST',
+    headers: { Accept: 'application/x-ndjson', ...authHeaders() },
+  });
+}
+
+// --------------------------------------------------------------------------- //
+// p7.1：管理端（充值 + 用户列表）
+// --------------------------------------------------------------------------- //
+
+export interface AdminUser {
+  id: number;
+  employee_id: string;
+  username: string;
+  role: string;
+  model_pool_id?: number | null;
+  balance: number;
+}
+
+export async function adminListUsers(q?: string): Promise<AdminUser[]> {
+  const qs = new URLSearchParams();
+  if (q?.trim()) qs.set('q', q.trim());
+  const res = await fetch(`/api/v1/admin/users?${qs.toString()}`, { headers: authHeaders() });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  if (res.status === 403) throw new Error('FORBIDDEN');
+  const data = await res.json();
+  return data.users ?? [];
+}
+
+export async function adminRecharge(userId: number, amount: number, note?: string): Promise<number> {
+  const res = await fetch(`/api/v1/admin/users/${userId}/recharge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ amount, note: note || null }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  if (!res.ok) {
+    throw new Error(String(data?.detail?.message ?? data?.message ?? `充值失败（HTTP ${res.status}）`));
+  }
+  return Number(data.balance);
+}
+
+export async function adminUserLedger(userId: number, limit = 20): Promise<LedgerEntry[]> {
+  const res = await fetch(`/api/v1/admin/users/${userId}/ledger?limit=${limit}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.ledger ?? [];
 }

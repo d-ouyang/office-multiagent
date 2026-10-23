@@ -305,3 +305,15 @@ export function deriveReplyMeta(events: StreamEvent[]): ReplyMeta {
     endedAt: last || undefined,
   };
 }
+
+/** p7.1：任务暂停原因 → 横幅文案（quota / user / error；input 预留）。 */
+export function pauseText(status: string, payload: Record<string, unknown> = {}): string {
+  if (status === 'paused_insufficient_quota') {
+    const bal = Number(payload.balance ?? 0);
+    const need = Number(payload.needed ?? 0);
+    return `余额不足已暂停（余额 ${bal}，需要 ${need}）。充值后点「继续」`;
+  }
+  if (status === 'paused_user') return '任务已按你的要求暂停，可点「继续」重跑';
+  if (status === 'paused_error' || status === 'failed') return '任务中途出错已暂停，可点「重试」';
+  return '任务已暂停';
+}

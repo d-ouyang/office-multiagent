@@ -78,6 +78,8 @@ export function AppSidebar(props: {
   usage?: UsageSummary | null;
   modelName?: string;
   onLogout: () => void;
+  /** p7.1：管理端入口（仅 admin/superadmin 传入；不传则不显示） */
+  onOpenAdmin?: () => void;
 }) {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -113,6 +115,11 @@ export function AppSidebar(props: {
       <button className="new-chat" onClick={props.onNew}>
         ＋ 新会话
       </button>
+      {props.onOpenAdmin && (
+        <button className="admin-entry" type="button" onClick={props.onOpenAdmin}>
+          ⚙ 管理（用户与额度）
+        </button>
+      )}
       <div className="session-list">
         {visible.map((s) => (
           <div

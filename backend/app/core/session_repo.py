@@ -214,12 +214,88 @@ class SessionRepo:
         result: str,
         tokens_used: int,
         status: str,
+        *,
+        pause_reason: str | None = None,
+        pause_payload: str | None = None,
+        retry_of: str | None = None,
+        request_json: str | None = None,
     ) -> None:
         with self.engine.begin() as conn:
             conn.execute(
                 text(
-                    "INSERT INTO task (id, session_id, complexity, status, text, result, tokens_used) "
-                    "VALUES (:i, :s, NULL, :st, :t, :r, :tk)"
+                    "INSERT INTO task (id, session_id, complexity, status, text, result, tokens_used, "
+                    "pause_reason, pause_payload, retry_of, request_json) "
+                    "VALUES (:i, :s, NULL, :st, :t, :r, :tk, :pr, :pp, :ro, :rq)"
                 ),
-                {"i": task_id, "s": session_id, "st": status, "t": task_text, "r": result, "tk": int(tokens_used)},
+                {
+                    "i": task_id,
+                    "s": session_id,
+                    "st": status,
+                    "t": task_text,
+                    "r": result,
+                    "tk": int(tokens_used),
+                    "pr": pause_reason,
+                    "pp": pause_payload,
+                    "ro": retry_of,
+                    "rq": request_json,
+                },
             )
+
+    def mark_task_resumed(self, task_id: str) -> None:
+        """续跑开始时把原任务标为 resumed（p7.1）——否则刷新后横幅会反复提示旧暂停。"""
+        with self.engine.begin() as conn:
+            conn.execute(
+                text("UPDATE task SET status = 'resumed' WHERE id = :i AND status LIKE 'paused%'"),
+                {"i": task_id},
+            )
+
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
+        """按 id 取任务（p7.1：暂停详情/续跑入口用）。"""
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT id, session_id, status, text, result, tokens_used, "
+                    "pause_reason, pause_payload, retry_of, created_at "
+                    "FROM task WHERE id = :i"
+                ),
+                {"i": task_id},
+            ).mappings().first()
+        return dict(row) if row else None
+
+    def task_belongs_to(self, task_id: str, user_id: int) -> bool:
+        """归属校验：task → session → user（防越权暂停/续跑别人的任务）。"""
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT 1 FROM task t JOIN session s ON s.id = t.session_id "
+                    "WHERE t.id = :i AND s.user_id = :u LIMIT 1"
+                ),
+                {"i": task_id, "u": user_id},
+            ).first()
+        return row is not None
+
+    def list_tasks(
+        self,
+        user_id: int,
+        *,
+        status: str | None = None,
+        session_id: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """我的任务列表（p7.1：前端刷新后还能看到"上次暂停"的横幅并续跑）。"""
+        sql = (
+            "SELECT t.id, t.session_id, t.status, t.text, t.tokens_used, "
+            "t.pause_reason, t.pause_payload, t.retry_of, t.created_at "
+            "FROM task t JOIN session s ON s.id = t.session_id WHERE s.user_id = :u"
+        )
+        params: dict[str, Any] = {"u": user_id, "l": int(limit)}
+        if status:
+            sql += " AND t.status = :st"
+            params["st"] = status
+        if session_id:
+            sql += " AND t.session_id = :sid"
+            params["sid"] = session_id
+        sql += " ORDER BY t.created_at DESC LIMIT :l"
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(sql), params).mappings().all()
+        return [dict(r) for r in rows]

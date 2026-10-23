@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -21,6 +22,7 @@ from ..core.events import Event, RunEventEmitter, new_run_id
 from ..core.model_registry import map_reasoning_effort
 from ..core.planner import Plan, plan as run_plan
 from ..core.router import decide
+from ..core.runs import RunCancelled, should_cancel
 from ..core.token_pool import TokenPool
 from ..core.db import get_engine
 from .agents import build_default_registry, build_registry_for_spec, get_agent_spec
@@ -87,10 +89,12 @@ def build_graph(
     username: str | None = None,
     user_id: int | None = None,
     task_id: str | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> Any:
     """构建编排图。token_pool 提供时前置 quota 门（reserve + 中断续跑）。
 
     username 有值时，read_document 只在该用户的上传目录里找文件。
+    p7.1：should_cancel() 为真时在步骤边界抛 RunCancelled（用户主动暂停）。
     """
     tools = build_default_registry(
         get_engine(), username=username, user_id=user_id, task_id=task_id
@@ -153,6 +157,7 @@ def build_graph(
                 emitter=emitter,
                 emit=emit,
                 synthesize=_synthesize,
+                should_cancel=should_cancel,
             )
             # p4.3c：带出本子任务真实用量（含强制收尾），供 multi_node 汇总进 tokens_used（§十四 对账）
             usage = getattr(brain, "usage", None) or {}
@@ -180,6 +185,8 @@ def build_graph(
         return "end" if state.get("status") == "paused_insufficient_quota" else "planner"
 
     def planner_node(state: TaskState) -> dict[str, Any]:
+        if should_cancel is not None and should_cancel():
+            raise RunCancelled("用户暂停")
         p: Plan = run_plan(state["text"])
         d = decide(p)
         emit(emitter.thinking_delta(f"识别意图 {p.intents or ['general']}，复杂度分 {p.score}"))
@@ -219,7 +226,9 @@ def build_graph(
             on_thought=lambda t: emit(emitter.thinking_delta(t)),
             reasoning_effort=_effort_for(state),
         )
-        res = run_react(state["text"], brain, spec_tools, emitter=emitter, emit=emit)
+        res = run_react(
+            state["text"], brain, spec_tools, emitter=emitter, emit=emit, should_cancel=should_cancel
+        )
         usage = getattr(brain, "usage", None) or {}
         return {"result": res.final, "tokens_used": int(usage.get("total_tokens", 0))}
 
@@ -242,6 +251,7 @@ def build_graph(
             emit=emit,
             agent_runner=spec_agent_runner(tools, state),
             max_concurrency=settings.dag_max_concurrency,  # p4.3c：层内并行度配置化
+            should_cancel=should_cancel,                  # p7.1：用户暂停
         )
         summary = "；".join(f"{k}:{v.final}" for k, v in results.items())
         # p4.3c：汇总各子任务真实用量（此前 multi 不返回 tokens_used，settle 时
@@ -280,16 +290,21 @@ def run_task(
     effort: str | None = None,
     username: str | None = None,
     context_parts: dict[str, str] | None = None,
+    run_id: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[dict[str, Any], list[Event]]:
     """跑一次编排。带 token_pool+user_id 时前置 reserve；余额不足→quota_paused 中断。
 
     p6.3：`sink` 每产生一个事件同步回调一次（供 /tasks 实时转发队列）；
     不传则仅收集到返回的 events 列表（旧行为，测试依赖）。
     p6.5：`model` 指定本次对话模型（None→settings.llm_brain_model）。
+    p7.1：`run_id` 可外部指定（暂停/续跑要按同一个 id 找到任务）；`cancel_event` 置位
+    时在步骤边界协作式暂停，返回 status=paused_user。**取消/报错按预扣额 settle**
+    （已发生的调用不退，避免"发起即暂停"套取退款；如实记账，不多退）。
     """
-    run_id = new_run_id()
+    rid = run_id or new_run_id()
     turn_id = new_run_id()
-    emitter = RunEventEmitter(run_id, turn_id)
+    emitter = RunEventEmitter(rid, turn_id)
     model_id = model or settings.llm_brain_model
     events: list[Event] = []
 
@@ -306,12 +321,13 @@ def run_task(
         checkpointer=checkpointer,
         username=username,
         user_id=user_id,
-        task_id=run_id,
+        task_id=rid,
+        should_cancel=should_cancel(cancel_event),
     )
-    cfg = {"configurable": {"thread_id": run_id}}
+    cfg = {"configurable": {"thread_id": rid}}
     init: dict[str, Any] = {
         "text": text,
-        "run_id": run_id,
+        "run_id": rid,
         "turn_id": turn_id,
         "model": model,
         "effort": effort,
@@ -323,17 +339,41 @@ def run_task(
 
     try:
         state = graph.invoke(init, cfg)
-    except Exception as e:  # noqa: BLE001 - 编排崩溃也要给流一个体面的 done（前端能收尾）
-        logger.exception("编排执行失败 run_id=%s", run_id)
-        emit(emitter.error(f"编排执行失败：{e}"))
-        emit(emitter.done("failed", model=model_id))
+    except RunCancelled:
+        # p7.1：用户主动暂停（协作式取消）——如实收尾，可按预扣额结算后从暂停列表续跑
+        logger.info("任务被用户暂停 run_id=%s", rid)
+        emit(emitter.content_delta("⏸ 已按你的要求暂停。本轮已产生的调用不退，可稍后点「继续」重跑。"))
+        emit(emitter.done("paused_user", model=model_id))
+        if token_pool is not None and user_id is not None:
+            token_pool.settle(user_id, estimate, estimate, task_id=rid, model=model_id)  # 保守：不退
         return (
             {
-                "run_id": run_id,
-                "thread_id": run_id,
-                "status": "failed",
+                "run_id": rid,
+                "thread_id": rid,
+                "status": "paused_user",
+                "route": None,
+                "result": "（已按用户要求暂停）",
+                # 与 settle(estimate) 一致：暂停任务记保守结算额，账实相符
+                "tokens_used": estimate,
+            },
+            events,
+        )
+    except Exception as e:  # noqa: BLE001 - 编排崩溃也要给流一个体面的 done（前端能收尾）
+        logger.exception("编排执行失败 run_id=%s", rid)
+        # p7.1：中途报错也是"暂停"——保留任务与文字，让用户能一键重试（而不是从零再打一遍）
+        emit(emitter.error(f"编排执行失败：{e}"))
+        emit(emitter.done("paused_error", model=model_id))
+        if token_pool is not None and user_id is not None:
+            token_pool.settle(user_id, estimate, estimate, task_id=rid, model=model_id)  # 保守：不退
+        return (
+            {
+                "run_id": rid,
+                "thread_id": rid,
+                "status": "paused_error",
                 "route": None,
                 "result": "",
+                "error": str(e),
+                "tokens_used": estimate,  # 同 paused_user：保守结算，账实相符
             },
             events,
         )
@@ -350,8 +390,8 @@ def run_task(
         emit(emitter.done("paused_insufficient_quota", model=model_id))
         return (
             {
-                "run_id": run_id,
-                "thread_id": run_id,
+                "run_id": rid,
+                "thread_id": rid,
                 "status": "paused_insufficient_quota",
                 "route": None,
                 "result": "",
@@ -363,7 +403,7 @@ def run_task(
     if token_pool is not None and user_id is not None:
         actual = int(state.get("tokens_used", 0))
         token_pool.settle(
-            user_id, estimate, actual, task_id=run_id,
+            user_id, estimate, actual, task_id=rid,
             model=state.get("model") or settings.llm_brain_model,  # p6.4/p6.5：落账记实际模型
         )
     emit(
@@ -375,8 +415,8 @@ def run_task(
     )
     return (
         {
-            "run_id": run_id,
-            "thread_id": run_id,
+            "run_id": rid,
+            "thread_id": rid,
             "status": "done",
             "route": state.get("route"),
             "intents": state.get("intents", []),
