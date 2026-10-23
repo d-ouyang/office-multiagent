@@ -217,3 +217,8 @@ INSERT IGNORE INTO `user` (`id`, `employee_id`, `username`, `password_hash`, `ro
 
 -- token 池种子（p6.4）：dev 用户初始额度 100000（生产按需调整）
 INSERT IGNORE INTO `wallet` (`user_id`, `balance`) VALUES (1, 100000);
+
+-- ===== 模型池种子（p6.27c；与 backend/config/models.yaml 的 pool_ids 同名对齐）=====
+-- 池身份=名字；成员以 DB pool_model 显式配置优先，无记录回落 yaml。
+INSERT INTO model_pool (id, name) VALUES (1, 'default'), (2, 'staff'), (3, 'admin')
+  ON DUPLICATE KEY UPDATE name = VALUES(name);

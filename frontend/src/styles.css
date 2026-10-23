@@ -1513,3 +1513,94 @@ button.ghost {
 .admin-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 6px; }
 .admin-bar-value { text-align: right; font-variant-numeric: tabular-nums; }
 .admin-task-text { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ============ 管理端独立应用（p6.27：登录页 / 侧边菜单 / 个人中心） ============ */
+.admin-login .login-card { width: 380px; }
+.admin-login-brand { display: flex; align-items: center; gap: 10px; }
+.admin-login-brand h1 { font-size: 22px; margin: 0; }
+.admin-login-badge {
+  background: var(--accent); color: #0b1220; font-size: 11px; font-weight: 700;
+  letter-spacing: .06em; padding: 3px 8px; border-radius: 6px;
+}
+.admin-login-back {
+  margin-top: 12px; width: 100%; border: 1px solid var(--border); background: transparent;
+  color: var(--muted); border-radius: 10px; padding: 8px; cursor: pointer; font-size: 13px;
+}
+.admin-login-back:hover { color: var(--text); border-color: var(--accent); }
+
+.admin-shell { display: flex; min-height: 100vh; background: var(--bg); }
+.admin-side {
+  width: 232px; flex: 0 0 232px; background: var(--card); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; padding: 18px 12px; gap: 14px; position: sticky; top: 0; height: 100vh;
+}
+.admin-side-brand { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
+.admin-side-brand strong { display: block; font-size: 15px; }
+.admin-side-nav { display: flex; flex-direction: column; gap: 4px; }
+.admin-side-item {
+  display: flex; flex-direction: column; gap: 2px; text-align: left; border: 1px solid transparent;
+  background: transparent; color: var(--text); border-radius: 10px; padding: 9px 11px; cursor: pointer;
+}
+.admin-side-item:hover { background: var(--card2); }
+.admin-side-item.active { background: var(--card2); border-color: var(--accent); }
+.admin-side-item.back { color: var(--muted); margin-top: 2px; }
+.admin-side-item.back:hover { color: var(--text); }
+.admin-side-label { font-size: 13px; }
+.admin-side-hint { color: var(--muted); font-size: 11px; }
+.admin-side-user { margin-top: auto; border-top: 1px solid var(--border); padding-top: 10px; }
+.admin-user-chip {
+  display: flex; align-items: center; gap: 9px; width: 100%; border: none; background: transparent;
+  color: var(--text); cursor: pointer; padding: 6px; border-radius: 10px;
+}
+.admin-user-chip:hover { background: var(--card2); }
+
+.admin-main { flex: 1; min-width: 0; padding: 24px 28px 48px; }
+.admin-main-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 16px; }
+.admin-main-head h2 { margin: 0 0 2px; font-size: 20px; }
+.admin-main-body { max-width: 1180px; }
+
+.admin-empty-panel {
+  background: var(--card); border: 1px dashed var(--border); border-radius: 12px;
+  padding: 32px; text-align: center; color: var(--muted);
+}
+.admin-empty-panel h3 { color: var(--text); margin: 0 0 6px; }
+
+/* 个人中心 */
+.admin-profile-mask {
+  position: fixed; inset: 0; background: rgba(6, 8, 12, .62);
+  display: flex; align-items: center; justify-content: center; z-index: 40;
+}
+.admin-profile {
+  width: 400px; background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  padding: 20px; display: flex; flex-direction: column; gap: 14px;
+}
+.admin-profile-head { display: flex; align-items: center; gap: 12px; }
+.admin-profile-head strong { font-size: 15px; }
+.admin-profile-close { margin-left: auto; }
+.admin-profile-form { display: flex; flex-direction: column; gap: 9px; border-top: 1px solid var(--border); padding-top: 14px; }
+.admin-profile-form h3 { margin: 0; font-size: 14px; }
+.admin-profile-form input {
+  background: var(--card2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 9px; padding: 9px 11px; font-size: 13px;
+}
+.admin-profile-form input:focus { outline: none; border-color: var(--accent); }
+.admin-profile-foot { border-top: 1px solid var(--border); padding-top: 12px; display: flex; justify-content: flex-end; }
+
+/* ============ 模型池面板（p6.27c） ============ */
+.admin-pool-layout { display: grid; grid-template-columns: 340px 1fr; gap: 18px; align-items: start; }
+.admin-pool-list h3, .admin-pool-models h3 { font-size: 14px; margin: 0 0 10px; }
+.admin-pool-name {
+  border: none; background: transparent; color: var(--accent); cursor: pointer;
+  font-size: 13px; padding: 0; text-align: left;
+}
+.admin-pool-list tr.row-active { background: var(--card2); }
+.admin-pool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.admin-pool-item {
+  display: flex; align-items: center; gap: 8px; background: var(--card);
+  border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; cursor: pointer; font-size: 12px;
+}
+.admin-pool-item.on { border-color: var(--accent); }
+.admin-pool-item input { accent-color: var(--accent); }
+.admin-pool-select {
+  background: var(--card2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 5px 8px; font-size: 12px; max-width: 130px;
+}

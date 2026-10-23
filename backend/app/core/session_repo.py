@@ -274,6 +274,28 @@ class SessionRepo:
             ).first()
         return row is not None
 
+    def task_owner_id(self, task_id: str) -> int | None:
+        """任务的归属用户 id（管理端代续跑用：以原 owner 身份计费）。"""
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT s.user_id FROM task t JOIN session s ON s.id = t.session_id "
+                    "WHERE t.id = :i LIMIT 1"
+                ),
+                {"i": task_id},
+            ).first()
+        return int(row[0]) if row and row[0] is not None else None
+
+    def username_of(self, user_id: int | None) -> str:
+        """user_id → username（附件目录/身份展示用；取不到回落 office-service）。"""
+        if user_id is None:
+            return "office-service"
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT username FROM `user` WHERE id = :u"), {"u": user_id}
+            ).first()
+        return str(row[0]) if row else "office-service"
+
     def list_tasks(
         self,
         user_id: int,

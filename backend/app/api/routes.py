@@ -42,9 +42,56 @@ def health():
 
 
 @router.get("/models")
-def models(pool: list[str] | None = Query(default=None, description="按模型池过滤")):
-    """对话下拉可见模型（§十七.1 字段）。"""
-    return {"models": get_dialogue_models(pool)}
+def models(
+    pool: list[str] | None = Query(default=None, description="按模型池过滤"),
+    authorization: str | None = Header(default=None),
+):
+    """对话下拉可见模型（§十七.1 字段）。
+
+    p6.27c：不显式传 pool 时，按**登录用户**的 model_pool_id 过滤（§十三 池隔离落地）。
+    池成员判定：DB `pool_model` 有显式配置 → 以 DB 为准；没有 → 回落 models.yaml 的
+    pool_ids（新模型加进 yaml 即默认可见，不必先建 DB 行）。
+    """
+    items = get_dialogue_models(pool)
+    if not pool:
+        from ..core.db import get_engine
+        from ..core.identity import resolve_user
+        from sqlalchemy import text as _text
+
+        user = resolve_user(authorization)
+        pool_id = (user or {}).get("model_pool_id")
+        if pool_id:
+            eng = get_engine()
+            with eng.connect() as conn:
+                row = conn.execute(
+                    _text("SELECT name FROM model_pool WHERE id = :p"), {"p": pool_id}
+                ).first()
+                # 注意取全部行（含 enabled=0）：只要有行就是"DB 托管"，
+                # 有效池 = 其中 enabled=1 的池名（可能为空集=哪个池都看不到）
+                db_rows = conn.execute(
+                    _text(
+                        "SELECT pm.model_name AS mn, mp.name AS pn, pm.enabled AS en "
+                        "FROM pool_model pm JOIN model_pool mp ON mp.id = pm.pool_id"
+                    )
+                ).all()
+            pool_name = str(row[0]) if row else None
+            overrides: dict[str, set[str]] = {}
+            for r in db_rows:
+                overrides.setdefault(str(r[0]), set())
+                if int(r[2] or 0) == 1:
+                    overrides[str(r[0])].add(str(r[1]))
+            if pool_name:
+                kept = []
+                for m in items:
+                    pools = (
+                        overrides.get(m["id"])
+                        if m["id"] in overrides
+                        else set(m.get("pool_ids") or [])
+                    )
+                    if pool_name in pools:
+                        kept.append(m)
+                items = kept
+    return {"models": items}
 
 
 class PlanRequest(BaseModel):
@@ -489,25 +536,21 @@ def task_detail(task_id: str, authorization: str | None = Header(default=None)):
     return {"task": task}
 
 
-@router.post("/tasks/{task_id}/resume")
-def resume_task(task_id: str, authorization: str | None = Header(default=None)):
-    """继续/重试（p7.1）：按原请求重跑，新任务 retry_of 指回原任务，返回 NDJSON 流。
+def _resume_task_impl(task_id: str, *, operator_id: int | None = None) -> StreamingResponse:
+    """续跑公共实现（p7.1 自助 / p6.27b 代续跑）：按原请求重跑，新任务 retry_of 指回原任务。
 
-    暂停原因不同、处理一致：
-      · quota（余额不足）——充值后继续，零成本（原本一步没跑）；
-      · user（用户主动暂停）——重跑已完成的步骤会重新计费，但跨重启可靠；
-      · error（中途报错）——同 user，先排查再重试。
-    真正的"断点续跑"（LangGraph 持久化 checkpoint）留作后续，见 docs。
+    身份与归属校验由调用方负责（用户自助校验 owner；管理端代续跑只要求管理员身份）。
+    代续跑以**原任务 owner** 身份计费（消耗记在任务主人头上）；operator_id 落
+    request_json.operator，便于事后追溯是谁代跑的。
     """
     import json as _json
 
     from ..core.db import get_engine
     from ..core.session_repo import SessionRepo
 
-    user = _current_user(authorization)
     repo = SessionRepo(get_engine())
     task = repo.get_task(task_id)
-    if not task or not repo.task_belongs_to(task_id, user["id"]):
+    if not task:
         raise HTTPException(404, detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"})
     status = str(task.get("status") or "")
     if status not in _RESUMABLE:
@@ -525,14 +568,16 @@ def resume_task(task_id: str, authorization: str | None = Header(default=None)):
     text = str(req.get("text") or task.get("text") or "").strip()
     if not text:
         raise HTTPException(400, detail={"code": "EMPTY_TASK", "message": "原任务没有可重跑的文本"})
-    attachments = _validate_attachments(req.get("attachments") or [], str(user["username"]))
+    owner_id = repo.task_owner_id(task_id)
+    owner_name = repo.username_of(owner_id)
+    attachments = _validate_attachments(req.get("attachments") or [], owner_name)
     model = req.get("model") or repo.get_session_model(str(task.get("session_id") or ""))
     effort = req.get("effort")
     if effort is not None and effort not in _EFFORTS:
         effort = None
     repo.mark_task_resumed(task_id)  # 原任务标 resumed：刷新后不再反复提示旧暂停
     return _stream_task(
-        user=user,
+        user={"id": owner_id, "username": owner_name},
         session_id=str(task["session_id"]),
         text=text,
         attachments=attachments,
@@ -540,7 +585,46 @@ def resume_task(task_id: str, authorization: str | None = Header(default=None)):
         effort=effort,
         estimate=settings.token_estimate_default,
         retry_of=task_id,
+        operator_id=operator_id,
     )
+
+
+@router.post("/tasks/{task_id}/resume")
+def resume_task(task_id: str, authorization: str | None = Header(default=None)):
+    """继续/重试（p7.1）：按原请求重跑，新任务 retry_of 指回原任务，返回 NDJSON 流。
+
+    暂停原因不同、处理一致：
+      · quota（余额不足）——充值后继续，零成本（原本一步没跑）；
+      · user（用户主动暂停）——重跑已完成的步骤会重新计费，但跨重启可靠；
+      · error（中途报错）——同 user，先排查再重试。
+    真正的"断点续跑"（LangGraph 持久化 checkpoint）留作后续，见 docs。
+    """
+    from ..core.db import get_engine
+    from ..core.session_repo import SessionRepo
+
+    user = _current_user(authorization)
+    repo = SessionRepo(get_engine())
+    task = repo.get_task(task_id)
+    if not task or not repo.task_belongs_to(task_id, user["id"]):
+        raise HTTPException(404, detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"})
+    return _resume_task_impl(task_id)
+
+
+@router.post("/admin/tasks/{task_id}/resume")
+def admin_resume_task(task_id: str, authorization: str | None = Header(default=None)):
+    """管理端代续跑（p6.27b）：管理员替用户继续暂停/失败的任务。
+
+    与自助续跑的区别只在不校验 owner（管理员可操作任何人的任务）；状态限制相同
+    （仅 paused/failed），消耗仍记在原任务 owner 头上，操作人 id 落 request_json.operator。
+    """
+    from ..core.db import get_engine
+    from ..core.session_repo import SessionRepo
+
+    admin = _require_admin(authorization)
+    task = SessionRepo(get_engine()).get_task(task_id)
+    if not task:
+        raise HTTPException(404, detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"})
+    return _resume_task_impl(task_id, operator_id=int(admin["id"]))
 
 
 def _stream_task(
@@ -553,8 +637,10 @@ def _stream_task(
     effort: str | None,
     estimate: int,
     retry_of: str | None = None,
+    operator_id: int | None = None,
 ) -> StreamingResponse:
-    """跑一次任务并流式返回（p7.1 抽成公共实现，/tasks 与 /tasks/{id}/resume 共用）。
+    """跑一次任务并流式返回（p7.1 抽成公共实现，/tasks 与 /tasks/{id}/resume 共用；
+    p6.27b 管理端代续跑也走这里，operator_id 记录代操作人）。
 
     落库规则：
       · done → 记 user/assistant 消息 + task 行；
@@ -640,6 +726,8 @@ def _stream_task(
                             "attachments": attachments,
                             "model": model,
                             "effort": effort,
+                            # p6.27b：管理员代续跑时记录操作人（自助续跑为 null）
+                            "operator": operator_id,
                         },
                         ensure_ascii=False,
                     ),
@@ -933,6 +1021,205 @@ def _iso_or_none(value: Any) -> str | None:
         return value.isoformat() if hasattr(value, "isoformat") else str(value)
     except Exception:  # noqa: BLE001 - 展示字段，序列化失败不阻断
         return str(value)
+
+
+# --------------------------------------------------------------------------- #
+# 管理端 · 模型池（p6.27c）：池定义 / 模型归属 / 用户分配
+# 身份体系：池名（default/staff/admin，与 models.yaml 的 pool_ids 对齐）；
+# 成员判定：DB pool_model 显式配置优先，无记录回落 yaml。
+# --------------------------------------------------------------------------- #
+
+
+class CreatePoolRequest(BaseModel):
+    name: str
+
+
+class SetPoolModelsRequest(BaseModel):
+    models: list[dict[str, Any]]  # [{model_name, enabled}]
+
+
+class SetUserPoolRequest(BaseModel):
+    model_pool_id: int | None = None
+
+
+@router.get("/admin/model-pools")
+def admin_model_pools(authorization: str | None = Header(default=None)):
+    """池列表 + 每个池的模型矩阵（enabled=生效成员：DB 显式配置，否则 yaml 默认）。"""
+    _require_admin(authorization)
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+    from ..core.model_registry import load_registry
+
+    reg = load_registry()
+    dialogue = [m.id for m in reg["models"] if m.in_dialogue]
+    yaml_pools = {m.id: set(m.pool_ids) for m in reg["models"]}
+    eng = get_engine()
+    with eng.connect() as conn:
+        pools = conn.execute(_text("SELECT id, name FROM model_pool ORDER BY id")).all()
+        members = conn.execute(
+            _text("SELECT pool_id, model_name, enabled FROM pool_model")
+        ).all()
+        user_counts = {
+            int(r[0]): int(r[1])
+            for r in conn.execute(
+                _text("SELECT model_pool_id, COUNT(*) FROM `user` GROUP BY model_pool_id")
+            ).all()
+            if r[0] is not None
+        }
+    db: dict[int, dict[str, bool]] = {}
+    for r in members:
+        db.setdefault(int(r[0]), {})[str(r[1])] = bool(r[2])
+    return {
+        "pools": [
+            {
+                "id": int(p[0]),
+                "name": str(p[1]),
+                "user_count": user_counts.get(int(p[0]), 0),
+                "models": [
+                    {
+                        "model_name": name,
+                        # 生效成员：DB 显式配置优先；无记录回落 yaml（池名 ∈ 该模型的 pool_ids）
+                        "enabled": db.get(int(p[0]), {}).get(
+                            name, str(p[1]) in yaml_pools.get(name, set())
+                        ),
+                    }
+                    for name in dialogue
+                ],
+            }
+            for p in pools
+        ]
+    }
+
+
+@router.post("/admin/model-pools")
+def admin_create_pool(body: CreatePoolRequest, authorization: str | None = Header(default=None)):
+    """新建模型池（名字唯一，如 finance / trial）。"""
+    _require_admin(authorization)
+    name = (body.name or "").strip()
+    if not name or len(name) > 32:
+        raise HTTPException(400, detail={"code": "BAD_NAME", "message": "池名 1~32 字符"})
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        exists = conn.execute(
+            _text("SELECT 1 FROM model_pool WHERE name = :n"), {"n": name}
+        ).first()
+        if exists:
+            raise HTTPException(409, detail={"code": "POOL_EXISTS", "message": "同名池已存在"})
+        conn.execute(_text("INSERT INTO model_pool (name) VALUES (:n)"), {"n": name})
+        row = conn.execute(
+            _text("SELECT id, name FROM model_pool WHERE name = :n"), {"n": name}
+        ).first()
+    return {"ok": True, "id": int(row[0]), "name": str(row[1])}
+
+
+@router.put("/admin/model-pools/{pool_id}/models")
+def admin_set_pool_models(
+    pool_id: int,
+    body: SetPoolModelsRequest,
+    authorization: str | None = Header(default=None),
+):
+    """全量设置某池的模型成员（enabled=true 的行入库，false 的不留）。"""
+    _require_admin(authorization)
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+    from ..core.model_registry import load_registry
+
+    known = {m.id for m in load_registry()["models"] if m.in_dialogue}
+    rows = []
+    for item in body.models:
+        name = str(item.get("model_name") or "")
+        if name not in known:
+            raise HTTPException(400, detail={"code": "BAD_MODEL", "message": f"未知对话模型：{name}"})
+        if item.get("enabled"):
+            rows.append(name)
+    eng = get_engine()
+    with eng.begin() as conn:
+        pool = conn.execute(
+            _text("SELECT id FROM model_pool WHERE id = :p"), {"p": pool_id}
+        ).first()
+        if not pool:
+            raise HTTPException(404, detail={"code": "POOL_NOT_FOUND", "message": "池不存在"})
+        conn.execute(_text("DELETE FROM pool_model WHERE pool_id = :p"), {"p": pool_id})
+        # 全量写入（含 enabled=0）：一旦某模型在该池有行，成员权就归 DB，
+        # 不会再回落 yaml——否则"显式关闭"会被误判成"没配置"而重新可见。
+        for item in body.models:
+            name = str(item.get("model_name") or "")
+            conn.execute(
+                _text(
+                    "INSERT INTO pool_model (pool_id, model_name, enabled) VALUES (:p, :m, :e)"
+                ),
+                {"p": pool_id, "m": name, "e": 1 if item.get("enabled") else 0},
+            )
+    return {"ok": True, "pool_id": pool_id, "enabled_count": len(rows)}
+
+
+@router.delete("/admin/model-pools/{pool_id}")
+def admin_delete_pool(pool_id: int, authorization: str | None = Header(default=None)):
+    """删除池；仍有用户在该池时拒绝（先把用户移走，避免静默失去模型可见性）。"""
+    _require_admin(authorization)
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        pool = conn.execute(
+            _text("SELECT id FROM model_pool WHERE id = :p"), {"p": pool_id}
+        ).first()
+        if not pool:
+            raise HTTPException(404, detail={"code": "POOL_NOT_FOUND", "message": "池不存在"})
+        used = conn.execute(
+            _text("SELECT COUNT(*) FROM `user` WHERE model_pool_id = :p"), {"p": pool_id}
+        ).scalar()
+        if used:
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "POOL_IN_USE",
+                    "message": f"还有 {int(used)} 个用户在该池，请先把他们移到别的池",
+                },
+            )
+        conn.execute(_text("DELETE FROM pool_model WHERE pool_id = :p"), {"p": pool_id})
+        conn.execute(_text("DELETE FROM model_pool WHERE id = :p"), {"p": pool_id})
+    return {"ok": True}
+
+
+@router.patch("/admin/users/{user_id}/pool")
+def admin_set_user_pool(
+    user_id: int,
+    body: SetUserPoolRequest,
+    authorization: str | None = Header(default=None),
+):
+    """分配用户的模型池（null=不限制，可见全部对话模型）。"""
+    _require_admin(authorization)
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        exists = conn.execute(
+            _text("SELECT 1 FROM `user` WHERE id = :u"), {"u": user_id}
+        ).first()
+        if not exists:
+            raise HTTPException(404, detail={"code": "USER_NOT_FOUND", "message": "用户不存在"})
+        if body.model_pool_id is not None:
+            pool = conn.execute(
+                _text("SELECT id FROM model_pool WHERE id = :p"), {"p": body.model_pool_id}
+            ).first()
+            if not pool:
+                raise HTTPException(404, detail={"code": "POOL_NOT_FOUND", "message": "池不存在"})
+        conn.execute(
+            _text("UPDATE `user` SET model_pool_id = :p WHERE id = :u"),
+            {"p": body.model_pool_id, "u": user_id},
+        )
+    return {"ok": True, "user_id": user_id, "model_pool_id": body.model_pool_id}
 
 
 @router.get("/internal/auth/ping", dependencies=[Depends(require_internal)])

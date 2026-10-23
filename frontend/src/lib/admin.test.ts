@@ -1,6 +1,6 @@
 // p6.26：管理端路由与用量格式化（纯函数，jsdom 环境）
 import { readView } from '../App';
-import { fmtTokens } from '../pages/AdminPage';
+import { fmtTokens } from '../pages/AdminPanels';
 
 describe('readView（管理端独立路由）', () => {
   afterEach(() => {

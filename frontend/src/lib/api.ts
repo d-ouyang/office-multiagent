@@ -171,6 +171,81 @@ export async function checkSession(): Promise<LoginUser | null> {
 }
 
 // --------------------------------------------------------------------------- //
+// p6.27：管理端独立登录态（独立 token，与工作台互不影响）
+// --------------------------------------------------------------------------- //
+
+const ADMIN_TOKEN_KEY = 'office_admin_token';
+
+export function adminGetToken(): string | null {
+  return localStorage.getItem(ADMIN_TOKEN_KEY);
+}
+
+function adminSetToken(token: string): void {
+  localStorage.setItem(ADMIN_TOKEN_KEY, token);
+}
+
+export function adminClearToken(): void {
+  localStorage.removeItem(ADMIN_TOKEN_KEY);
+}
+
+export function adminAuthHeaders(): Record<string, string> {
+  const t = adminGetToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+/** 管理端登录：复用同一账号体系，但校验 admin/superadmin 角色（fail-closed）。 */
+export async function adminLogin(username: string, password: string): Promise<LoginUser> {
+  const res = await fetch('/api/v1/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(String(data?.error?.message ?? data?.message ?? `登录失败（HTTP ${res.status}）`));
+  }
+  const user = data.user as LoginUser;
+  if (user.role !== 'admin' && user.role !== 'superadmin') {
+    throw new Error('该账号没有管理员权限');
+  }
+  adminSetToken(String(data.access_token));
+  return user;
+}
+
+export async function adminCheckSession(): Promise<LoginUser | null> {
+  if (!adminGetToken()) return null;
+  try {
+    const res = await fetch('/api/v1/auth/me', { headers: adminAuthHeaders() });
+    if (!res.ok) {
+      if (res.status === 401) adminClearToken();
+      return null;
+    }
+    const user = (await res.json()) as LoginUser;
+    if (user.role !== 'admin' && user.role !== 'superadmin') {
+      adminClearToken();
+      return null;
+    }
+    return user;
+  } catch {
+    return null;
+  }
+}
+
+/** 管理端个人中心改密：成功后轮换 admin token（旧 admin token 同时失效）。 */
+export async function adminChangePassword(oldPassword: string, newPassword: string): Promise<void> {
+  const res = await fetch('/api/v1/auth/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...adminAuthHeaders() },
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(String(data?.message ?? data?.error?.message ?? `修改失败（HTTP ${res.status}）`));
+  }
+  if (data.access_token) adminSetToken(String(data.access_token));
+}
+
+// --------------------------------------------------------------------------- //
 // p7.1：暂停 / 续跑
 // --------------------------------------------------------------------------- //
 
@@ -222,6 +297,14 @@ export async function resumeTaskResponse(taskId: string): Promise<Response> {
   });
 }
 
+/** p6.27：管理端代续跑（管理员身份，后端不校验 owner）。 */
+export async function adminResumeResponse(taskId: string): Promise<Response> {
+  return fetch(`/api/v1/admin/tasks/${encodeURIComponent(taskId)}/resume`, {
+    method: 'POST',
+    headers: { Accept: 'application/x-ndjson', ...adminAuthHeaders() },
+  });
+}
+
 // --------------------------------------------------------------------------- //
 // p7.1：管理端（充值 + 用户列表）
 // --------------------------------------------------------------------------- //
@@ -238,7 +321,7 @@ export interface AdminUser {
 export async function adminListUsers(q?: string): Promise<AdminUser[]> {
   const qs = new URLSearchParams();
   if (q?.trim()) qs.set('q', q.trim());
-  const res = await fetch(`/api/v1/admin/users?${qs.toString()}`, { headers: authHeaders() });
+  const res = await fetch(`/api/v1/admin/users?${qs.toString()}`, { headers: adminAuthHeaders() });
   if (res.status === 401) {
     clearToken();
     throw new Error('UNAUTHORIZED');
@@ -251,7 +334,7 @@ export async function adminListUsers(q?: string): Promise<AdminUser[]> {
 export async function adminRecharge(userId: number, amount: number, note?: string): Promise<number> {
   const res = await fetch(`/api/v1/admin/users/${userId}/recharge`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    headers: { 'Content-Type': 'application/json', ...adminAuthHeaders() },
     body: JSON.stringify({ amount, note: note || null }),
   });
   const data = await res.json().catch(() => ({}));
@@ -267,7 +350,7 @@ export async function adminRecharge(userId: number, amount: number, note?: strin
 
 export async function adminUserLedger(userId: number, limit = 20): Promise<LedgerEntry[]> {
   const res = await fetch(`/api/v1/admin/users/${userId}/ledger?limit=${limit}`, {
-    headers: authHeaders(),
+    headers: adminAuthHeaders(),
   });
   if (!res.ok) return [];
   const data = await res.json();
@@ -308,7 +391,7 @@ export interface AdminTaskRow {
 }
 
 async function adminGet<T>(path: string): Promise<T> {
-  const res = await fetch(path, { headers: authHeaders() });
+  const res = await fetch(path, { headers: adminAuthHeaders() });
   if (res.status === 401) {
     clearToken();
     throw new Error('UNAUTHORIZED');
@@ -340,4 +423,58 @@ export async function getHealth(): Promise<{
 }> {
   const res = await fetch('/api/v1/health');
   return res.json();
+}
+
+// --------------------------------------------------------------------------- //
+// p6.27c：模型池（池定义 / 模型归属 / 用户分配）
+// --------------------------------------------------------------------------- //
+
+export interface PoolModelRow {
+  model_name: string;
+  enabled: boolean;
+}
+
+export interface ModelPool {
+  id: number;
+  name: string;
+  user_count: number;
+  models: PoolModelRow[];
+}
+
+async function adminSend<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...adminAuthHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (res.status === 401) {
+    adminClearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  if (res.status === 403) throw new Error('FORBIDDEN');
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(String(data?.detail?.message ?? data?.message ?? `HTTP ${res.status}`));
+  }
+  return data as T;
+}
+
+export function adminModelPools(): Promise<{ pools: ModelPool[] }> {
+  return adminSend<{ pools: ModelPool[] }>('/api/v1/admin/model-pools', 'GET');
+}
+
+export function adminCreatePool(name: string): Promise<{ id: number; name: string }> {
+  return adminSend<{ id: number; name: string }>('/api/v1/admin/model-pools', 'POST', { name });
+}
+
+export function adminSavePoolModels(poolId: number, models: PoolModelRow[]): Promise<{ enabled_count: number }> {
+  return adminSend(`/api/v1/admin/model-pools/${poolId}/models`, 'PUT', { models });
+}
+
+export function adminDeletePool(poolId: number): Promise<{ ok: boolean }> {
+  return adminSend(`/api/v1/admin/model-pools/${poolId}`, 'DELETE');
+}
+
+export function adminSetUserPool(userId: number, poolId: number | null): Promise<{ model_pool_id: number | null }> {
+  return adminSend(`/api/v1/admin/users/${userId}/pool`, 'PATCH', { model_pool_id: poolId });
 }
