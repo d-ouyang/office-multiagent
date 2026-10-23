@@ -28,6 +28,71 @@ def test_max_iterations_cap_forces_stage_conclusion():
     assert len(starts) == 3  # 每轮都推了 tool_call_start
 
 
+# --------------------------------------------------------------------------- #
+# p4.3d：护栏强制停止时用 synthesize 收尾成人话（不再把内部提示原文当终答）
+# --------------------------------------------------------------------------- #
+
+def test_cap_uses_synthesize_on_duplicate_calls():
+    class Same:
+        def next_step(self, task, history):
+            return Step(thought="再查一次", action="echo", action_input={"x": 1})
+
+    reg = ToolRegistry()
+    reg.register("echo", lambda x: "obs")
+    events: list = []
+    res = run_react(
+        "任务", Same(), reg, max_iterations=5,
+        emitter=RunEventEmitter("r", "t"), emit=events.append,
+        synthesize=lambda reason, history: f"收尾结论（{reason}）",
+    )
+    assert res.hit_cap
+    assert res.final == "收尾结论（模型对同一工具重复调用相同参数）"
+    assert "已有工具结果" not in res.final  # 不再泄漏内部提示原文
+    content = [e for e in events if e.type == EventType.CONTENT_DELTA]
+    assert content and content[-1].data["delta"].startswith("收尾结论")
+
+
+def test_cap_uses_synthesize_on_invalid_tool_names():
+    class Bad:
+        def next_step(self, task, history):
+            return Step(thought="乱来", action="none", invalid_action=True)
+
+    res = run_react(
+        "任务", Bad(), ToolRegistry(), max_iterations=5,
+        synthesize=lambda reason, history: "已停止：模型给了无效工具名",
+    )
+    assert res.hit_cap and "已停止" in res.final
+
+
+def test_cap_uses_synthesize_on_max_iterations():
+    class Loopy:
+        def next_step(self, task, history):
+            return Step(thought="想", action="noop", action_input={"n": len(history)})
+
+    reg = ToolRegistry()
+    reg.register("noop", lambda: "obs")
+    res = run_react(
+        "任务", Loopy(), reg, max_iterations=2,
+        synthesize=lambda reason, history: "基于已有观察：数据不全，无法下结论",
+    )
+    assert res.final == "基于已有观察：数据不全，无法下结论"
+
+
+def test_cap_falls_back_when_synthesize_raises():
+    # 收尾失败不阻断任务：回落护栏原文（如实、不编造）
+    def boom(reason, history):
+        raise RuntimeError("LLM 挂了")
+
+    class Loopy:
+        def next_step(self, task, history):
+            return Step(thought="想", action="noop", action_input={"n": len(history)})
+
+    reg = ToolRegistry()
+    reg.register("noop", lambda: "obs")
+    res = run_react("任务", Loopy(), reg, max_iterations=2, synthesize=boom)
+    assert res.hit_cap and "max_iterations" in res.final
+
+
 def test_observation_recorded():
     class OneTool:
         def next_step(self, task, history):

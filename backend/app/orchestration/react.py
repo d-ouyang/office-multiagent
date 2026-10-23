@@ -4,6 +4,7 @@ max_iterations 防跑飞，超限强制给阶段结论。Brain 可插拔（确�
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -11,6 +12,8 @@ from typing import Any, Protocol
 
 from ..core.events import Event, RunEventEmitter
 from .tools import ToolRegistry, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -100,14 +103,31 @@ def run_react(
     max_iterations: int = 10,
     emitter: RunEventEmitter | None = None,
     emit: Callable[[Event], None] | None = None,
+    synthesize: Callable[[str, list[Step]], str] | None = None,
 ) -> AgentResult:
-    """跑 ReAct 循环；超 max_iterations 强制给阶段结论（§四.4 防跑飞）。"""
+    """跑 ReAct 循环；超 max_iterations 强制给阶段结论（§四.4 防跑飞）。
+
+    p4.3d：`synthesize(reason, history)`——被护栏强制停止时（重复调用/无效工具名/超步数），
+    用它把「已有观察」收尾成面向用户的结论。此前护栏直接把内部提示原文当终答，
+    用户看到的是"已有工具结果，停止重复调用…"这类机器话（真跑见证）。不传则回落原文。
+    """
     history: list[Step] = []
     invalid_streak = 0  # p6.7：连续无效工具名计数（幻觉兜底）
 
     def _emit(ev: Event) -> None:
         if emit is not None:
             emit(ev)
+
+    def _cap_final(reason: str, fallback: str) -> str:
+        """护栏收尾：优先让模型基于已有观察写人话；失败回落原文（不阻断、不编造）。"""
+        if synthesize is None:
+            return fallback
+        try:
+            text = (synthesize(reason, list(history)) or "").strip()
+            return text or fallback
+        except Exception:  # noqa: BLE001 - 收尾失败不阻断任务，如实回落
+            logger.exception("强制收尾失败（回落原文）reason=%s", reason)
+            return fallback
 
     for i in range(1, max_iterations + 1):
         step = brain.next_step(task, history)
@@ -146,6 +166,7 @@ def run_react(
                     f"（如 " + "、".join(s.action or "?" for s in done_steps[-3:]) + "）。"
                     "请检查可用工具列表后重试，或换一种问法。"
                 )
+                cap = _cap_final("模型连续给出无效工具名", cap)
                 if emitter is not None:
                     _emit(emitter.content_delta(cap))
                 return AgentResult(final=cap, steps=history, iterations=i, hit_cap=True)
@@ -160,6 +181,7 @@ def run_react(
             history.append(step)
             if len(prior) >= 2:
                 final = "已有工具结果，停止重复调用。请根据下面的观察作答，不要编造。\n" + previous[:4000]
+                final = _cap_final("模型对同一工具重复调用相同参数", final)
                 if emitter is not None:
                     _emit(emitter.content_delta(final))
                 return AgentResult(final=final, steps=history, iterations=i, hit_cap=True)
@@ -191,6 +213,7 @@ def run_react(
 
     # 超限：强制阶段结论（不硬编答案，只如实说明已达上限）
     cap = f"已达 max_iterations={max_iterations}，强制给出阶段结论"
+    cap = _cap_final("达到最大步数上限", cap)
     if emitter is not None:
         _emit(emitter.content_delta(cap))
     return AgentResult(final=cap, steps=history, iterations=max_iterations, hit_cap=True)

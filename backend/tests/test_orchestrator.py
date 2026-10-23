@@ -107,6 +107,32 @@ def test_compose_subtask_text_truncates_long_upstream():
 
 
 # --------------------------------------------------------------------------- #
+# p4.3d：用户请求进子任务（否则子任务只看到"analysis 任务"，不知道分析什么）
+# --------------------------------------------------------------------------- #
+
+def test_compose_subtask_text_includes_user_request_and_scope():
+    text = compose_subtask_text("analysis", {}, request_text="分析最近一个月销售趋势")
+    assert "分析最近一个月销售趋势" in text   # 用户原话必须带上
+    assert "本步分工" in text                  # 限定本步只做自己那部分
+    assert "不要越界重复" in text
+
+
+def test_compose_subtask_text_request_and_upstream_together():
+    res = AgentResult(final="清洗完成，共 120 行", steps=[], iterations=1)
+    text = compose_subtask_text("analysis", {"cleaning": res}, request_text="先清洗再分析趋势")
+    assert "先清洗再分析趋势" in text
+    assert "清洗完成，共 120 行" in text
+    # 顺序：用户请求 → 本步分工 → 本步任务 → 上游结果 → 收尾纪律
+    assert text.index("用户请求") < text.index("上游子任务结果")
+
+
+def test_compose_subtask_text_truncates_long_request():
+    text = compose_subtask_text("analysis", {}, request_text="问" * 10000)
+    assert "请求内容已截断" in text
+    assert "问" * 10000 not in text
+
+
+# --------------------------------------------------------------------------- #
 # p4.3b：层内并行（ThreadPoolExecutor）+ 回落串行
 # --------------------------------------------------------------------------- #
 

@@ -27,6 +27,7 @@ from .agents import build_default_registry, build_registry_for_spec, get_agent_s
 from .brain import make_brain
 from .orchestrator import compose_subtask_text, run_dag
 from .react import run_react
+from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -120,17 +121,42 @@ def build_graph(
                 on_thought=lambda t: emit(emitter.thinking_delta(t)),
                 reasoning_effort=_effort_for(state),
             )
+            extra_tokens = {"n": 0}  # p4.3d：强制收尾那次 LLM 调用的用量，最后并入账
+
+            def _synthesize(reason: str, history) -> str:
+                """护栏强制停止时，用【空工具池】脑把已有观察收尾成人话（防再次跑飞）。"""
+                bare = make_brain(
+                    ToolRegistry(),
+                    fallback_answer="",
+                    system_prompt=spec.system_prompt,
+                    model_id=state.get("model"),
+                    stream=False,
+                    reasoning_effort=_effort_for(state),
+                )
+                step = bare.next_step(
+                    f"【强制收尾】{reason}。不要再调用任何工具，直接基于以上已获得的观察，"
+                    "写面向用户的最终回答（中文：已完成什么、得到哪些数据、还缺什么）。",
+                    history,
+                )
+                usage = getattr(bare, "usage", None) or {}
+                extra_tokens["n"] += int(usage.get("total_tokens", 0))
+                return (step.final or "").strip()
+
             # 必须用主 emitter：子 emitter 的 seq 独立从 1 开始，会让主事件流 seq 乱序
             res = run_react(
-                compose_subtask_text(st.intent, upstream or {}),
+                # p4.3d：带上用户完整请求（否则子任务只看到"analysis 任务"，不知道分析什么）
+                compose_subtask_text(
+                    st.intent, upstream or {}, request_text=state.get("text", "")
+                ),
                 brain,
                 spec_tools,
                 emitter=emitter,
                 emit=emit,
+                synthesize=_synthesize,
             )
-            # p4.3c：带出本子任务真实用量，供 multi_node 汇总进 tokens_used（§十四 对账）
+            # p4.3c：带出本子任务真实用量（含强制收尾），供 multi_node 汇总进 tokens_used（§十四 对账）
             usage = getattr(brain, "usage", None) or {}
-            res.tokens_used = int(usage.get("total_tokens", 0))
+            res.tokens_used = int(usage.get("total_tokens", 0)) + extra_tokens["n"]
             return res
 
         return _run

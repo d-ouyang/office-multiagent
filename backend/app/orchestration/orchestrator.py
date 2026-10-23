@@ -23,6 +23,9 @@ from .tools import ToolRegistry
 #: 单个上游结果进下游任务文本的截断上限（p6.7/p6.9 教训：进 LLM 上下文必须摘要化）
 UPSTREAM_MAX_CHARS = 2000
 
+#: 用户原始请求进子任务文本的截断上限（多意图任务最多 3 个子任务，避免 ×3 膨胀）
+REQUEST_MAX_CHARS = 6000
+
 #: 层内默认最大并行子任务数（防 LLM 渠道限流；planner.yaml max_intents=3 天然上限也就 3）
 DEFAULT_MAX_CONCURRENCY = 3
 
@@ -31,37 +34,49 @@ def compose_subtask_text(
     intent: str,
     upstream: dict[str, AgentResult] | None,
     *,
+    request_text: str = "",
     max_chars_per_upstream: int = UPSTREAM_MAX_CHARS,
 ) -> str:
-    """拼子任务文本：intent + 上游结果摘要（p4.3a）。
+    """拼子任务文本：用户请求 + 本步分工 + 上游结果摘要（p4.3a/p4.3d）。
 
-    - 无上游 → 只给 intent 任务（与 p4.1 行为一致，向后兼容）。
+    - 无 request_text 且无上游 → 只给 intent 任务（p4.1 基线，向后兼容）。
+    - 有 request_text → 带上用户完整请求并限定本步分工。**p4.3d 修复**：此前子任务
+      只有意图关键词（如"analysis 任务"），模型不知道要分析什么，只能反问——真跑
+      冒烟原话「任务描述里只有 analysis 任务四个字」。
     - 上游成功 → final 截断到 `max_chars_per_upstream`，超长如实标注已截断。
     - 上游 `hit_cap`（未完成/强制收尾）→ 标注「未完成」，并明确提示不要当作
       已完成的数据（§四.5：失败不可伪装成结果）。
     """
-    if not upstream:
+    req = (request_text or "").strip()
+    if not req and not upstream:
         return f"{intent} 任务"
     blocks: list[str] = []
-    for dep_id, res in upstream.items():
-        final = res.final or ""
-        tail = ""
-        if len(final) > max_chars_per_upstream:
-            final = final[:max_chars_per_upstream]
-            tail = "……（上游结果已截断）"
-        if res.hit_cap:
-            blocks.append(
-                f"- 【{dep_id}】未完成（{res.iterations} 步后强制收尾）：{final}{tail}。"
-                "这是未完成的上游产出，不要当作已完成的数据，缺的部分如实说明。"
-            )
-        else:
-            blocks.append(f"- 【{dep_id}】{final}{tail}")
-    return (
-        f"{intent} 任务\n\n"
-        "【上游子任务结果】（来自依赖步骤，可直接引用）\n"
-        + "\n".join(blocks)
-        + "\n\n请基于上述上游结果完成本任务；上游未完成时如实说明缺什么，不要编造上游数据。"
-    )
+    if req:
+        if len(req) > REQUEST_MAX_CHARS:
+            req = req[:REQUEST_MAX_CHARS] + "……（请求内容已截断）"
+        blocks.append(f"【用户请求】\n{req}")
+        blocks.append(
+            f"【本步分工】只完成与「{intent}」相关的部分；其他环节由上/下游子任务负责，不要越界重复。"
+        )
+    blocks.append(f"【本步任务】{intent} 任务")
+    if upstream:
+        ups: list[str] = []
+        for dep_id, res in upstream.items():
+            final = res.final or ""
+            tail = ""
+            if len(final) > max_chars_per_upstream:
+                final = final[:max_chars_per_upstream]
+                tail = "……（上游结果已截断）"
+            if res.hit_cap:
+                ups.append(
+                    f"- 【{dep_id}】未完成（{res.iterations} 步后强制收尾）：{final}{tail}。"
+                    "这是未完成的上游产出，不要当作已完成的数据，缺的部分如实说明。"
+                )
+            else:
+                ups.append(f"- 【{dep_id}】{final}{tail}")
+        blocks.append("【上游子任务结果】（来自依赖步骤，可直接引用）\n" + "\n".join(ups))
+        blocks.append("请基于上述上游结果完成本任务；上游未完成时如实说明缺什么，不要编造上游数据。")
+    return "\n\n".join(blocks)
 
 
 def topo_levels(dag: DAG) -> list[list[Subtask]]:
