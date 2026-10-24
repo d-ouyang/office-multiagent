@@ -703,7 +703,7 @@ const PromptBar: React.FC<PromptBarProps> = ({
                 <button
                   type="button"
                   className="prompt-bar__chip-open"
-                  title="查看已上传到服务器的文件"
+                  title="查看我的文件"
                   onClick={() => onOpenFile?.(file)}
                   disabled={!onOpenFile}
                 >

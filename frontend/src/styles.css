@@ -790,6 +790,84 @@ button.account-link:hover {
   color: var(--muted);
   font-size: 12px;
 }
+.file-preview-ops {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.file-kind {
+  display: inline-flex;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+}
+/* p6.31：表格分页预览（滚动增量加载） */
+.file-preview-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.sheet-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.sheet-tab {
+  padding: 3px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.sheet-tab.active {
+  background: var(--card2);
+  color: var(--text);
+}
+.preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.preview-table th,
+.preview-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--card2);
+  color: var(--text);
+  font-weight: 600;
+}
+.preview-table tbody tr:hover {
+  background: var(--card2);
+}
+.preview-table-meta {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
 .file-preview pre,
 .file-preview iframe,
 .file-preview img {

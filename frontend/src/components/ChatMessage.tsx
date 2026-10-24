@@ -104,7 +104,7 @@ export function ChatMessage({
           key={p}
           type="button"
           className="attach-chip"
-          title="查看服务器上的这份文件"
+          title="查看这份文件"
           onClick={() => onPreview?.(p)}
         >
           {label}

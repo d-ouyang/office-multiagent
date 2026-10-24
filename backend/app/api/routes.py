@@ -421,8 +421,12 @@ async def upload_document(file: UploadFile = File(...), authorization: str | Non
 
 
 @router.get("/documents/content")
-def own_document(name: str, authorization: str | None = Header(default=None)):
-    """预览本人已上传的文件。只读自己的目录，路径穿越按 basename 拍平后仍必须落在该目录内。"""
+def own_document(name: str, download: bool = Query(default=False), authorization: str | None = Header(default=None)):
+    """预览/下载本人的文件。只读自己的目录，路径穿越按 basename 拍平后仍必须落在该目录内。
+
+    p6.31：download=true 时返回原始文件（浏览器直接下载，不做任何文本抽取）——
+    csv/xlsx 此前只会返回抽取文本，用户拿到手的"下载"其实是截断版。
+    """
     from pathlib import Path as _Path
 
     from fastapi.responses import FileResponse, PlainTextResponse
@@ -437,6 +441,14 @@ def own_document(name: str, authorization: str | None = Header(default=None)):
         stored = _validate_attachments([name], str(user["username"]))
         path = _Path(settings.documents_dir) / str(user["username"]) / stored[0].split("/", 1)[1]
     filename = path.name
+    if download:
+        media = {
+            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".csv": "text/csv; charset=utf-8",
+        }.get(path.suffix.lower(), "application/octet-stream")
+        return FileResponse(
+            path, media_type=media, filename=filename, content_disposition_type="attachment"
+        )
     suffix = path.suffix.lower()
     if suffix in {".docx", ".xlsx", ".csv", ".json"}:
         try:
@@ -457,6 +469,65 @@ def own_document(name: str, authorization: str | None = Header(default=None)):
         ".webp": "image/webp",
     }.get(suffix, "application/octet-stream")
     return FileResponse(path, media_type=media, filename=filename, content_disposition_type="inline")
+
+
+@router.get("/documents/table")
+def own_document_table(
+    name: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    sheet: str = Query(default="", max_length=64),
+    authorization: str | None = Header(default=None),
+):
+    """表格文件的分页预览（p6.31）：csv / xlsx。大文件只回当前页，不再整体截成 20 行。
+
+    返回 {columns, rows, total, offset, limit, sheets, sheet}——total 是数据行总数，
+    前端据此显示"共 N 行、已加载 M 行"并按滚动增量加载。
+    """
+    from pathlib import Path as _Path
+
+    from ..orchestration.tools_doc import load_table_grid
+
+    user = _current_user(authorization)
+    generated = _generated_file(name, str(user["username"]))
+    if generated is not None:
+        path = generated
+    else:
+        stored = _validate_attachments([name], str(user["username"]))
+        path = _Path(settings.documents_dir) / str(user["username"]) / stored[0].split("/", 1)[1]
+    if path.suffix.lower() not in (".csv", ".xlsx"):
+        raise HTTPException(400, detail={"code": "NOT_A_TABLE", "message": "分页预览只支持表格文件（csv/xlsx）"})
+    try:
+        columns, data, sheet_name = load_table_grid(path, sheet=sheet or None)
+        sheets = list(_sheet_names(path))
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "BAD_TABLE", "message": str(e)}) from e
+    total = len(data)
+    rows = data[offset : offset + limit]
+    return {
+        "columns": columns,
+        "rows": rows,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "sheets": sheets,
+        "sheet": sheet_name,
+    }
+
+
+def _sheet_names(path: Any) -> list[str]:
+    if path.suffix.lower() != ".xlsx":
+        return []
+    try:
+        from openpyxl import load_workbook
+
+        book = load_workbook(path, read_only=True)
+        try:
+            return list(book.sheetnames)
+        finally:
+            book.close()
+    except Exception:  # noqa: BLE001 - 列工作表名失败不阻断预览
+        return []
 
 
 class RechargeRequest(BaseModel):
