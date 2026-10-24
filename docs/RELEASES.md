@@ -5,6 +5,22 @@
 
 ---
 
+## v1.0.0-p6.34 — PDF 中文字体修复（CFF 轮廓坑 + 失败可见化）（2026-10-24）
+
+**类型**：修复（真机「再出一份，换成 pdf」用例阻塞项）
+
+- **根因**：思源黑体/Noto CJK 是 **CFF（PostScript）轮廓**，reportlab `TTFont` 只认
+  TrueType 轮廓，注册必败；异常被 `except: continue` 静默吞掉 → 「装了字体仍报没有字体」。
+- **修复**：Dockerfile 加装 TrueType 轮廓的 `fonts-wqy-microhei`（noto-cjk 保留给 matplotlib 图表）；
+  `_cjk_font()` 重写——TrueType 候选 + 字体目录兜底扫描 + 注册失败 WARNING 留痕，
+  报错文案纠正（明确思源黑体不可用，`PDF_FONT` 仍最高优先）。
+- **验证**：容器内端到端生成中文 PDF，pypdf 抽回文本完整、无康熙部首污染；
+  新增 2 测试（失败路径报错含 TrueType 指引；注册失败留 WARNING）。
+
+详细见 `docs/iterations/v1.0.0-p6.34-pdf-truetype-font.md`。
+
+---
+
 ## v1.0.0-p6.33 — 决策小模型标签语义校准（2026-10-24）
 
 - 真模型冒烟抓到「理由=查询上海销售，标签=general」的自相矛盾。

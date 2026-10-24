@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections.abc import Callable
@@ -13,6 +14,8 @@ from typing import Any
 
 from .tools_store import finish_output, new_output_id, output_file
 from .tools_table import _load_clean
+
+logger = logging.getLogger(__name__)
 
 _FORMATS = {"md": ".md", "docx": ".docx", "pdf": ".pdf", "pptx": ".pptx"}
 _MAX_CHARS = 80_000
@@ -129,23 +132,74 @@ def _picture_file(image: Path | None) -> Path | None:
     return png if png.is_file() else None
 
 
+# reportlab 的 TTFont 只认 TrueType（glyf）轮廓。思源黑体/Noto CJK 是 CFF
+# （PostScript）轮廓，注册必败（"postscript outlines are not supported"）。
+# 候选只列 TrueType 轮廓的中文字体，按优先级排列。
+_CJK_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+)
+_CJK_FONT_DIRS = (
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    "/System/Library/Fonts",
+    "/System/Library/Fonts/Supplemental",
+    "/Library/Fonts",
+)
+# reportlab 的 TTFont 只认 TrueType（glyf）轮廓。思源黑体/Noto CJK 是 CFF
+# （PostScript）轮廓，注册必败（"postscript outlines are not supported"）。
+# 候选只列 TrueType 轮廓的中文字体，按优先级排列。
+_CJK_FONT_NAMES = (
+    "wqy-microhei.ttc",
+    "wqy-zenhei.ttc",
+    "DroidSansFallbackFull.ttf",
+    "DroidSansFallback.ttf",
+    "uming.ttc",
+    "ukai.ttc",
+    "simhei.ttf",
+    "simsun.ttc",
+    "msyh.ttc",
+    "msyh.ttf",
+    "Arial Unicode.ttf",
+)
+
+
 def _cjk_font() -> str:
-    """注册一份中文字体供 PDF 嵌入。找不到就如实失败，不生成缺字的 PDF。"""
+    """注册一份中文字体供 PDF 嵌入。找不到就如实失败，不生成缺字的 PDF。
+
+    坑（2026-10-24 实测）：fonts-noto-cjk 的 .ttc 是 CFF 轮廓，reportlab 注册直接抛
+    "postscript outlines are not supported"；旧版静默 continue，表现为
+    「装了思源黑体仍提示没有可用字体」。修法：Dockerfile 加装 TrueType 轮廓的
+    文泉驿微米黑（fonts-wqy-microhei），注册失败写 WARNING 日志，不再静默。
+    """
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
 
     if "OfficeCJK" in pdfmetrics.getRegisteredFontNames():
         return "OfficeCJK"
-    candidates = [
-        os.environ.get("PDF_FONT", ""),
-        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-    ]
+
+    candidates = [raw for raw in (os.environ.get("PDF_FONT", ""),) if raw]
+    candidates += list(_CJK_FONT_CANDIDATES)
+    # 兜底：常见字体目录按文件名扫一遍（不同发行版/宿主机的字体路径会漂）
+    seen = set(candidates)
+    for font_dir in _CJK_FONT_DIRS:
+        root = Path(font_dir)
+        if not root.is_dir():
+            continue
+        for name in _CJK_FONT_NAMES:
+            for hit in root.rglob(name):
+                text = str(hit)
+                if text not in seen:
+                    seen.add(text)
+                    candidates.append(text)
+
+    failures: list[str] = []
     for raw in candidates:
-        path = Path(raw) if raw else None
-        if path is None or not path.is_file():
+        path = Path(raw)
+        if not path.is_file():
             continue
         try:
             if path.suffix.lower() == ".ttc":
@@ -153,10 +207,18 @@ def _cjk_font() -> str:
             else:
                 pdfmetrics.registerFont(TTFont("OfficeCJK", str(path)))
             return "OfficeCJK"
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - 单个字体注册失败换下一个，但必须留痕
+            failures.append(f"{path.name}: {exc}")
             continue
+    if failures:
+        logger.warning(
+            "中文字体注册全部失败（多为 CFF 轮廓，reportlab 不支持）| %s",
+            "; ".join(failures[:5]),
+        )
     raise ValueError(
-        "没有可用的中文字体，PDF 未生成。请安装思源黑体，或设置环境变量 PDF_FONT 指向 .ttf/.otf/.ttc。"
+        "没有可用的中文字体，PDF 未生成。PDF 内嵌字体必须是 TrueType 轮廓："
+        "容器请安装 fonts-wqy-microhei（文泉驿微米黑），或设置环境变量 PDF_FONT "
+        "指向 .ttf/.ttc。注意：思源黑体/Noto CJK 是 CFF 轮廓，reportlab 不支持。"
     )
 
 

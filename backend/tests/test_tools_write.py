@@ -7,6 +7,7 @@ from app.orchestration.tools import ToolRegistry
 from app.orchestration.tools_doc import extract_document_text
 from app.orchestration.tools_table import make_clean_table_tool
 from app.orchestration.tools_write import make_write_document_tool
+from app.orchestration import tools_write
 
 
 def test_write_pptx_and_pdf(tmp_path):
@@ -56,6 +57,44 @@ def test_missing_clean_id_does_not_write(tmp_path):
     with pytest.raises(FileNotFoundError):
         tool(title="空", content="没有这份表", format="md", clean_id="c-" + "ab" * 8)
     assert not (tmp_path / "_out").exists() or not list((tmp_path / "_out").glob("*"))
+
+
+def _patch_font_cache(monkeypatch):
+    """reportlab 字体注册是进程级缓存；全量跑时前面的 PDF 用例已注册 OfficeCJK，
+    不清缓存则 _cjk_font 直接命中早退，走不到失败分支。"""
+    from reportlab.pdfbase import pdfmetrics
+
+    monkeypatch.setattr(pdfmetrics, "getRegisteredFontNames", lambda: [])
+
+
+def test_pdf_cjk_font_failure_is_loud_and_actionable(monkeypatch):
+    """p6.34：一个字体都注册不了时必须抛带指引的错误，且报错指向 TrueType。
+
+    背景：Noto CJK/思源黑体是 CFF 轮廓，reportlab 注册必败；旧版静默 continue
+    让「装了字体仍报没有字体」。这里把候选/目录全换掉，走确定性失败路径。
+    """
+    _patch_font_cache(monkeypatch)
+    monkeypatch.setenv("PDF_FONT", "/nonexistent/font.ttf")
+    monkeypatch.setattr(tools_write, "_CJK_FONT_CANDIDATES", ())
+    monkeypatch.setattr(tools_write, "_CJK_FONT_DIRS", ())
+    with pytest.raises(ValueError, match="TrueType"):
+        tools_write._cjk_font()
+
+
+def test_pdf_cjk_font_unreadable_font_is_skipped_with_log(monkeypatch, caplog, tmp_path):
+    """p6.34：存在但注册失败的字体必须留 WARNING 日志，不许静默 continue（旧版坑）。"""
+    import logging
+
+    _patch_font_cache(monkeypatch)
+    fake = tmp_path / "fake.ttf"
+    fake.write_bytes(b"not a font")
+    monkeypatch.setenv("PDF_FONT", str(fake))
+    monkeypatch.setattr(tools_write, "_CJK_FONT_CANDIDATES", ())
+    monkeypatch.setattr(tools_write, "_CJK_FONT_DIRS", ())
+    with caplog.at_level(logging.WARNING, logger="app.orchestration.tools_write"):
+        with pytest.raises(ValueError, match="TrueType"):
+            tools_write._cjk_font()
+    assert "fake.ttf" in caplog.text
 
 
 def test_write_emits_artifact_event(tmp_path):

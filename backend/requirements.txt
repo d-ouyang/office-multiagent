@@ -55,7 +55,7 @@ pandas==3.0.6               # 3.x 为稳定大版本；新项目无历史 pandas
 numpy==2.5.4
 matplotlib==3.10.6          # 图表只在服务端算几何，导出 SVG；中文由浏览器字体绘制
 openpyxl==3.1.5             # Excel 读写
-reportlab==5.0.1            # PDF 生成（中文需配 Arial Unicode / 思源黑体等字体）
+reportlab==5.0.1            # PDF 生成（内嵌字体须 TrueType 轮廓：文泉驿微米黑/Arial Unicode；思源黑体等 CFF 轮廓不支持）
 python-pptx==1.0.2           # PPT 生成
 python-docx==1.2.0          # Word 生成
 pypdf==6.21.1               # PDF 解析（用户上传 PDF 抽取文本）
