@@ -17,7 +17,7 @@ def eng(monkeypatch):
     )
     with engine.begin() as c:
         c.execute(text("CREATE TABLE `user` (id INTEGER PRIMARY KEY, employee_id TEXT, username TEXT, role TEXT, model_pool_id INTEGER, token_version INTEGER NOT NULL DEFAULT 0, password_hash TEXT)"))
-        c.execute(text("CREATE TABLE user_memory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, content TEXT NOT NULL, source TEXT DEFAULT 'agent', created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        c.execute(text("CREATE TABLE user_memory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, content TEXT NOT NULL, source TEXT DEFAULT 'agent', section TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("INSERT INTO `user` (id, employee_id, username, role) VALUES (1, 'EMP001', 'dev', 'admin')"))
         c.execute(text("INSERT INTO `user` (id, employee_id, username, role) VALUES (2, 'EMP002', 'chen', 'user')"))
     monkeypatch.setattr(settings, "jwt_secret", "test-secret-memory")
@@ -194,6 +194,27 @@ def test_api_memory_full_409(eng, monkeypatch):
     assert client.post("/api/v1/memory", json={"content": "第一条"}, headers=_auth()).status_code == 200
     r = client.post("/api/v1/memory", json={"content": "第二条"}, headers=_auth())
     assert r.status_code == 409 and "已满" in r.json()["detail"]["message"]
+
+
+def test_profile_and_fact_edit(eng):
+    client = TestClient(app)
+    saved = client.put(
+        "/api/v1/memory/profile",
+        json={"work": "上海前端", "personal": "", "focus": "办公助手", "history": ""},
+        headers=_auth(),
+    )
+    assert saved.status_code == 200
+    assert saved.json()["profile"]["work"] == "上海前端"
+    listed = client.get("/api/v1/memory", headers=_auth()).json()
+    assert listed["profile"]["focus"] == "办公助手"
+    assert listed["total"] == 0  # 背景不占短条目名额
+
+    created = client.post("/api/v1/memory", json={"content": "报销以财务制度为准"}, headers=_auth())
+    mid = created.json()["id"]
+    edited = client.patch(f"/api/v1/memory/{mid}", json={"content": "报销以 2026 版为准"}, headers=_auth())
+    assert edited.status_code == 200
+    assert edited.json()["content"] == "报销以 2026 版为准"
+    assert client.patch(f"/api/v1/memory/{mid}", json={"content": "x"}, headers=_auth("EMP002")).status_code == 404
 
 
 def test_registry_only_when_user_id(eng):

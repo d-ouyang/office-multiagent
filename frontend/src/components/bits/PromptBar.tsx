@@ -49,6 +49,13 @@ export interface PromptBarModel {
   name: string;
   tag?: string;
   description?: string;
+  group?: string;
+  detail?: {
+    intro: string;
+    context: string;
+    channel: string;
+    capabilities: string[];
+  };
 }
 
 export interface PromptBarSendDetail {
@@ -95,6 +102,8 @@ type Row = {
   name: string;
   description?: string;
   tag?: string;
+  group?: string;
+  detail?: PromptBarModel['detail'];
   icon?: ReactNode | IconSvgElement;
   attach?: boolean;
 };
@@ -254,6 +263,7 @@ const PromptBar: React.FC<PromptBarProps> = ({
   const boost = useRef(sparkBoost);
   boost.current = sparkBoost;
   const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
   const lastOpen = useRef<string | null>(null);
   const dictation = useRef(0);
   const seenIncoming = useRef<number | null>(null);
@@ -274,6 +284,8 @@ const PromptBar: React.FC<PromptBarProps> = ({
   const [active, setActive] = useState(0);
   const [listening, setListening] = useState(false);
   const [pressed, setPressed] = useState(false);
+  const [hoverKey, setHoverKey] = useState('');
+  const [cardTop, setCardTop] = useState(0);
 
   const model = models.find(m => m.key === modelKey) ?? models[0];
   const token = dismissed ? null : parseToken(draft);
@@ -576,6 +588,27 @@ const PromptBar: React.FC<PromptBarProps> = ({
     setPressed(true);
   };
   const up = () => setPressed(false);
+  const hovered = models.find(m => m.key === hoverKey) ?? (open === 'model' ? list[cursor] : undefined);
+
+  useLayoutEffect(() => {
+    if (open !== 'model') return;
+    const row = list[cursor];
+    const el = rowRefs.current[cursor];
+    const menu = modelMenuRef.current;
+    if (!row || !el || !menu) return;
+    setHoverKey(row.key);
+    setCardTop(Math.max(0, el.offsetTop - menu.scrollTop));
+  }, [open, cursor, list]);
+
+  const modelGroups: { label: string; rows: { row: Row; index: number }[] }[] = [];
+  if (open === 'model') {
+    list.forEach((row, index) => {
+      const label = row.group || '其他';
+      const last = modelGroups[modelGroups.length - 1];
+      if (!last || last.label !== label) modelGroups.push({ label, rows: [] });
+      modelGroups[modelGroups.length - 1].rows.push({ row, index });
+    });
+  }
 
   return (
     <div
@@ -595,11 +628,74 @@ const PromptBar: React.FC<PromptBarProps> = ({
         } as CSSProperties
       }
     >
-      {open ? (
+      {open === 'model' ? (
+        <div className="prompt-bar__model-pop">
+          <div
+            ref={modelMenuRef}
+            className="prompt-bar__menu"
+            role="listbox"
+            aria-label="模型"
+            data-kind="model"
+            onScroll={() => {
+              const menu = modelMenuRef.current;
+              const index = list.findIndex(row => row.key === hoverKey);
+              const el = index >= 0 ? rowRefs.current[index] : null;
+              if (!menu || !el) return;
+              setCardTop(Math.max(0, el.offsetTop - menu.scrollTop));
+            }}
+          >
+            <span ref={glowRef} className="prompt-bar__glow" aria-hidden="true" />
+            {modelGroups.map(group => (
+              <div key={group.label}>
+                <div className="prompt-bar__group">{group.label}</div>
+                {group.rows.map(({ row, index }) => (
+                  <button
+                    key={row.key}
+                    ref={el => {
+                      rowRefs.current[index] = el;
+                    }}
+                    type="button"
+                    role="option"
+                    aria-selected={index === cursor}
+                    className="prompt-bar__row"
+                    onMouseDown={e => e.preventDefault()}
+                    onPointerEnter={e => {
+                      setActive(index);
+                      setHoverKey(row.key);
+                      const menu = modelMenuRef.current;
+                      if (menu) setCardTop(Math.max(0, e.currentTarget.offsetTop - menu.scrollTop));
+                    }}
+                    onClick={() => pick(row)}
+                  >
+                    <span className="prompt-bar__row-name">{row.name}</span>
+                    <span className="prompt-bar__row-tag">{row.tag}</span>
+                    <span className="prompt-bar__row-check" data-on={row.key === model?.key ? '' : undefined}>
+                      <HugeiconsIcon icon={Tick02Icon} size={13} strokeWidth={2.5} />
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ))}
+            {list.length === 0 ? <div className="prompt-bar__empty">没有匹配「{query}」</div> : null}
+          </div>
+          {hovered?.detail ? (
+            <aside className="prompt-bar__model-card" style={{ top: cardTop }} aria-live="polite">
+              <strong>{hovered.name}</strong>
+              <p>{hovered.detail.intro}</p>
+              <dl>
+                <div><dt>上下文</dt><dd>{hovered.detail.context}</dd></div>
+                <div><dt>渠道</dt><dd>{hovered.detail.channel}</dd></div>
+                <div><dt>能力</dt><dd>{hovered.detail.capabilities.length ? hovered.detail.capabilities.join(' · ') : '文本对话'}</dd></div>
+              </dl>
+            </aside>
+          ) : null}
+        </div>
+      ) : null}
+      {open && open !== 'model' ? (
         <div
           className="prompt-bar__menu"
           role={open === 'effort' ? 'dialog' : 'listbox'}
-          aria-label={open === 'at' ? '来源' : open === 'slash' ? '指令' : open === 'model' ? '模型' : '力度'}
+          aria-label={open === 'at' ? '来源' : open === 'slash' ? '指令' : '力度'}
           data-kind={open}
         >
           {open === 'effort' ? (
@@ -669,14 +765,6 @@ const PromptBar: React.FC<PromptBarProps> = ({
                   {open === 'at' ? <span className="prompt-bar__row-icon">{renderIcon(row.icon, 15)}</span> : null}
                   <span className="prompt-bar__row-name">{row.name}</span>
                   {row.description ? <span className="prompt-bar__row-desc">{row.description}</span> : null}
-                  {open === 'model' ? (
-                    <>
-                      <span className="prompt-bar__row-tag">{row.tag}</span>
-                      <span className="prompt-bar__row-check" data-on={row.key === model?.key ? '' : undefined}>
-                        <HugeiconsIcon icon={Tick02Icon} size={13} strokeWidth={2.5} />
-                      </span>
-                    </>
-                  ) : null}
                 </button>
               ))}
               {list.length === 0 ? <div className="prompt-bar__empty">没有匹配「{query}」</div> : null}

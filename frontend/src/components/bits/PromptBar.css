@@ -34,10 +34,77 @@
   animation: prompt-bar-pop 180ms var(--pb-ease-out) both;
 }
 
-.prompt-bar__menu[data-kind='model'] {
+.prompt-bar__model-pop {
+  position: absolute;
   right: auto;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 2;
+}
+
+.prompt-bar__model-pop .prompt-bar__menu {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  left: auto;
   width: 340px;
+  max-height: 420px;
+  overflow: auto;
   transform-origin: bottom left;
+}
+
+.prompt-bar__group {
+  padding: 8px 8px 2px;
+  color: var(--pb-muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.prompt-bar__model-card {
+  position: absolute;
+  left: 348px;
+  width: 260px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--pb-menu);
+  box-shadow:
+    0 10px 30px -10px rgba(0, 0, 0, 0.35),
+    0 1px 2px rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+}
+
+.prompt-bar__model-card strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.prompt-bar__model-card p {
+  margin: 6px 0 8px;
+  color: var(--pb-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.prompt-bar__model-card dl {
+  margin: 0;
+}
+
+.prompt-bar__model-card dl div {
+  display: flex;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.prompt-bar__model-card dt {
+  width: 42px;
+  flex-shrink: 0;
+  color: var(--pb-muted);
+}
+
+.prompt-bar__model-card dd {
+  margin: 0;
 }
 
 .prompt-bar__menu[data-kind='model'] .prompt-bar__row-name {

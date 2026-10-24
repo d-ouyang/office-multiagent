@@ -9,6 +9,7 @@ export interface DialogueModel {
   provider: string;
   multimodal_input: boolean;
   context_window: number;
+  max_output?: number;
   supports_reasoning: boolean;
   description: string;
 }
@@ -23,6 +24,42 @@ export function fmtCtx(n: number): string {
   if (n >= 1_000_000) return `${Math.round(n / (binary ? 1_048_576 : 1_000_000))}M`;
   if (n >= 1000) return `${Math.round(n / (binary ? 1024 : 1000))}K`;
   return String(n);
+}
+
+/** 上下文总量：1024 的整数倍显示成 160K / 1024K，不收成 1M。 */
+export function fmtWindow(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  if (n % 1024 === 0 && n % 1000 !== 0) return `${Math.round(n / 1024)}K`;
+  if (n >= 1000) return `${Math.round(n / 1000)}K`;
+  return String(n);
+}
+
+const FAMILY = ['deepseek', 'qwen'] as const;
+
+export function modelFamily(id: string, name: string): 'deepseek' | 'qwen' | 'other' {
+  const blob = `${id} ${name}`.toLowerCase();
+  if (blob.includes('deepseek')) return 'deepseek';
+  if (blob.includes('qwen')) return 'qwen';
+  return 'other';
+}
+
+export function familyLabel(family: ReturnType<typeof modelFamily>): string {
+  if (family === 'deepseek') return 'DeepSeek';
+  if (family === 'qwen') return 'Qwen';
+  return '其他';
+}
+
+/** DeepSeek 排在一起，Qwen 排在一起，同组里保持原来的先后。 */
+export function sortDialogueModels<T extends { id: string; name: string }>(models: T[]): T[] {
+  return models
+    .map((model, index) => ({ model, index }))
+    .sort((a, b) => {
+      const rank = (item: T) => FAMILY.indexOf(modelFamily(item.id, item.name) as (typeof FAMILY)[number]);
+      const ar = rank(a.model);
+      const br = rank(b.model);
+      return (ar < 0 ? FAMILY.length : ar) - (br < 0 ? FAMILY.length : br) || a.index - b.index;
+    })
+    .map((item) => item.model);
 }
 
 function optionLabel(m: DialogueModel): string {
@@ -53,15 +90,37 @@ export function modelDisplayName(id: string | undefined): string {
   return MODEL_NAMES[id] ?? id;
 }
 
-export function toPromptModel(m: DialogueModel): { key: string; name: string; tag: string } {
-  const channel = m.provider === 'deepseek' ? '官方' : m.provider === 'siliconflow' ? '硅基' : m.provider;
-  const bits = [fmtCtx(m.context_window)];
-  if (m.supports_reasoning) bits.push('思考');
-  if (m.multimodal_input) bits.push('视觉');
+export function toPromptModel(m: DialogueModel): {
+  key: string;
+  name: string;
+  tag: string;
+  group: string;
+  detail: { intro: string; context: string; channel: string; capabilities: string[] };
+} {
+  const channel = m.provider === 'deepseek' ? '官方' : m.provider === 'siliconflow' ? '硅基流动' : m.provider;
+  const short = m.provider === 'deepseek' ? '官方' : m.provider === 'siliconflow' ? '硅基' : m.provider;
+  const bits = [fmtWindow(m.context_window)];
+  const capabilities: string[] = [];
+  if (m.supports_reasoning) {
+    bits.push('思考');
+    capabilities.push('思考');
+  }
+  if (m.multimodal_input) {
+    bits.push('视觉');
+    capabilities.push('视觉');
+  }
+  if (m.max_output) capabilities.push(`单次最多输出 ${fmtWindow(m.max_output)}`);
   return {
     key: m.id,
-    name: `${m.name} · ${channel}`,
+    name: `${m.name} · ${short}`,
     tag: bits.join(' · '),
+    group: familyLabel(modelFamily(m.id, m.name)),
+    detail: {
+      intro: m.description?.trim() || '还没有简介。',
+      context: fmtWindow(m.context_window),
+      channel,
+      capabilities,
+    },
   };
 }
 

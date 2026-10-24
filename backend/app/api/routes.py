@@ -326,11 +326,85 @@ def my_quota(authorization: str | None = Header(default=None)):
     }
 
 
+@router.get("/quota/usage")
+def my_usage(
+    model: str = Query(default="", max_length=64),
+    start: str = Query(default="", max_length=10),
+    end: str = Query(default="", max_length=10),
+    min_tokens: int | None = Query(default=None, ge=0),
+    max_tokens: int | None = Query(default=None, ge=0),
+    authorization: str | None = Header(default=None),
+):
+    """用量明细：按模型、时间、用量筛选已结算任务，并带回会话和提问。"""
+    from datetime import datetime
+
+    user = _current_user(authorization)
+    for label, raw in (("开始日期", start), ("结束日期", end)):
+        if raw:
+            try:
+                datetime.strptime(raw, "%Y-%m-%d")
+            except ValueError as e:
+                raise HTTPException(400, detail={"code": "BAD_DATE", "message": f"{label}要用 YYYY-MM-DD"}) from e
+    from ..core.db import get_engine
+    from ..core.token_pool import TokenPool
+
+    rows = TokenPool(get_engine()).search_usage(
+        user["id"],
+        model=model.strip(),
+        start=start.strip(),
+        end=end.strip(),
+        min_tokens=min_tokens,
+        max_tokens=max_tokens,
+    )
+    return {"items": rows}
+
+
+class SettingUpdate(BaseModel):
+    value: Any
+
+
+@router.get("/settings")
+def read_settings(authorization: str | None = Header(default=None)):
+    """系统级开关。员工能看，只有管理员能改。个人模型与力度不在这里。"""
+    from ..core.runtime_settings import public_items
+
+    user = _current_user(authorization)
+    return {
+        "editable": str(user.get("role") or "") in ("admin", "superadmin"),
+        "items": public_items(),
+    }
+
+
+@router.patch("/settings/{key}")
+def update_setting(key: str, body: SettingUpdate, authorization: str | None = Header(default=None)):
+    from ..core.runtime_settings import validate_and_store
+
+    _require_admin(authorization)
+    try:
+        saved = validate_and_store(key, body.value)
+    except KeyError as e:
+        raise HTTPException(404, detail={"code": "UNKNOWN_SETTING", "message": "没有这项设置"}) from e
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "BAD_VALUE", "message": str(e)}) from e
+    return {"key": key, "value": saved}
+
+
 # --------------------------------------------------------------------------- #
 # 显式长期记忆（p6.29）：用户可查可删；只增不改
 # --------------------------------------------------------------------------- #
 class MemoryCreate(BaseModel):
     content: str
+
+
+class MemoryUpdate(BaseModel):
+    content: str
+
+
+class MemoryProfileBody(BaseModel):
+    work: str = ""
+    personal: str = ""
+    focus: str = ""
+    history: str = ""
 
 
 @router.get("/memory")
@@ -345,7 +419,11 @@ def list_memory(
     user = _current_user(authorization)
     repo = UserMemoryRepo(get_engine())
     rows = repo.list_for(user["id"], keyword=keyword)
-    return {"memories": rows, "total": repo.count(user["id"])}
+    return {
+        "memories": rows,
+        "total": repo.count(user["id"]),
+        "profile": repo.profile_for(user["id"]),
+    }
 
 
 @router.post("/memory")
@@ -374,6 +452,41 @@ def create_memory(body: MemoryCreate, authorization: str | None = Header(default
     except MemoryFull as e:
         raise HTTPException(409, detail={"code": "MEMORY_FULL", "message": str(e)}) from e
     return row
+
+
+@router.patch("/memory/{memory_id}")
+def update_memory(memory_id: int, body: MemoryUpdate, authorization: str | None = Header(default=None)):
+    """修改自己的一条短记忆。背景分区不走这里。"""
+    from ..core.db import get_engine
+    from ..core.user_memory_repo import ContentTooLong, UserMemoryRepo
+
+    user = _current_user(authorization)
+    try:
+        row = UserMemoryRepo(get_engine()).update_fact(user["id"], memory_id, body.content or "")
+    except ContentTooLong as e:
+        raise HTTPException(400, detail={"code": "CONTENT_TOO_LONG", "message": str(e)}) from e
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "EMPTY_CONTENT", "message": str(e)}) from e
+    if row is None:
+        raise HTTPException(404, detail={"code": "MEMORY_NOT_FOUND", "message": "记忆不存在"})
+    return row
+
+
+@router.put("/memory/profile")
+def save_memory_profile(body: MemoryProfileBody, authorization: str | None = Header(default=None)):
+    """保存四段背景。某一段留空就是清掉这一段。"""
+    from ..core.db import get_engine
+    from ..core.user_memory_repo import PROFILE_SECTIONS, ContentTooLong, UserMemoryRepo
+
+    user = _current_user(authorization)
+    repo = UserMemoryRepo(get_engine())
+    payload = body.model_dump()
+    try:
+        for key in PROFILE_SECTIONS:
+            repo.save_profile(user["id"], key, payload.get(key) or "")
+    except ContentTooLong as e:
+        raise HTTPException(400, detail={"code": "CONTENT_TOO_LONG", "message": str(e)}) from e
+    return {"profile": repo.profile_for(user["id"])}
 
 
 @router.delete("/memory/{memory_id}")
@@ -827,15 +940,13 @@ def _stream_task(
         from ..core.user_memory_repo import UserMemoryRepo
         from ..orchestration.memory import user_memory_block
 
-        mems = UserMemoryRepo(get_engine()).list_for(
-            user["id"], limit=settings.user_memory_inject_limit
-        )
-        if mems:
-            block = user_memory_block(mems, max_chars=settings.user_memory_inject_chars)
+        memory_repo = UserMemoryRepo(get_engine())
+        mems = memory_repo.list_for(user["id"], limit=settings.user_memory_inject_limit)
+        profile = memory_repo.profile_for(user["id"])
+        block = user_memory_block(mems, profile=profile, max_chars=settings.user_memory_inject_chars)
+        if block:
             effective_text = f"{block}\n\n{effective_text}"
-            context_parts["memory"] = "\n".join(f"- {m.get('content', '')}" for m in mems)[
-                : settings.user_memory_inject_chars
-            ]
+            context_parts["memory"] = block[: settings.user_memory_inject_chars]
     except Exception:  # noqa: BLE001 - 记忆注入失败不阻断任务
         logging.getLogger(__name__).exception("长期记忆注入失败（忽略）")
 

@@ -6,7 +6,7 @@ import AppSidebar, { type SessionMeta, type SessionUser } from '../components/Ap
 import ChatMessage, { type ChatMessageData } from '../components/ChatMessage';
 import FilePreview from '../components/FilePreview';
 import PromptBar, { type PromptBarModel } from '../components/bits/PromptBar';
-import { toPromptModel, type DialogueModel } from '../components/ModelPicker';
+import { sortDialogueModels, toPromptModel, type DialogueModel } from '../components/ModelPicker';
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import type { StreamEvent } from '../types';
 import ContextRing from '../components/ContextRing';
@@ -30,6 +30,14 @@ function basename(path: string): string {
   return path.split('/').pop() || path;
 }
 
+function messageAnchor(list: ChatMessageData[], index: number): string | undefined {
+  const current = list[index];
+  if (!current || current.role !== 'user') return undefined;
+  const next = list[index + 1];
+  const runId = next?.role === 'assistant' ? next.events?.find((event) => event.run_id)?.run_id : undefined;
+  return runId ? `q-${runId}` : `msg-${index}`;
+}
+
 function parseCreatedAt(raw: string | undefined): number | undefined {
   if (!raw) return undefined;
   const n = Date.parse(raw);
@@ -44,7 +52,8 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
   const [balance, setBalance] = useState<number | null>(null);
   const [paused, setPaused] = useState<{ taskId: string; message: string } | null>(null);
   const [usage, setUsage] = useState<{ month_tokens: number; month_count: number; total_tokens: number; total_count: number } | null>(null);
-  const [modelName, setModelName] = useState('DeepSeek V3');
+  const [modelId, setModelId] = useState(() => localStorage.getItem('office_model') || 'deepseek-chat');
+  const [locate, setLocate] = useState<{ taskId: string; question: string } | null>(null);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [models, setModels] = useState<DialogueModel[]>([]);
@@ -291,7 +300,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
 
   const onModelChange = async (m: PromptBarModel) => {
     localStorage.setItem('office_model', m.key);
-    setModelName(m.name);
+    setModelId(m.key);
     const sid = currentIdRef.current;
     if (!sid) return;
     try {
@@ -433,8 +442,23 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     [messages, events, status],
   );
 
-  const promptModels = useMemo(() => models.map(toPromptModel), [models]);
-  const defaultModel = localStorage.getItem('office_model') || 'deepseek-chat';
+  const promptModels = useMemo(() => sortDialogueModels(models).map(toPromptModel), [models]);
+  const modelWindow = models.find((m) => m.id === modelId)?.context_window
+    || models.find((m) => m.id === 'deepseek-chat')?.context_window
+    || 0;
+
+  useEffect(() => {
+    if (!locate) return undefined;
+    const byTask = document.getElementById(`q-${locate.taskId}`);
+    const byText = locate.question
+      ? scrollRef.current?.querySelector<HTMLElement>(`[data-question="${CSS.escape(locate.question)}"]`)
+      : null;
+    const el = byTask || byText || null;
+    if (!el) return undefined;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const timer = window.setTimeout(() => setLocate(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [locate, messages]);
   const currentAgent = deriveCurrentAgent(events);
   const contextUsage = useMemo(() => {
     const live = events.length ? deriveContextUsage(events) : null;
@@ -459,7 +483,11 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
         user={user}
         balance={balance}
         usage={usage}
-        modelName={modelName}
+        models={models}
+        onJumpToTask={(sessionId, taskId, question) => {
+          setLocate({ taskId, question });
+          if (currentIdRef.current !== sessionId) void selectSession(sessionId);
+        }}
         onLogout={() => {
           if (status === 'streaming') stop();
           onLogout();
@@ -475,7 +503,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
                 当前回答：<span className="badge agent">{agentLabel(currentAgent.agent)}</span>
               </span>
             )}
-            <ContextRing usage={contextUsage} />
+            <ContextRing usage={contextUsage} windowSize={modelWindow} />
           </div>
         </header>
         <div className="message-scroll" ref={scrollRef}>
@@ -490,6 +518,8 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
               key={i}
               index={i}
               msg={m}
+              anchorId={messageAnchor(liveMessages, i)}
+              located={!!locate && messageAnchor(liveMessages, i) === `q-${locate.taskId}`}
               onEditSubmit={(idx, text, paths) => void onEditSubmit(idx, text, paths)}
               onPreview={setPreviewPath}
             />
@@ -528,7 +558,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
             sources={SOURCES}
             commands={[]}
             models={promptModels}
-            defaultModel={defaultModel}
+            defaultModel={modelId}
             efforts={[...EFFORTS]}
             defaultEffort="高"
             busy={status === 'streaming'}

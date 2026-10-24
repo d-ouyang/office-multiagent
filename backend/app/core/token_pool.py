@@ -173,6 +173,61 @@ class TokenPool:
             ).first()
             return int(row[0]) if row else 0
 
+    def search_usage(
+        self,
+        user_id: int,
+        *,
+        model: str = "",
+        start: str = "",
+        end: str = "",
+        min_tokens: int | None = None,
+        max_tokens: int | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """已结算的任务用量。带上任务所在会话和提问原文，方便从账本跳回对话。"""
+        from datetime import timedelta
+
+        sql = (
+            "SELECT l.task_id AS task_id, l.model AS model, l.settle AS settle, "
+            "l.created_at AS created_at, t.session_id AS session_id, t.text AS question "
+            "FROM token_ledger l LEFT JOIN task t ON t.id = l.task_id "
+            "WHERE l.user_id = :u AND l.settle IS NOT NULL "
+            "AND (l.kind IS NULL OR l.kind = 'task')"
+        )
+        params: dict = {"u": user_id, "l": max(1, min(int(limit), 500))}
+        if model:
+            sql += " AND l.model = :model"
+            params["model"] = model
+        if start:
+            sql += " AND l.created_at >= :start"
+            params["start"] = start
+        if end:
+            end_day = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
+            sql += " AND l.created_at < :end"
+            params["end"] = end_day.strftime("%Y-%m-%d")
+        if min_tokens is not None:
+            sql += " AND l.settle >= :min_tokens"
+            params["min_tokens"] = int(min_tokens)
+        if max_tokens is not None:
+            sql += " AND l.settle <= :max_tokens"
+            params["max_tokens"] = int(max_tokens)
+        sql += " ORDER BY l.id DESC LIMIT :l"
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(sql), params).mappings().all()
+        out = []
+        for r in rows:
+            out.append(
+                {
+                    "task_id": r["task_id"],
+                    "model": r["model"],
+                    "settle": r["settle"],
+                    "created_at": _iso_utc(r["created_at"]),
+                    "session_id": r.get("session_id"),
+                    "question": r.get("question") or "",
+                }
+            )
+        return out
+
     def usage_summary(self, user_id: int) -> dict[str, int]:
         """本月（上海时区）与累计的结算用量。只计 settle 行，不含预扣。"""
         now = datetime.now(ZoneInfo("Asia/Shanghai"))

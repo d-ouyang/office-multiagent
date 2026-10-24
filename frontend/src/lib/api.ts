@@ -158,6 +158,73 @@ export async function getQuota(): Promise<{
 // p6.29：显式长期记忆（用户可查可删）
 // --------------------------------------------------------------------------- //
 
+export interface UsageHit {
+  task_id?: string | null;
+  session_id?: string | null;
+  question?: string;
+  model?: string | null;
+  settle?: number | null;
+  created_at?: string;
+}
+
+export async function searchUsage(query: {
+  model?: string;
+  start?: string;
+  end?: string;
+  minTokens?: string;
+  maxTokens?: string;
+}): Promise<UsageHit[]> {
+  const params = new URLSearchParams();
+  if (query.model) params.set('model', query.model);
+  if (query.start) params.set('start', query.start);
+  if (query.end) params.set('end', query.end);
+  if (query.minTokens) params.set('min_tokens', query.minTokens);
+  if (query.maxTokens) params.set('max_tokens', query.maxTokens);
+  const res = await fetch(`/api/v1/quota/usage?${params}`, { headers: authHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  if (!res.ok) {
+    throw new Error(String(data?.detail?.message ?? '暂时读不到用量'));
+  }
+  return data.items ?? [];
+}
+
+export interface SettingItem {
+  key: string;
+  label: string;
+  description: string;
+  value_type: 'bool' | 'int';
+  scope: string;
+  value: boolean | number;
+  min?: number | null;
+  max?: number | null;
+}
+
+export async function getSettings(): Promise<{ editable: boolean; items: SettingItem[] }> {
+  const res = await fetch('/api/v1/settings', { headers: authHeaders() });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(String(data?.detail?.message ?? '暂时读不到设置'));
+  return { editable: !!data.editable, items: data.items ?? [] };
+}
+
+export async function saveSetting(key: string, value: boolean | number): Promise<boolean | number> {
+  const res = await fetch(`/api/v1/settings/${encodeURIComponent(key)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ value }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(String(data?.detail?.message ?? '保存失败'));
+  return data.value;
+}
+
 export interface MemoryItem {
   id: number;
   content: string;
@@ -165,14 +232,53 @@ export interface MemoryItem {
   created_at: string;
 }
 
+export interface MemoryProfile {
+  work: string;
+  personal: string;
+  focus: string;
+  history: string;
+}
+
+export const EMPTY_PROFILE: MemoryProfile = { work: '', personal: '', focus: '', history: '' };
+
 export async function listMemory(): Promise<MemoryItem[]> {
+  const bundle = await getMemoryBundle();
+  return bundle.memories;
+}
+
+export async function getMemoryBundle(): Promise<{ memories: MemoryItem[]; profile: MemoryProfile }> {
   const res = await fetch('/api/v1/memory', { headers: authHeaders() });
   if (res.status === 401) {
     clearToken();
     throw new Error('UNAUTHORIZED');
   }
   const data = await res.json();
-  return data.memories ?? [];
+  return {
+    memories: data.memories ?? [],
+    profile: { ...EMPTY_PROFILE, ...(data.profile ?? {}) },
+  };
+}
+
+export async function updateMemory(id: number, content: string): Promise<MemoryItem> {
+  const res = await fetch(`/api/v1/memory/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ content }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(String(data?.detail?.message ?? '保存失败'));
+  return data as MemoryItem;
+}
+
+export async function saveMemoryProfile(profile: MemoryProfile): Promise<MemoryProfile> {
+  const res = await fetch('/api/v1/memory/profile', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(profile),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(String(data?.detail?.message ?? '保存失败'));
+  return { ...EMPTY_PROFILE, ...(data.profile ?? {}) };
 }
 
 export async function addMemory(content: string): Promise<MemoryItem> {

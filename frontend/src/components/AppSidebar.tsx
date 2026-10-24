@@ -2,7 +2,9 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { APP_BLURB, APP_VERSION } from '../version';
-import { AccountPanel, type UsageSummary } from './AccountPanel';
+import { AccountPanel, type AccountSurface, type UsageSummary } from './AccountPanel';
+import { MemoryDialog, PasswordDialog, SettingsDialog, UsageDialog } from './AccountSurfaces';
+import type { DialogueModel } from './ModelPicker';
 
 export interface SessionMeta {
   id: string;
@@ -76,13 +78,15 @@ export function AppSidebar(props: {
   user: SessionUser;
   balance?: number | null;
   usage?: UsageSummary | null;
-  modelName?: string;
   onLogout: () => void;
-  /** p7.1：管理端入口（仅 admin/superadmin 传入；不传则不显示） */
+  /** 管理端入口（仅 admin/superadmin 传入；不传则不显示） */
   onOpenAdmin?: () => void;
+  models?: DialogueModel[];
+  onJumpToTask?: (sessionId: string, taskId: string, question: string) => void;
 }) {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [surface, setSurface] = useState<AccountSurface | null>(null);
   const [hoverId, setHoverId] = useState('');
   const [menuId, setMenuId] = useState('');
   const [renamingId, setRenamingId] = useState('');
@@ -96,6 +100,7 @@ export function AppSidebar(props: {
     if (!accountOpen && !menuId) return undefined;
     const onDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement;
+      if (target.closest?.('.ui-confirm-mask, .workspace-dialog-mask')) return;
       if (accountOpen && !accountRef.current?.contains(target)) setAccountOpen(false);
       if (menuId && !target.closest?.('.session-ops')) setMenuId('');
     };
@@ -107,19 +112,15 @@ export function AppSidebar(props: {
       <div className="sidebar-brand">
         <img className="brand-logo" src="/gq_logo.jpg" alt="锅圈" />
         <div className="brand-copy">
-          <div className="brand-name">office-multiagent</div>
+          <div className="brand-name">锅圈 Agent</div>
           <div className="brand-blurb">{APP_BLURB}</div>
+          <div className="brand-product">office-multiagent</div>
           <div className="brand-version">{APP_VERSION}</div>
         </div>
       </div>
       <button className="new-chat" onClick={props.onNew}>
         ＋ 新会话
       </button>
-      {props.onOpenAdmin && (
-        <button className="admin-entry" type="button" onClick={props.onOpenAdmin}>
-          ⚙ 管理（用户与额度）
-        </button>
-      )}
       <div className="session-list">
         {visible.map((s) => (
           <div
@@ -228,9 +229,10 @@ export function AppSidebar(props: {
             user={props.user}
             balance={props.balance ?? null}
             usage={props.usage ?? null}
-            modelName={props.modelName || 'DeepSeek V3'}
             onClose={() => setAccountOpen(false)}
             onLogout={props.onLogout}
+            onOpenAdmin={props.onOpenAdmin}
+            onOpenSurface={setSurface}
           />
         )}
         <button type="button" className="user-chip" onClick={() => setAccountOpen((v) => !v)} aria-expanded={accountOpen}>
@@ -241,6 +243,19 @@ export function AppSidebar(props: {
           </span>
         </button>
       </div>
+      {surface === 'usage' && (
+        <UsageDialog
+          models={props.models ?? []}
+          onClose={() => setSurface(null)}
+          onJump={(sessionId, taskId, question) => {
+            setSurface(null);
+            props.onJumpToTask?.(sessionId, taskId, question);
+          }}
+        />
+      )}
+      {surface === 'memory' && <MemoryDialog onClose={() => setSurface(null)} />}
+      {surface === 'settings' && <SettingsDialog onClose={() => setSurface(null)} />}
+      {surface === 'password' && <PasswordDialog onClose={() => setSurface(null)} />}
       {deleteTarget && (
         <div className="confirm-mask" onClick={() => setDeleteTarget(null)}>
           <div

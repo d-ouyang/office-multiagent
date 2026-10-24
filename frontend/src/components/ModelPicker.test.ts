@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { fmtCtx, toPromptModel } from './ModelPicker';
+import { fmtCtx, fmtWindow, sortDialogueModels, toPromptModel } from './ModelPicker';
 
 describe('fmtCtx', () => {
   it('整千位按千显示，二进制窗口按 1024 显示', () => {
@@ -8,6 +8,27 @@ describe('fmtCtx', () => {
     expect(fmtCtx(163840)).toBe('160K');
     expect(fmtCtx(262144)).toBe('256K');
     expect(fmtCtx(1048576)).toBe('1M');
+  });
+
+  it('上下文总量按 1024 显示到 1024K', () => {
+    expect(fmtWindow(128000)).toBe('128K');
+    expect(fmtWindow(163840)).toBe('160K');
+    expect(fmtWindow(1048576)).toBe('1024K');
+  });
+
+  it('DeepSeek 排在一起，Qwen 排在一起', () => {
+    const ordered = sortDialogueModels([
+      { id: 'qwen3.5-9b-sf', name: 'Qwen3.5-9B' },
+      { id: 'glm-5.3-flash-sf', name: 'GLM-5.3-Flash' },
+      { id: 'deepseek-v4-flash-sf', name: 'DeepSeek V4-Flash' },
+      { id: 'deepseek-chat', name: 'DeepSeek V3' },
+    ]);
+    expect(ordered.map((m) => m.id)).toEqual([
+      'deepseek-v4-flash-sf',
+      'deepseek-chat',
+      'qwen3.5-9b-sf',
+      'glm-5.3-flash-sf',
+    ]);
   });
 
   it('能力只标思考和视觉', () => {

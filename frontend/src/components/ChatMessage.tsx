@@ -79,11 +79,15 @@ function CopyIcon({ getText }: { getText: () => string }) {
 export function ChatMessage({
   msg,
   index,
+  anchorId,
+  located,
   onEditSubmit,
   onPreview,
 }: {
   msg: ChatMessageData;
   index: number;
+  anchorId?: string;
+  located?: boolean;
   onEditSubmit?: (index: number, text: string, paths: string[]) => boolean | void | Promise<boolean | void>;
   onPreview?: (path: string) => void;
 }) {
@@ -117,7 +121,7 @@ export function ChatMessage({
       );
     });
     return (
-      <div className="msg-row user">
+      <div className={`msg-row user${located ? ' located' : ''}`} id={anchorId} data-question={msg.text || ''}>
         <div className="user-stack">
           {editing ? (
             <div className="user-edit">

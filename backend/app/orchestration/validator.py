@@ -91,9 +91,9 @@ def check_and_report(
 
     任何异常都吞掉（校验器坏了不能影响任务本身）——"不阻断"优先于"必校验"。
     """
-    from ..core.config import settings
+    from ..core.runtime_settings import result_validation_enabled
 
-    if not getattr(settings, "result_validation", True):
+    if not result_validation_enabled():
         return ValidationReport(skipped=True)
     try:
         report = validate_final(final, observations, task=task)

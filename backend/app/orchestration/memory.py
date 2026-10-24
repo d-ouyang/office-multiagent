@@ -66,13 +66,39 @@ def prepare_turn(history: list[dict[str, Any]], current: str) -> tuple[str, dict
     return "\n\n".join(blocks), parts
 
 
-def user_memory_block(mems: list[dict[str, Any]], *, max_chars: int = 1500) -> str:
-    """p6.29：把长期记忆拼成注入块（新的在前；总长截断并如实标注）。"""
-    lines = [f"- {m.get('content', '')}" for m in mems]
-    body = "\n".join(lines)[:max_chars]
-    if len("\n".join(lines)) > max_chars:
+_PROFILE_ORDER = (
+    ("work", "工作背景"),
+    ("personal", "个人背景"),
+    ("focus", "当前关注"),
+    ("history", "近期记录"),
+)
+
+
+def user_memory_block(
+    mems: list[dict[str, Any]],
+    *,
+    profile: dict[str, str] | None = None,
+    max_chars: int = 4000,
+) -> str:
+    """把背景四段和短条目拼成注入块。没有内容时返回空串。超长如实截断。"""
+    chunks: list[str] = []
+    for key, label in _PROFILE_ORDER:
+        text = str((profile or {}).get(key) or "").strip()
+        if text:
+            chunks.append(f"【{label}】\n{text}")
+    lines = [f"- {m.get('content', '')}" for m in mems if str(m.get("content") or "").strip()]
+    if lines:
+        chunks.append("【记下的条目】\n" + "\n".join(lines))
+    if not chunks:
+        return ""
+    raw = "\n\n".join(chunks)
+    body = raw[:max_chars]
+    if len(raw) > max_chars:
         body += "…（长期记忆过多，已截断）"
-    return "【用户长期记忆】以下是用户此前明确要求记住的信息，回答时可参考（不是本次对话的内容）：\n" + body
+    return (
+        "【用户长期记忆】以下是用户自己写下或明确要求记住的信息，回答时可参考"
+        "（不是本次对话的内容）：\n" + body
+    )
 
 
 def context_items(

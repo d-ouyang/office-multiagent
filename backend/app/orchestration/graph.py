@@ -136,7 +136,9 @@ def build_graph(
     tools = build_default_registry(
         get_engine(), username=username, user_id=user_id, task_id=task_id
     )
-    token_budget = TaskTokenBudget(settings.task_token_hard_limit)
+    from ..core.runtime_settings import task_token_limit
+
+    token_budget = TaskTokenBudget(task_token_limit())
 
     def spec_agent_runner(base, state):
         """multi 的子任务执行器：按子任务 agent_type 取 AgentSpec（角色提示词+工具白名单）。

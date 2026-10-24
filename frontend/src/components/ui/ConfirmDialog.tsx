@@ -11,6 +11,8 @@ export interface ConfirmSpec {
   confirmText?: string;
   cancelText?: string;
   danger?: boolean;
+  /** 退出登录这类确认用浅红色，避免和删除一样重。 */
+  dangerSoft?: boolean;
 }
 
 export default function ConfirmDialog({
@@ -57,7 +59,7 @@ export default function ConfirmDialog({
           </button>
           <button
             type="button"
-            className={`admin-btn ${spec.danger ? 'danger' : ''}`}
+            className={`admin-btn ${spec.dangerSoft ? 'danger-soft' : spec.danger ? 'danger' : ''}`}
             disabled={busy}
             onClick={onConfirm}
           >

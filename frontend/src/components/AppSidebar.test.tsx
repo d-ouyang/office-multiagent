@@ -118,26 +118,33 @@ describe('会话操作', () => {
 });
 
 describe('侧栏简介与版本', () => {
-  it('展示项目简介和当前版本号', () => {
+  it('展示锅圈 Agent、项目简介和当前版本号', () => {
     render(<AppSidebar sessions={[]} currentId="" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => {}} />);
+    expect(screen.getByText('锅圈 Agent')).toBeInTheDocument();
     expect(screen.getByText(APP_BLURB)).toBeInTheDocument();
+    expect(screen.getByText('office-multiagent')).toBeInTheDocument();
     expect(screen.getByText(APP_VERSION)).toBeInTheDocument();
+    expect(screen.queryByText('管理（用户与额度）')).toBeNull();
   });
 
-  it('点用户行打开个人中心，额度可进入详情，退出需确认', () => {
+  it('点用户行打开个人中心，额度进入用量弹窗，退出需确认', () => {
     let loggedOut = 0;
-    render(<AppSidebar sessions={[]} currentId="" onSelect={() => {}} onNew={() => {}} user={user} balance={100000} onLogout={() => { loggedOut += 1; }} />);
+    render(<AppSidebar sessions={[]} currentId="" onSelect={() => {}} onNew={() => {}} user={user} balance={100000} onLogout={() => { loggedOut += 1; }} onOpenAdmin={() => {}} />);
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: /dev/ }));
     });
     expect(screen.getByText('修改密码')).toBeInTheDocument();
+    expect(screen.getByText('管理端')).toBeInTheDocument();
     expect(screen.getByText('100,000')).toBeInTheDocument();
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: /剩余额度/ }));
     });
-    expect(screen.getByText('消耗详情')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: '用量明细' })).toBeInTheDocument();
     act(() => {
-      fireEvent.click(screen.getByRole('button', { name: /消耗详情/ }));
+      fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /dev/ }));
     });
     expect(screen.queryByRole('button', { name: '退出' })).toBeNull();
     act(() => {

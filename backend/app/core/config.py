@@ -83,7 +83,8 @@ class Settings(BaseSettings):
     user_memory_max_items: int = 100     # 每用户上限；满了如实拒绝（不静默淘汰）
     user_memory_content_chars: int = 300  # 单条内容长度上限
     user_memory_inject_limit: int = 20   # 每轮注入提示词的最大条数
-    user_memory_inject_chars: int = 1500  # 注入块总字符上限（上下文卫生）
+    user_memory_inject_chars: int = 4000  # 注入块总字符上限（背景四段 + 短条目）
+    user_profile_section_chars: int = 2000  # 背景里每一段的字数上限
 
     # ---- 连接层加固（p1.2a）----
     mysql_pool_size: int = 5
