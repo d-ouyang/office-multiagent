@@ -256,6 +256,21 @@ def _ocr_path(path: Path) -> str:
     return joined or text
 
 
+def _read_pptx(path: Path) -> str:
+    from pptx import Presentation
+
+    pres = Presentation(str(path))
+    lines: list[str] = []
+    for index, slide in enumerate(pres.slides, 1):
+        lines.append(f"第{index}页")
+        for shape in slide.shapes:
+            if getattr(shape, "has_text_frame", False):
+                text = shape.text_frame.text.strip()
+                if text:
+                    lines.append(text)
+    return "\n".join(lines).strip()
+
+
 def extract_document_text(path: Path) -> str:
     """按后缀抽出可放进上下文的文本。调用方负责确认格式在白名单内。"""
     suffix = path.suffix.lower()
@@ -263,6 +278,8 @@ def extract_document_text(path: Path) -> str:
         return _ocr_path(path)
     if suffix == ".docx":
         return _read_docx(path)
+    if suffix == ".pptx":
+        return _read_pptx(path)
     if suffix == ".xlsx":
         return _read_xlsx(path)
     if suffix == ".csv":

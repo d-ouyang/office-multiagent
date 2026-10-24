@@ -26,7 +26,20 @@ def decide(plan: Plan) -> RouteDecision:
     intents_cfg = cfg.get("intents", {})
     primary = plan.intents[0] if plan.intents else "general"
     primary_agent = intents_cfg.get(primary, {}).get("agent", "general")
-    if plan.score >= threshold:
+    requested = set(plan.intents)
+    covered = set((cfg.get("single_agent_covers", {}) or {}).get(primary, [primary]))
+    one_agent_covers = bool(requested) and requested.issubset(covered)
+    recommended = str((plan.entities or {}).get("decision_mode") or "")
+    if one_agent_covers:
+        mode = "single"
+        reason = f"主意图 {primary} 的 Agent 已覆盖 {sorted(requested)}，保持单 Agent 顺序完成"
+    elif recommended == "single":
+        mode = "single"
+        reason = f"决策模型建议单 Agent：{plan.entities.get('decision_reason') or '无需跨能力交接'}"
+    elif recommended == "multi":
+        mode = "multi"
+        reason = f"决策模型确认存在跨能力交接：{plan.entities.get('decision_reason') or '需要多 Agent'}"
+    elif plan.score >= threshold:
         mode = "multi"
         reason = f"复杂度分 {plan.score} ≥ 阈值 {threshold}，交 Orchestrator 多 Agent 协作"
     else:

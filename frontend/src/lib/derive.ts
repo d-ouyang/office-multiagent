@@ -181,6 +181,17 @@ export function deriveThinking(events: StreamEvent[]): string {
     .join('');
 }
 
+/** 流程图和图表的结构。界面按 kind 绘制，不解析 observation 文本。 */
+export function deriveVisuals(events: StreamEvent[]): Array<Record<string, unknown>> {
+  const visuals: Array<Record<string, unknown>> = [];
+  for (const ev of events) {
+    if (ev.type !== 'visual') continue;
+    const payload = ev.data.payload;
+    if (payload && typeof payload === 'object') visuals.push(payload as Record<string, unknown>);
+  }
+  return visuals;
+}
+
 export function deriveArtifacts(events: StreamEvent[]): Array<{ asset_id: string; type: string; name?: string; storage_url?: string }> {
   return events
     .filter((e) => e.type === 'artifact')

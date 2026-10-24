@@ -17,25 +17,19 @@ from __future__ import annotations
 import csv
 import re
 from collections.abc import Callable
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .orders_seed import ensure_orders_loaded
+from .orders_seed import COLUMNS, ensure_orders_loaded
 from .tools_db import _jsonable
 from .tools_orders import (
-    _CHANNELS,
-    _CITIES,
-    _FULFILLMENT,
-    _LEVELS,
-    _STATUSES,
-    _TYPES,
-    _choice,
-    _date,
-    _text,
+    _CUSTOMER_PII,
+    _PHONE_COLUMNS,
+    compile_order_filters,
+    derive_city,
 )
 from .tools_store import finish_output, new_output_id, output_file
 
@@ -61,12 +55,7 @@ def _derive_online(channel: Any) -> str:
 
 
 def _derive_city(store_address: Any) -> str:
-    addr = str(store_address or "")
-    if addr.startswith("上海市"):
-        return "上海"
-    if addr.startswith("安庆市"):
-        return "安庆"
-    return "其他"
+    return derive_city(store_address)
 
 
 def _col(name: str) -> Callable[[dict[str, Any]], str]:
@@ -97,17 +86,96 @@ _FIELD_SPECS: dict[str, tuple[str, Any]] = {
     "履约方式": ("履约方式", _col("fulfillment_type")),
     "会员等级": ("会员等级", _col("member_level")),
     "商品件数": ("商品件数", _col("goods_quantity")),
+    "支付时间": ("支付时间", _col("pay_time")),
+    "门店地址": ("门店地址", _col("store_address")),
+    "门店编号": ("门店编号", _col("store_id")),
+    "门店电话": ("门店电话", _col("store_phone")),
+    "营业时间": ("营业时间", _col("store_business_hours")),
+    "商品清单": ("商品清单", _col("goods_list")),
+    "商品明细": ("商品清单", _col("goods_list")),
+    "商品金额": ("商品金额", _col("goods_amount")),
+    "配送费": ("配送费", _col("delivery_fee")),
+    "包装费": ("包装费", _col("packing_fee")),
+    "活动名称": ("活动名称", _col("activity_name")),
+    "活动编号": ("活动编号", _col("activity_id")),
+    "备注": ("备注", _col("order_remark")),
+    "完成时间": ("完成时间", _col("order_complete_time")),
+    "获得积分": ("获得积分", _col("points_earned")),
+    "会员积分": ("会员积分", _col("member_points")),
+    "是否用券": ("是否用券", _col("is_coupon_used")),
+    "券名称": ("券名称", _col("coupon_name")),
+    "券类型": ("券类型", _col("coupon_type")),
+    "券面额": ("券面额", _col("coupon_value")),
+    "券码": ("券码", _col("coupon_code")),
+    "用户昵称": ("用户昵称", _col("user_nickname")),
+    "性别": ("性别", _col("user_gender")),
+    "是否要发票": ("是否要发票", _col("need_invoice")),
+    "用户编号": ("用户编号", _col("user_id")),
     # 表里确实没有的字段：省略而非报错
     "支付方式": ("", _NONE),
     "付款方式": ("", _NONE),
 }
 
-# 库里真实存在的列（SELECT 用；PII 原始值允许进 SELECT，但只用于脱敏/推导，不进返回）
-_DB_COLUMNS = (
-    "order_no", "order_create_time", "order_status", "order_type", "order_channel",
-    "store_name", "store_address", "fulfillment_type", "member_level", "goods_quantity",
-    "pay_amount", "total_amount", "discount_amount", "refund_amount", "receiver_phone",
-)
+_PII_OMIT = object()
+_PII_ALIAS = frozenset({"收货人", "姓名", "真实姓名", "收货地址", "用户姓名"})
+_COLUMN_LABELS = {
+    "order_no": "订单号",
+    "order_create_time": "下单时间",
+    "pay_time": "支付时间",
+    "order_status": "订单状态",
+    "order_type": "订单类型",
+    "order_channel": "平台",
+    "activity_id": "活动编号",
+    "activity_name": "活动名称",
+    "store_id": "门店编号",
+    "store_name": "门店",
+    "store_address": "门店地址",
+    "store_business_hours": "营业时间",
+    "store_phone": "门店电话",
+    "fulfillment_type": "履约方式",
+    "goods_list": "商品清单",
+    "goods_quantity": "商品件数",
+    "goods_amount": "商品金额",
+    "delivery_fee": "配送费",
+    "packing_fee": "包装费",
+    "total_amount": "订单金额",
+    "discount_amount": "优惠金额",
+    "pay_amount": "销售金额",
+    "points_earned": "获得积分",
+    "is_coupon_used": "是否用券",
+    "coupon_code": "券码",
+    "coupon_type": "券类型",
+    "coupon_name": "券名称",
+    "coupon_value": "券面额",
+    "order_remark": "备注",
+    "order_complete_time": "完成时间",
+    "refund_amount": "退款金额",
+    "user_id": "用户编号",
+    "user_nickname": "用户昵称",
+    "user_gender": "性别",
+    "member_level": "会员等级",
+    "member_points": "会员积分",
+    "need_invoice": "是否要发票",
+}
+
+# SELECT 用。手机号只参与脱敏，姓名和收货地址不取出。
+_DB_COLUMNS = tuple(name for name in COLUMNS if name not in _CUSTOMER_PII or name in _PHONE_COLUMNS)
+
+
+def _resolve_field(name: str) -> tuple[str, Any] | None:
+    """中文别名、派生列，或订单表真实列名。认不出返回 None。"""
+    if name in _PII_ALIAS:
+        return ("", _PII_OMIT)
+    spec = _FIELD_SPECS.get(name)
+    if spec is not None:
+        return spec
+    if name in _PHONE_COLUMNS:
+        return ("用户(脱敏)", lambda row, column=name: _mask_phone(row.get(column)))
+    if name in _CUSTOMER_PII:
+        return ("", _PII_OMIT)
+    if name in COLUMNS:
+        return (_COLUMN_LABELS.get(name, name), _col(name))
+    return None
 
 
 def make_export_orders_tool(
@@ -127,13 +195,14 @@ def make_export_orders_tool(
         date_to: str,
         city: str | None = None,
         store_name: str | None = None,
-        order_status: str | None = None,
-        exclude_status: str | None = None,
-        order_channel: str | None = None,
-        order_type: str | None = None,
-        fulfillment_type: str | None = None,
-        member_level: str | None = None,
+        order_status: str | list[str] | None = None,
+        exclude_status: str | list[str] | None = None,
+        order_channel: str | list[str] | None = None,
+        order_type: str | list[str] | None = None,
+        fulfillment_type: str | list[str] | None = None,
+        member_level: str | list[str] | None = None,
         fields: list[str] | str | None = None,
+        filters: list[dict[str, Any]] | dict[str, Any] | None = None,
         format: str = "csv",
     ) -> dict[str, Any]:
         if engine is None:
@@ -144,52 +213,40 @@ def make_export_orders_tool(
         if loaded == "empty-no-csv":
             return {"error": "订单表是空的，且没有可导入的 CSV"}
 
-        df = _date(date_from, "date_from")
-        dt = _date(date_to, "date_to")
-        if isinstance(df, dict):
-            return df
-        if isinstance(dt, dict):
-            return dt
-        if not df or not dt:
-            return {"error": "导出必须带 date_from 和 date_to（明细导出必须有明确时间范围）"}
-        if df > dt:
-            return {"error": "date_from 不能晚于 date_to"}
-        status = _choice(order_status, "订单状态", _STATUSES)
-        if isinstance(status, dict):
-            return status
-        excluded = _choice(exclude_status, "要排除的订单状态", _STATUSES)
-        if isinstance(excluded, dict):
-            return excluded
-        channel = _choice(order_channel, "订单渠道", _CHANNELS)
-        if isinstance(channel, dict):
-            return channel
-        otype = _choice(order_type, "订单类型", _TYPES)
-        if isinstance(otype, dict):
-            return otype
-        fulfillment = _choice(fulfillment_type, "履约方式", _FULFILLMENT)
-        if isinstance(fulfillment, dict):
-            return fulfillment
-        level = _choice(member_level, "会员等级", _LEVELS)
-        if isinstance(level, dict):
-            return level
-        if city and city not in _CITIES:
-            return {"error": f"没有这个城市：{city}。可选：上海、安庆"}
+        built = compile_order_filters(
+            {
+                "date_from": date_from,
+                "date_to": date_to,
+                "city": city,
+                "store_name": store_name,
+                "order_status": order_status,
+                "exclude_status": exclude_status,
+                "order_channel": order_channel,
+                "order_type": order_type,
+                "fulfillment_type": fulfillment_type,
+                "member_level": member_level,
+                "filters": filters,
+            },
+            require_dates=True,
+        )
+        if built.get("error"):
+            return built
         fmt = (format or "csv").strip().lower()
         if fmt == "excel":
             fmt = "xlsx"
         if fmt not in ("csv", "xlsx"):
             return {"error": "format 只支持 csv 或 xlsx"}
 
-        # 字段解析：请求里有就保留（同义名归一），没有/库里没有 → 省略并说明
+        # 字段解析：中文别名、派生列，或订单表列名。没有的列省略并说明。
         requested = [f.strip() for f in (fields if isinstance(fields, list) else ([fields] if fields else [])) if str(f).strip()]
         requested = requested or list(_DEFAULT_FIELDS)
         columns: list[tuple[str, Callable[[dict[str, Any]], str]]] = []
         omitted: dict[str, str] = {}
         seen: set[str] = set()
         for name in requested:
-            spec = _FIELD_SPECS.get(name)
+            spec = _resolve_field(name)
             if spec is None:
-                omitted[name] = "没有这个字段（可用字段见返回的 available_fields）"
+                omitted[name] = "没有这个字段（可用中文列名或订单表列名；见返回的 available_fields）"
                 continue
             col_name, getter = spec
             if col_name and col_name in seen:
@@ -197,39 +254,24 @@ def make_export_orders_tool(
             if getter is _NONE:
                 omitted[name] = "订单表没有此字段，按约定整列省略"
                 continue
+            if getter is _PII_OMIT:
+                omitted[name] = "真实姓名和收货地址不导出"
+                continue
             seen.add(col_name)
             columns.append((col_name, getter))
         if not columns:
             return {
                 "error": "请求的字段全部无法生成",
-                "available_fields": sorted({k for k, v in _FIELD_SPECS.items() if v[1] is not _NONE}),
+                "available_fields": sorted(
+                    {k for k, v in _FIELD_SPECS.items() if v[1] is not _NONE}
+                    | {name for name in COLUMNS if name not in _CUSTOMER_PII or name in _PHONE_COLUMNS}
+                ),
             }
 
-        # 查询
-        params: dict[str, Any] = {"date_from": f"{df} 00:00:00"}
-        year, month, day = (int(p) for p in str(dt).split("-"))
-        nxt = datetime(year, month, day) + timedelta(days=1)
-        params["date_to_next"] = nxt.strftime("%Y-%m-%d %H:%M:%S")
-        filters = ["order_create_time >= :date_from", "order_create_time < :date_to_next"]
-        if city:
-            filters.append("store_address LIKE :city")
-            params["city"] = _CITIES[city]
-        if store_name:
-            filters.append("store_name LIKE :store_name")
-            params["store_name"] = f"%{_text(store_name).replace('%', '').replace('_', '')}%"
-        for key, value in (
-            ("order_status", status), ("order_channel", channel), ("order_type", otype),
-            ("fulfillment_type", fulfillment), ("member_level", level),
-        ):
-            if value:
-                filters.append(f"{key} = :{key}")
-                params[key] = value
-        if excluded:
-            filters.append("order_status <> :exclude_status")
-            params["exclude_status"] = excluded
         cap = min(max_rows, _MAX_EXPORT_ROWS)
+        params = dict(built["params"])
         params["cap"] = cap + 1
-        where = " AND ".join(filters)
+        where = " AND ".join(built["clauses"])
         sql = (
             f"SELECT {', '.join(_DB_COLUMNS)} FROM guoquan_orders WHERE {where} "
             f"ORDER BY order_create_time ASC LIMIT :cap"
@@ -243,7 +285,10 @@ def make_export_orders_tool(
         truncated = len(rows) > cap
         rows = rows[:cap]
         if not rows:
-            return {"error": f"该筛选范围内没有订单（{df} ~ {dt}）", "filters": {"date_from": df, "date_to": dt}}
+            return {
+                "error": f"该筛选范围内没有订单（{built['applied'].get('date_from')} ~ {built['applied'].get('date_to')}）",
+                "filters": built["applied"],
+            }
 
         headers = [name for name, _ in columns]
         grid = [[getter(row) for _, getter in columns] for row in rows]
@@ -282,13 +327,7 @@ def make_export_orders_tool(
             "row_count": len(grid),
             "columns": headers,
             "omitted": omitted or None,
-            "filters": {
-                "date_from": df, "date_to": dt,
-                **({k: v for k, v in (("city", city), ("store_name", store_name), ("order_status", status),
-                                       ("exclude_status", excluded), ("order_channel", channel),
-                                       ("order_type", otype), ("fulfillment_type", fulfillment),
-                                       ("member_level", level)) if v}),
-            },
+            "filters": built["applied"],
             "truncated": truncated,
             "recorded": recorded,
             "derived_note": "是否线上=按订单渠道推导：门店扫码→线下，其余渠道→线上。",

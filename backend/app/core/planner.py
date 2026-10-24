@@ -2,7 +2,7 @@
 
 纪律（§十二 / JEV 决策层接口化）：意图分类 + 复杂度评分是「高频、低延迟、确定性」
 判断，用【配置驱动的确定性规则】打底——可测、零 LLM 成本、无网络抖动；
-LLM 增强（DAG 分解、歧义消解）留作后续 DecisionModel 插槽，改配置即可接。
+p6.32 起规则拿不准时由 intent_decision 调 DecisionModel 复核，本模块仍保持纯规则、可独立测试。
 DAG 分解（§四.2 第三步）在 p3.2 落地，本模块先覆盖意图 + 复杂度。
 """
 from __future__ import annotations

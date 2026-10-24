@@ -56,11 +56,18 @@ def make_sales_report_tool(engine: Engine | None) -> Callable[..., Any]:
         if missing:
             return _incomplete(missing, "时间范围、指标、口径、数据来源缺一项，报表不能当作完成")
 
-        asked = {"date_from": date_from, "date_to": date_to, "metric": metric}
+        asked: dict[str, Any] = {"date_from": date_from, "date_to": date_to, "metric": metric}
         for key in _PASS:
-            value = _text(raw.get(key))
-            if value:
-                asked[key] = value
+            value = raw.get(key)
+            if isinstance(value, (list, tuple)):
+                if value:
+                    asked[key] = list(value)
+                continue
+            text_value = _text(value)
+            if text_value:
+                asked[key] = text_value
+        if raw.get("filters"):
+            asked["filters"] = raw.get("filters")
         result = query(**asked)
         if result.get("error"):
             return _incomplete(["数据来源"], str(result["error"]))
@@ -68,11 +75,16 @@ def make_sales_report_tool(engine: Engine | None) -> Callable[..., Any]:
             return _incomplete(["完整结果"], "分组结果被截断，报表不能当作完成")
 
         filters = result.get("filters") or {}
-        extra = [
-            f"{_FILTER_LABELS[key]}={filters[key]}"
-            for key in _FILTER_LABELS
-            if key in filters and key != "group_by"
-        ]
+        extra = []
+        for key in _FILTER_LABELS:
+            if key not in filters or key == "group_by":
+                continue
+            value = filters[key]
+            if isinstance(value, list):
+                value = "、".join(str(item) for item in value)
+            extra.append(f"{_FILTER_LABELS[key]}={value}")
+        if filters.get("filters"):
+            extra.append(f"附加筛选={filters['filters']}")
         scope = "；".join(extra) if extra else "只按时间范围，没有再加城市、状态或渠道"
         definition = (
             f"{METRIC_DEFINITIONS[metric]} 时间含 {date_from} 至 {date_to} 当天，按下单时间。"

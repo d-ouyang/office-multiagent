@@ -3,6 +3,10 @@ FROM python:3.13-slim
 WORKDIR /app
 
 # 国内镜像（服务器无 clashx，构建也走国内源）
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -i https://mirrors.cloud.tencent.com/pypi/simple -r requirements.txt
 

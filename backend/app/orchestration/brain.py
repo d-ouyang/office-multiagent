@@ -25,6 +25,7 @@ from ..core.llm import (
     chat_stream as default_chat_stream,
     resolve_model,
 )
+from ..core.token_budget import TaskTokenBudget
 from .react import Brain, Step, StubBrain
 from .tools import ToolRegistry
 
@@ -130,6 +131,7 @@ class LlmBrain:
         on_content: Callable[[str], None] | None = None,
         on_thought: Callable[[str], None] | None = None,
         reasoning_effort: str | None = None,
+        token_budget: TaskTokenBudget | None = None,
     ) -> None:
         self.model_id = model_id
         self._tools = tools
@@ -142,6 +144,7 @@ class LlmBrain:
         self._on_content = on_content
         self._on_thought = on_thought
         self._effort = reasoning_effort or None
+        self._token_budget = token_budget
         self.usage: dict[str, int] = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -191,16 +194,28 @@ class LlmBrain:
         ]
         if self._stream:
             return self._next_step_streaming(messages)
+        reservation = (
+            self._token_budget.reserve_call(messages)
+            if self._token_budget is not None
+            else None
+        )
         try:
-            res = self._chat(
-                self.model_id,
-                messages,
-                timeout=self._timeout,
-                reasoning_effort=self._effort,
-            )
-        except LlmError as e:
+            kwargs: dict[str, Any] = {
+                "timeout": self._timeout,
+                "reasoning_effort": self._effort,
+            }
+            if reservation is not None:
+                kwargs["max_tokens"] = reservation.max_output_tokens
+            res = self._chat(self.model_id, messages, **kwargs)
+        except Exception as e:
+            if reservation is not None:
+                reservation.cancel()
+            if not isinstance(e, LlmError):
+                raise
             logger.warning("LLM brain 调用失败，如实给阶段结论 | %s", e)
             return Step(thought="模型调用失败", final=f"模型暂不可用，无法继续完成该任务：{e}")
+        if reservation is not None:
+            reservation.complete(res.total_tokens)
         self._accumulate(res)
 
         data = extract_json(res.content)
@@ -234,18 +249,30 @@ class LlmBrain:
             if self._on_content is not None and not looks_like_json("".join(parts)):
                 self._on_content(c)
 
+        reservation = (
+            self._token_budget.reserve_call(messages)
+            if self._token_budget is not None
+            else None
+        )
         try:
-            res = self._chat_stream(
-                self.model_id,
-                messages,
-                on_chunk=_on_chunk,
-                on_thought=_on_thought,
-                timeout=self._timeout,
-                reasoning_effort=self._effort,
-            )
-        except LlmError as e:
+            kwargs: dict[str, Any] = {
+                "on_chunk": _on_chunk,
+                "on_thought": _on_thought,
+                "timeout": self._timeout,
+                "reasoning_effort": self._effort,
+            }
+            if reservation is not None:
+                kwargs["max_tokens"] = reservation.max_output_tokens
+            res = self._chat_stream(self.model_id, messages, **kwargs)
+        except Exception as e:
+            if reservation is not None:
+                reservation.cancel()
+            if not isinstance(e, LlmError):
+                raise
             logger.warning("LLM brain 流式调用失败，如实给阶段结论 | %s", e)
             return Step(thought="模型调用失败", final=f"模型暂不可用，无法继续完成该任务：{e}")
+        if reservation is not None:
+            reservation.complete(res.total_tokens)
         self._accumulate(res)
 
         text = res.content
@@ -291,6 +318,7 @@ def make_brain(
     on_content: Callable[[str], None] | None = None,
     on_thought: Callable[[str], None] | None = None,
     reasoning_effort: str | None = None,
+    token_budget: TaskTokenBudget | None = None,
 ) -> Brain:
     """配置驱动的 Brain 工厂：模型+密钥就绪 → LlmBrain；否则回落 StubBrain（可测基线）。"""
     mid = model_id or settings.llm_brain_model
@@ -309,4 +337,5 @@ def make_brain(
         on_content=on_content,
         on_thought=on_thought,
         reasoning_effort=reasoning_effort,
+        token_budget=token_budget,
     )

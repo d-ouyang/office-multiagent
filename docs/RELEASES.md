@@ -5,6 +5,22 @@
 
 ---
 
+## v1.0.0-p6.32 — 办公交付能力 + 混合意图识别 + 单任务 token 上限（2026-10-24）
+
+**类型**：功能 + 稳定性 + 成本治理
+
+- 订单查询/导出从城市和状态死名单改为按真实表字段筛选；任意城市、值列表、通用 filters、真实列名导出。
+- `render_flow` + 前端 SVG 实走路径；数据图改为 ECharts（按需加载），后端仍产 svg/png。
+- `write_document` 增 PDF/PPTX；新增代码计算的同比、环比、占比。
+- RAG `persist=false` 外部完整工作流：不污染 RAG 会话/额度，带回重排分、依据和 usage，办公侧统一结算。
+- 意图识别四步落地：指代改写、含糊句决策小模型、单 Agent 能力覆盖判定、规则/模型分歧日志。
+- 全员单任务 token 上限默认 50,000（`TASK_TOKEN_HARD_LIMIT`），与钱包余额门分离；multi 共享预算。
+- pytest **361 passed / 3 skipped**；vitest **81 passed**；tsc/build 通过；RAG 回归 55/0。
+
+详细见 `docs/iterations/v1.0.0-p6.32-office-visual-intent-cap.md` 与 `docs/意图识别方案.md`。
+
+---
+
 ## v1.0.0-p6.31 — 预览升级（去技术文案 + 下载 + 大文件分页预览）（2026-10-24）
 
 **类型**：修复 + 功能（用户反馈三件套）

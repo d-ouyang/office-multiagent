@@ -19,11 +19,13 @@ from typing_extensions import TypedDict
 from ..core.config import settings
 from ..core.decomposer import DAG, Subtask, decompose
 from ..core.events import Event, RunEventEmitter, new_run_id
+from ..core.intent_decision import resolve_intent
 from ..core.model_registry import map_reasoning_effort
-from ..core.planner import Plan, plan as run_plan
+from ..core.planner import Plan
 from ..core.router import decide
 from ..core.runs import RunCancelled, should_cancel
 from ..core.token_pool import TokenPool
+from ..core.token_budget import TaskTokenBudget, TokenLimitReached
 from ..core.db import get_engine
 from .agents import build_default_registry, build_registry_for_spec, get_agent_spec
 from .brain import make_brain
@@ -55,6 +57,10 @@ class TaskState(TypedDict, total=False):
     context_parts: dict[str, str]
     raw_text: str | None          # p6.30：本轮用户原文（planner 只看它，不被注入块污染）
     validation: dict[str, Any] | None  # p6.29：终答数字对账结果（None=未校验/跳过）
+    route_text: str
+    planning_tokens: int
+    intent_source: str
+    token_limit_reached: bool
 
 
 def _emit_context(state: TaskState, system: str, tools, emitter: RunEventEmitter, emit: Callable[[Event], None]) -> None:
@@ -130,6 +136,7 @@ def build_graph(
     tools = build_default_registry(
         get_engine(), username=username, user_id=user_id, task_id=task_id
     )
+    token_budget = TaskTokenBudget(settings.task_token_hard_limit)
 
     def spec_agent_runner(base, state):
         """multi 的子任务执行器：按子任务 agent_type 取 AgentSpec（角色提示词+工具白名单）。
@@ -155,6 +162,7 @@ def build_graph(
                 on_content=lambda c: emit(emitter.content_delta(c)),
                 on_thought=lambda t: emit(emitter.thinking_delta(t)),
                 reasoning_effort=_effort_for(state),
+                token_budget=token_budget,
             )
             extra_tokens = {"n": 0}  # p4.3d：强制收尾那次 LLM 调用的用量，最后并入账
 
@@ -167,6 +175,7 @@ def build_graph(
                     model_id=state.get("model"),
                     stream=False,
                     reasoning_effort=_effort_for(state),
+                    token_budget=token_budget,
                 )
                 step = bare.next_step(
                     f"【强制收尾】{reason}。不要再调用任何工具，直接基于以上已获得的观察，"
@@ -189,10 +198,15 @@ def build_graph(
                 emit=emit,
                 synthesize=_synthesize,
                 should_cancel=should_cancel,
+                token_budget=token_budget,
             )
             # p4.3c：带出本子任务真实用量（含强制收尾），供 multi_node 汇总进 tokens_used（§十四 对账）
             usage = getattr(brain, "usage", None) or {}
-            res.tokens_used = int(usage.get("total_tokens", 0)) + extra_tokens["n"]
+            res.tokens_used = (
+                int(usage.get("total_tokens", 0))
+                + extra_tokens["n"]
+                + int(getattr(res, "external_tokens", 0) or 0)
+            )
             return res
 
         return _run
@@ -218,17 +232,33 @@ def build_graph(
     def planner_node(state: TaskState) -> dict[str, Any]:
         if should_cancel is not None and should_cancel():
             raise RunCancelled("用户暂停")
-        # p6.30：意图识别/复杂度/拆分只看【本轮用户原文】——text 可能带着【历史摘要】
-        #【近期对话】【用户长期记忆】等注入块（真跑事故：记忆里"财务制度"的"制度"
-        # 命中 rag 关键词，把 2.5/single 劫持成 4.5/multi+rag）。注入块只给 Agent 上下文。
-        p: Plan = run_plan(state.get("raw_text") or state["text"])
+        # 原文独立时直接规则识别；依赖上文时仅用近期对话改写成独立问题。
+        # 长期记忆和历史摘要绝不进改写/分类，避免「制度」等词再次劫持路由。
+        original = state.get("raw_text") or state["text"]
+        recent = str((state.get("context_parts") or {}).get("recent") or "")
+        resolution = resolve_intent(original, recent, token_budget=token_budget)
+        p: Plan = resolution.plan
         d = decide(p)
+        if resolution.rewritten:
+            emit(emitter.thinking_delta(f"指代改写：{resolution.route_text}"))
+        elif resolution.rewrite_failed:
+            emit(emitter.thinking_delta("检测到指代，但改写未得到可靠结果；按本轮原文继续"))
         emit(emitter.thinking_delta(f"识别意图 {p.intents or ['general']}，复杂度分 {p.score}"))
+        if resolution.source == "decision_model":
+            emit(
+                emitter.thinking_delta(
+                    f"决策小模型复核：{resolution.recommended_mode}，"
+                    f"{resolution.reason or '已完成封闭分类'}"
+                )
+            )
         out: dict[str, Any] = {
             "intents": p.intents,
             "score": p.score,
             "route": d.mode,
             "primary_agent": d.primary_agent,
+            "route_text": resolution.route_text,
+            "planning_tokens": resolution.tokens_used,
+            "intent_source": resolution.source,
         }
         if d.mode == "multi":
             dag = decompose(p)
@@ -259,15 +289,32 @@ def build_graph(
             on_content=lambda c: emit(emitter.content_delta(c)),
             on_thought=lambda t: emit(emitter.thinking_delta(t)),
             reasoning_effort=_effort_for(state),
+            token_budget=token_budget,
         )
         res = run_react(
-            state["text"], brain, spec_tools, emitter=emitter, emit=emit, should_cancel=should_cancel
+            state["text"],
+            brain,
+            spec_tools,
+            emitter=emitter,
+            emit=emit,
+            should_cancel=should_cancel,
+            token_budget=token_budget,
         )
         usage = getattr(brain, "usage", None) or {}
         validation = _validate_and_flag(
             res, state["text"], emitter=emitter, emit=emit, label=f"single:{agent}"
         )
-        return {"result": res.final, "tokens_used": int(usage.get("total_tokens", 0)), "validation": validation}
+        billed = (
+            int(state.get("planning_tokens", 0))
+            + int(usage.get("total_tokens", 0))
+            + int(getattr(res, "external_tokens", 0) or 0)
+        )
+        return {
+            "result": res.final,
+            "tokens_used": billed,
+            "validation": validation,
+            "token_limit_reached": token_budget.limit_reached,
+        }
 
     def multi_node(state: TaskState) -> dict[str, Any]:
         emit(emitter.status("orchestrator", "running"))
@@ -293,7 +340,9 @@ def build_graph(
         summary = "；".join(f"{k}:{v.final}" for k, v in results.items())
         # p4.3c：汇总各子任务真实用量（此前 multi 不返回 tokens_used，settle 时
         # actual=0 全额退回，多 Agent 消耗不计账——§十四 对账恒等式破洞）
-        total_tokens = sum(int(getattr(r, "tokens_used", 0) or 0) for r in results.values())
+        total_tokens = int(state.get("planning_tokens", 0)) + sum(
+            int(getattr(r, "tokens_used", 0) or 0) for r in results.values()
+        )
         # p6.30：每个子任务终答各自对账（观察取各子任务自己的 steps）
         validations: dict[str, Any] = {}
         for key, r in results.items():
@@ -322,6 +371,7 @@ def build_graph(
                 on_content=lambda c: emit(emitter.content_delta(c)),
                 on_thought=lambda t: emit(emitter.thinking_delta(t)),
                 reasoning_effort=_effort_for(state),
+                token_budget=token_budget,
             )
             task_lines = "\n".join(f"【{k}】{(v.final or '')[:2000]}" for k, v in results.items())
             asset_block = ("\n\n生成的文件：\n" + "\n".join(deliverables)) if deliverables else ""
@@ -336,6 +386,16 @@ def build_graph(
                 final_text = step.final.strip()
             usage = getattr(synth, "usage", None) or {}
             total_tokens += int(usage.get("total_tokens", 0))
+        except TokenLimitReached:
+            token_budget.limit_reached = True
+            emit(
+                emitter.observation(
+                    "token_limit",
+                    f"本次任务已达到全局 token 上限 {token_budget.limit}，"
+                    "不再调用汇总模型；各子任务已有结果与文件均保留。",
+                )
+            )
+            emit(emitter.content_delta(fallback))
         except Exception:  # noqa: BLE001 - 汇总脑失败回落拼接，不阻断
             logger.exception("multi 汇总脑失败（回落拼接）")
         emit(emitter.status("orchestrator", "done"))
@@ -343,6 +403,7 @@ def build_graph(
             "result": final_text,
             "tokens_used": total_tokens,
             "validation": validations or None,
+            "token_limit_reached": token_budget.limit_reached,
         }
 
     g = StateGraph(TaskState)
@@ -512,6 +573,7 @@ def run_task(
             "tokens_used": int(state.get("tokens_used", 0)),
             "result": state.get("result", ""),
             "validation": state.get("validation"),
+            "token_limit_reached": bool(state.get("token_limit_reached")),
         },
         events,
     )

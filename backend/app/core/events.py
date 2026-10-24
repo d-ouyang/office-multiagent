@@ -43,6 +43,7 @@ class EventType(str, Enum):
     DONE = "done"
     TASK_SUMMARY = "task_summary"
     CONTEXT_USAGE = "context_usage"
+    VISUAL = "visual"
 
 
 class Event(BaseModel):
@@ -154,6 +155,10 @@ class RunEventEmitter:
 
     def context_usage(self, window: int, used: int, items: list[dict[str, Any]]) -> Event:
         return self.emit(EventType.CONTEXT_USAGE, window=window, used=used, items=items)
+
+    def visual(self, kind: str, payload: dict[str, Any]) -> Event:
+        """前端绘制用的结构。kind=flow 是流程图，kind=chart 是 ECharts 数据。"""
+        return self.emit(EventType.VISUAL, kind=kind, payload=payload)
 
     def task_summary(self, artifacts: list[dict[str, Any]], sources: list[dict[str, Any]]) -> Event:
         return self.emit(EventType.TASK_SUMMARY, artifacts=artifacts, sources=sources)

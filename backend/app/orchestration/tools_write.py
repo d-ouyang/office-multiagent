@@ -1,10 +1,11 @@
-"""把结论写成 md 或 docx。不生成表格文件，也不画图。
+"""把结论写成 md、docx、pdf 或 pptx。不生成表格文件，也不画图。
 
 文件放在当前用户上传目录的 _out/ 下。传入 clean_id 时，文末附上这份清洗结果的来源，
 正文里的数字仍由调用方根据 analyze_table 的返回来写。
 """
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Any
 from .tools_store import finish_output, new_output_id, output_file
 from .tools_table import _load_clean
 
-_FORMATS = {"md": ".md", "docx": ".docx"}
+_FORMATS = {"md": ".md", "docx": ".docx", "pdf": ".pdf", "pptx": ".pptx"}
 _MAX_CHARS = 80_000
 
 
@@ -102,6 +103,157 @@ def _write_docx(path: Path, title: str, content: str, note: str, image: Path | N
     doc.save(str(path))
 
 
+def _blocks(content: str) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("### "):
+            rows.append(("h3", stripped[4:].strip()))
+        elif stripped.startswith("## "):
+            rows.append(("h2", stripped[3:].strip()))
+        elif stripped.startswith("# "):
+            rows.append(("h1", stripped[2:].strip()))
+        elif stripped.startswith(("- ", "* ")):
+            rows.append(("li", stripped[2:].strip()))
+        else:
+            rows.append(("p", stripped))
+    return rows
+
+
+def _picture_file(image: Path | None) -> Path | None:
+    if image is None:
+        return None
+    png = image if image.suffix.lower() == ".png" else image.with_suffix(".png")
+    return png if png.is_file() else None
+
+
+def _cjk_font() -> str:
+    """注册一份中文字体供 PDF 嵌入。找不到就如实失败，不生成缺字的 PDF。"""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    if "OfficeCJK" in pdfmetrics.getRegisteredFontNames():
+        return "OfficeCJK"
+    candidates = [
+        os.environ.get("PDF_FONT", ""),
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    ]
+    for raw in candidates:
+        path = Path(raw) if raw else None
+        if path is None or not path.is_file():
+            continue
+        try:
+            if path.suffix.lower() == ".ttc":
+                pdfmetrics.registerFont(TTFont("OfficeCJK", str(path), subfontIndex=0))
+            else:
+                pdfmetrics.registerFont(TTFont("OfficeCJK", str(path)))
+            return "OfficeCJK"
+        except Exception:
+            continue
+    raise ValueError(
+        "没有可用的中文字体，PDF 未生成。请安装思源黑体，或设置环境变量 PDF_FONT 指向 .ttf/.otf/.ttc。"
+    )
+
+
+def _write_pdf(path: Path, title: str, content: str, note: str, image: Path | None) -> None:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Image as PdfImage
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    font = _cjk_font()
+    styles = {
+        "h1": ParagraphStyle("h1", fontName=font, fontSize=18, leading=24, spaceAfter=8),
+        "h2": ParagraphStyle("h2", fontName=font, fontSize=14, leading=20, spaceBefore=8, spaceAfter=4),
+        "h3": ParagraphStyle("h3", fontName=font, fontSize=12, leading=18, spaceBefore=6, spaceAfter=4),
+        "p": ParagraphStyle("p", fontName=font, fontSize=11, leading=16, spaceAfter=4),
+        "li": ParagraphStyle("li", fontName=font, fontSize=11, leading=16, leftIndent=12, spaceAfter=2),
+    }
+    story = [Paragraph(_xml(title), styles["h1"])]
+    for kind, text in _blocks(content):
+        shown = "• " + text if kind == "li" else text
+        story.append(Paragraph(_xml(shown), styles.get(kind, styles["p"])))
+    picture = _picture_file(image)
+    if picture is not None:
+        story.append(Spacer(1, 4 * mm))
+        story.append(PdfImage(str(picture), width=150 * mm, height=80 * mm, kind="proportional"))
+    elif image is not None:
+        story.append(Paragraph(_xml(f"（图表 {image.name} 无法嵌入 PDF：缺少 png）"), styles["p"]))
+    if note:
+        story.append(Spacer(1, 6 * mm))
+        for line in note.splitlines():
+            if line.strip():
+                story.append(Paragraph(_xml(line.strip()), styles["p"]))
+    SimpleDocTemplate(str(path), pagesize=A4, title=title).build(story)
+
+
+def _xml(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _write_pptx(path: Path, title: str, content: str, note: str, image: Path | None) -> None:
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+
+    pres = Presentation()
+    pres.slide_width = Inches(13.333)
+    pres.slide_height = Inches(7.5)
+    opening = pres.slides.add_slide(pres.slide_layouts[0])
+    opening.shapes.title.text = title
+    if len(opening.placeholders) > 1:
+        opening.placeholders[1].text = "由办公助手生成"
+    body_lines = [text for _, text in _blocks(content)]
+    picture = _picture_file(image)
+    chunk: list[str] = []
+    for line in body_lines:
+        chunk.append(line)
+        if len(chunk) == 6:
+            _add_bullet_slide(pres, title, chunk)
+            chunk = []
+    if chunk or not body_lines:
+        _add_bullet_slide(pres, title, chunk or ["（无正文）"])
+    if picture is not None:
+        slide = pres.slides.add_slide(pres.slide_layouts[5])
+        slide.shapes.title.text = "图表"
+        slide.shapes.add_picture(str(picture), Inches(1.2), Inches(1.6), width=Inches(10))
+    if note:
+        _add_bullet_slide(pres, "数据来源", [line.strip() for line in note.splitlines() if line.strip()])
+    for slide in pres.slides:
+        for shape in slide.shapes:
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            for paragraph in shape.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    run.font.name = "PingFang SC"
+                    if run.font.size is None:
+                        run.font.size = Pt(18)
+    pres.save(str(path))
+
+
+def _add_bullet_slide(pres: Any, title: str, lines: list[str]) -> None:
+    from pptx.util import Pt
+
+    slide = pres.slides.add_slide(pres.slide_layouts[1])
+    slide.shapes.title.text = title[:40]
+    frame = slide.placeholders[1].text_frame
+    frame.clear()
+    for index, line in enumerate(lines):
+        paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
+        paragraph.text = line
+        paragraph.level = 0
+        paragraph.font.size = Pt(20)
+
+
 def make_write_document_tool(
     *,
     base_dir: str,
@@ -121,10 +273,10 @@ def make_write_document_tool(
         image_file: str | None = None,
     ) -> dict[str, Any]:
         kind = (format or "md").strip().lower()
-        if kind in {"markdown", "word"}:
-            kind = "md" if kind == "markdown" else "docx"
+        aliases = {"markdown": "md", "word": "docx", "powerpoint": "pptx", "ppt": "pptx"}
+        kind = aliases.get(kind, kind)
         if kind not in _FORMATS:
-            raise ValueError("write_document 只生成 md 或 docx。图请调用 render_chart。")
+            raise ValueError("write_document 只生成 md、docx、pdf 或 pptx。图请调用 render_chart，流程请调用 render_flow。")
         body = (content or "").strip()
         if not body:
             raise ValueError("文档正文为空")
@@ -139,10 +291,15 @@ def make_write_document_tool(
         doc_id = new_output_id("w")
         filename = doc_id + _FORMATS[kind]
         target = output_file(base, filename)
+        image_path = base / image_rel if image_rel else None
         if kind == "md":
             target.write_text(_markdown_body(heading, body, note, image_rel), encoding="utf-8")
+        elif kind == "docx":
+            _write_docx(target, heading, body, note, image_path)
+        elif kind == "pdf":
+            _write_pdf(target, heading, body, note, image_path)
         else:
-            _write_docx(target, heading, body, note, base / image_rel if image_rel else None)
+            _write_pptx(target, heading, body, note, image_path)
         display = f"{heading}.{kind}"
         rel = f"_out/{filename}"
         recorded = finish_output(

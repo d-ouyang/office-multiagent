@@ -14,6 +14,7 @@ function kindBadge(name: string): string {
   const lower = name.toLowerCase();
   if (lower.endsWith('.csv') || lower.endsWith('.xlsx')) return '表格';
   if (lower.endsWith('.pdf')) return 'PDF';
+  if (lower.endsWith('.pptx')) return '演示文稿';
   if (lower.endsWith('.docx')) return '文档';
   if (['.svg', '.png', '.jpg', '.jpeg', '.webp'].some((s) => lower.endsWith(s))) return '图片';
   return '文件';

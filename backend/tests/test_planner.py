@@ -18,15 +18,23 @@ def test_simple_single_intent_low_score():
 
 
 def test_multi_step_multi_intent_high_score_routes_multi():
-    # 多步骤连接词 + 多意图(分析+报表) + 多输出(excel+pdf) + 依赖词 → 复杂
-    text = "先分析销售数据，然后基于分析结果生成报表，同时导出 excel 和 pdf"
+    # 知识库口径 → 数据分析是真实跨能力交接，应走 multi。
+    text = "先查一下报销制度，然后基于这个制度分析销售数据"
     p = plan(text)
     assert p.score >= 3.0
     d = decide(p)
     assert d.mode == "multi"
     # primary_agent 是主意图映射出的【Agent 类型】（办公能力池），不是意图名
-    assert d.primary_agent in ("data_analysis", "report_generation")
-    assert set(p.intents) >= {"analysis", "report"}
+    assert d.primary_agent in ("data_analysis", "rag_retrieval")
+    assert set(p.intents) >= {"analysis", "rag"}
+
+
+def test_analysis_report_chart_are_covered_by_one_agent():
+    p = plan("先分析销售数据，然后生成报表，同时导出 pdf 和图表")
+    assert p.score >= 3.0
+    d = decide(p)
+    assert d.mode == "single"
+    assert "已覆盖" in d.reason
 
 
 def test_intent_classification_specifics():
@@ -56,5 +64,4 @@ def test_plan_endpoint():
     body = r.json()
     assert body["route"] in ("single", "multi")
     assert "score" in body and "reason" in body and "primary_agent" in body
-    assert body["route"] == "multi"  # 该用例复杂度高
-    assert body["dag"]["subtasks"]  # 复杂任务附带子任务 DAG（p3.2）
+    assert body["route"] == "single"  # 一个报表/分析 Agent 已覆盖导出与图表

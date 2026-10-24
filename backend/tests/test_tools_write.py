@@ -9,6 +9,17 @@ from app.orchestration.tools_table import make_clean_table_tool
 from app.orchestration.tools_write import make_write_document_tool
 
 
+def test_write_pptx_and_pdf(tmp_path):
+    tool = make_write_document_tool(base_dir=str(tmp_path))
+    ppt = tool(title="销售汇报", content="## 结论\n- 上海合计 12", format="pptx")
+    text = extract_document_text(tmp_path / ppt["file_name"])
+    assert "销售汇报" in text
+    assert "上海合计 12" in text
+    pdf = tool(title="销售汇报", content="上海合计 12。", format="pdf")
+    raw = (tmp_path / pdf["file_name"]).read_bytes()
+    assert raw.startswith(b"%PDF")
+
+
 def test_write_md_and_reject_chart_format(tmp_path):
     tool = make_write_document_tool(base_dir=str(tmp_path))
     out = tool(title="周报", content="上海合计 12。", format="md")
@@ -17,7 +28,7 @@ def test_write_md_and_reject_chart_format(tmp_path):
     assert text.startswith("# 周报")
     assert "上海合计 12。" in text
     assert out["display_name"] == "周报.md"
-    with pytest.raises(ValueError, match="只生成 md 或 docx"):
+    with pytest.raises(ValueError, match="只生成 md、docx、pdf 或 pptx"):
         tool(title="图", content="不该写出", format="xlsx")
     assert not list((tmp_path / "_out").glob("*.xlsx"))
 

@@ -12,9 +12,21 @@ from typing import Any, Protocol
 
 from ..core.events import Event, RunEventEmitter
 from ..core.runs import RunCancelled
+from ..core.token_budget import TaskTokenBudget, TokenLimitReached
 from .tools import ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(value: Any) -> Any:
+    """去掉 NaN，保证 visual 事件能写成 JSON。"""
+    if isinstance(value, float) and value != value:
+        return None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 @dataclass
@@ -81,6 +93,7 @@ class AgentResult:
     iterations: int
     hit_cap: bool = False
     tokens_used: int = 0       # p4.3c：本次 ReAct 的真实 LLM 用量（brain.usage 汇总；StubBrain 为 0）
+    external_tokens: int = 0   # 外部工具（知识库检索）带回的 token，并入办公侧结算
     assets: list[dict[str, str]] = field(default_factory=list)  # p6.30：过程产出的文件/数据资产（file_name 等）
 
 
@@ -107,6 +120,7 @@ def run_react(
     emit: Callable[[Event], None] | None = None,
     synthesize: Callable[[str, list[Step]], str] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    token_budget: TaskTokenBudget | None = None,
 ) -> AgentResult:
     """跑 ReAct 循环；超 max_iterations 强制给阶段结论（§四.4 防跑飞）。
 
@@ -120,6 +134,7 @@ def run_react(
     history: list[Step] = []
     invalid_streak = 0  # p6.7：连续无效工具名计数（幻觉兜底）
     assets: list[dict[str, str]] = []  # p6.30：产出资产（下游子任务要能拿到文件名/id，不只文本摘要）
+    external_tokens = 0
 
     def _emit(ev: Event) -> None:
         if emit is not None:
@@ -140,7 +155,26 @@ def run_react(
         if should_cancel is not None and should_cancel():
             # p7.1：用户主动暂停——在 LLM 调用之前退出，最多多花一步
             raise RunCancelled("用户暂停")
-        step = brain.next_step(task, history)
+        try:
+            step = brain.next_step(task, history)
+        except TokenLimitReached:
+            done_steps = [item for item in history if item.observation]
+            cap = (
+                f"本次任务已达到全局 token 上限 {token_budget.limit if token_budget else ''}，"
+                f"已在模型调用边界停止。已完成 {len(done_steps)} 个工具步骤；"
+                "已有结果保留，未完成部分请拆成下一次任务继续。"
+            )
+            if emitter is not None:
+                _emit(emitter.observation("token_limit", cap))
+                _emit(emitter.content_delta(cap))
+            return AgentResult(
+                final=cap,
+                steps=history,
+                iterations=i,
+                hit_cap=True,
+                assets=assets,
+                external_tokens=external_tokens,
+            )
         if emitter is not None and step.thought:
             _emit(emitter.thinking_delta(step.thought))
 
@@ -156,7 +190,7 @@ def run_react(
                 elif not step.streamed:
                     _emit(emitter.content_delta(step.final))
             history.append(step)
-            return AgentResult(final=step.final, steps=history, iterations=i, assets=assets)
+            return AgentResult(final=step.final, steps=history, iterations=i, assets=assets, external_tokens=external_tokens)
 
         # Action → 工具调用 → Observation
         name = step.action or ""
@@ -179,7 +213,7 @@ def run_react(
                 cap = _cap_final("模型连续给出无效工具名", cap)
                 if emitter is not None:
                     _emit(emitter.content_delta(cap))
-                return AgentResult(final=cap, steps=history, iterations=i, hit_cap=True, assets=assets)
+                return AgentResult(final=cap, steps=history, iterations=i, hit_cap=True, assets=assets, external_tokens=external_tokens)
             continue
         prior = [s for s in history if _same_call(s, name, step.action_input)]
         if prior:
@@ -194,7 +228,7 @@ def run_react(
                 final = _cap_final("模型对同一工具重复调用相同参数", final)
                 if emitter is not None:
                     _emit(emitter.content_delta(final))
-                return AgentResult(final=final, steps=history, iterations=i, hit_cap=True, assets=assets)
+                return AgentResult(final=final, steps=history, iterations=i, hit_cap=True, assets=assets, external_tokens=external_tokens)
             continue
         if emitter is not None:
             _emit(emitter.tool_call_start(name, name, step.action_input))
@@ -222,9 +256,23 @@ def run_react(
                     asset[key] = str(res.output[key])
             if not any(a["file_name"] == asset["file_name"] for a in assets):
                 assets.append(asset)
+        if res.ok and isinstance(res.output, dict):
+            usage = res.output.get("usage")
+            if isinstance(usage, dict):
+                added = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+                external_tokens += added
+                if token_budget is not None:
+                    token_budget.consume_external(added)
+            visual = res.output.get("visual")
+            if emitter is not None and isinstance(visual, dict):
+                _emit(emitter.visual(str(visual.get("kind") or "flow"), _json_safe(visual)))
         if emitter is not None:
+            panel = obs
+            if isinstance(obs, dict) and "visual" in obs:
+                panel = {key: value for key, value in obs.items() if key != "visual"}
+                panel["visual"] = "已交给界面绘制"
             # 前端步骤面板展示口径（p6.9：500 → 2000，用户能看到更多过程细节）
-            _emit(emitter.observation(name, str(obs)[:2000]))
+            _emit(emitter.observation(name, str(panel)[:2000]))
             _emit(
                 emitter.tool_call_end(
                     name, name, success=res.ok, error=None if res.ok else (res.error or "")
@@ -239,4 +287,7 @@ def run_react(
     cap = _cap_final("达到最大步数上限", cap)
     if emitter is not None:
         _emit(emitter.content_delta(cap))
-    return AgentResult(final=cap, steps=history, iterations=max_iterations, hit_cap=True, assets=assets)
+    return AgentResult(
+        final=cap, steps=history, iterations=max_iterations, hit_cap=True,
+        assets=assets, external_tokens=external_tokens,
+    )

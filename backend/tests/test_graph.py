@@ -19,7 +19,7 @@ def test_simple_input_routes_single():
 
 
 def test_complex_input_routes_multi():
-    result, events = run_task("先分析销售数据，然后基于分析结果生成报表，同时导出 excel 和 pdf")
+    result, events = run_task("先查一下报销制度，然后基于制度分析销售数据")
     assert result["route"] == "multi"
     assert any(
         e.type == EventType.STATUS and e.data.get("agent") == "orchestrator" for e in events

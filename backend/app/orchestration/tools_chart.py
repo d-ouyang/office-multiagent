@@ -249,6 +249,37 @@ def _prepare(records: list[dict[str, str]], headers: list[str], chart: str, x: s
     return {"labels": labels, "series": plotted, "ylabel": "、".join(y_cols) if y_cols else "数量"}, used, skipped
 
 
+def _finite(value: Any) -> Any:
+    if isinstance(value, float) and value != value:
+        return None
+    return value
+
+
+def chart_visual(kind: str, title: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """给前端 ECharts 的结构。数与落盘的 svg/png 来自同一次汇总。"""
+    spec: dict[str, Any] = {"kind": "chart", "chart": kind, "title": title}
+    if kind == "hist":
+        spec.update(xlabel=payload.get("xlabel"), values=payload.get("values") or [], bins=payload.get("bins") or 10)
+    elif kind == "scatter":
+        spec.update(
+            xlabel=payload.get("xlabel"),
+            ylabel=payload.get("ylabel"),
+            points=[[x, y] for x, y in zip(payload.get("xs") or [], payload.get("ys") or [], strict=False)],
+        )
+    elif kind == "heatmap":
+        grid = [[_finite(cell) for cell in row] for row in (payload.get("grid") or [])]
+        spec.update(xlabels=payload.get("xlabels") or [], ylabels=payload.get("ylabels") or [], grid=grid)
+    elif kind == "pie":
+        spec.update(labels=payload.get("labels") or [], values=payload.get("values") or [])
+    else:
+        series = [
+            {"name": name, "data": values}
+            for name, values in (payload.get("series") or {}).items()
+        ]
+        spec.update(labels=payload.get("labels") or [], series=series, ylabel=payload.get("ylabel"))
+    return spec
+
+
 def _load_table(base: Path, table_id: str) -> tuple[list[str], list[list[str]], dict[str, Any]]:
     """p6.30：clean_id（清洗表）与 export_id（订单明细导出）统一加载入口。"""
     if _EXPORT_ID_RE.match(table_id or ""):
@@ -338,7 +369,8 @@ def make_render_chart_tool(
             "points": used,
             "skipped_non_numeric": skipped,
             "recorded": recorded,
-            "note": "图中的数只来自表格数据（清洗表或订单导出表）。svg 供预览，png 供嵌进 docx。",
+            "visual": chart_visual(kind, heading, payload),
+            "note": "图中的数只来自表格数据。界面用这份 visual 画图；svg/png 供下载和嵌进文档。",
         }
 
     render_chart.__name__ = "render_chart"

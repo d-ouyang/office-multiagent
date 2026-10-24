@@ -41,6 +41,9 @@ class Settings(BaseSettings):
 
     # ---- 规划器（配置驱动，§四.2/§四.3）----
     planner_config: str = ""         # 留空则自动定位 backend/config/planner.yaml
+    decision_model: str = "decision-llm"
+    intent_ambiguity_low: float = 2.0
+    intent_ambiguity_high: float = 4.0
 
     # ---- 业务 Agent 注册表（p5.1b，配置驱动 §五）----
     agents_config: str = ""          # 留空则自动定位 backend/config/agents.yaml
@@ -68,6 +71,8 @@ class Settings(BaseSettings):
     # token 池（§十四）：/tasks 默认预扣估算（LLM 用量事前估不准，用门槛值兜底；
     # settle 时按真实 usage 补差）
     token_estimate_default: int = 2000
+    # 单任务全局硬上限：与钱包余额无关，对所有用户生效。0 表示关闭。
+    task_token_hard_limit: int = 50000
     # DAG 层内最大并行子任务数（p4.3c；防 LLM 渠道限流，1=串行回落基线）
     dag_max_concurrency: int = 3
 

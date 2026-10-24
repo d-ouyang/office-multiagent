@@ -33,9 +33,11 @@ def make_rag_retrieve_tool(
             headers["X-Internal-Auth"] = internal_secret
             headers["X-Username"] = quote(username, safe="")
         url = base_url.rstrip("/") + "/api/v1/qa/ask"
+        # persist=false：走 RAG 完整检索/生成，但不写入 RAG 会话和额度。
+        # 用量随 usage 带回，由办公任务结算进当前用户钱包。
         try:
             with httpx.Client(timeout=timeout, transport=transport) as client:
-                resp = client.post(url, json={"question": q}, headers=headers)
+                resp = client.post(url, json={"question": q, "persist": False}, headers=headers)
         except httpx.HTTPError as e:
             raise RuntimeError(f"知识库检索失败：{type(e).__name__}: {e}") from e
         if resp.status_code != 200:
@@ -47,14 +49,31 @@ def make_rag_retrieve_tool(
                 "source": s.get("source"),
                 "file_name": s.get("file_name"),
                 "snippet": s.get("snippet"),
+                "chunk_id": s.get("chunk_id"),
+                "rerank_score": s.get("rerank_score"),
+                "vector_similarity": s.get("vector_similarity"),
             }
             for s in (data.get("sources") or [])
         ]
+        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
         return {
             "answer": data.get("answer", ""),
             "route": data.get("route", ""),
+            "intent": data.get("intent", ""),
             "sources": sources,
             "source_count": len(sources),
+            "usage": {
+                "input_tokens": int(usage.get("input_tokens") or 0),
+                "output_tokens": int(usage.get("output_tokens") or 0),
+            },
+            "grounded": data.get("grounded"),
+            "low_confidence": data.get("low_confidence"),
+            "qa_trace": data.get("qa_trace"),
+            "persisted": data.get("persisted"),
+            "note": (
+                "未写入知识库自己的会话。重排分在 sources.rerank_score，依据在 grounded。"
+                "usage 会记入本轮办公消耗，不要再向用户报一份知识库侧的账单。"
+            ),
         }
 
     rag_retrieve.__name__ = "rag_retrieve"

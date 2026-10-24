@@ -95,9 +95,35 @@ def test_export_xlsx_and_filters(engine, out_dir):
     out = _export(engine, out_dir, format="xlsx", order_status="已完成")
     assert out["format"] == "xlsx" and out["row_count"] == 2
     assert (out_dir / out["file_name"]).is_file()
-    # 非法状态如实拒绝
+    # 表里没有的状态是 0 行，不是一份写死的可选值名单
     bad = _export(engine, out_dir, order_status="已发货")
-    assert "error" in bad
+    assert "没有订单" in bad["error"]
+    assert "可选" not in bad["error"]
+
+
+def test_export_any_city_and_real_columns(engine, out_dir):
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO guoquan_orders "
+                "(order_no, order_create_time, order_status, store_address, pay_amount, pay_time) VALUES "
+                "('GQ-BJ','2026-04-01 10:00:00','已完成','北京市朝阳区建国路1号','7.00','2026-04-01 10:05:00')"
+            )
+        )
+    out = _export(
+        engine,
+        out_dir,
+        city="北京市",
+        fields=["城市", "门店地址", "pay_time", "支付方式", "收货人"],
+    )
+    assert "error" not in out
+    assert out["row_count"] == 1
+    assert out["columns"] == ["城市", "门店地址", "支付时间"]
+    assert "整列省略" in out["omitted"]["支付方式"]
+    assert "不导出" in out["omitted"]["收货人"]
+    path = out_dir / out["file_name"]
+    body = path.read_text(encoding="utf-8-sig")
+    assert "北京" in body and "朝阳" in body
 
 
 def test_export_requires_date_range_and_handles_empty(engine, out_dir):

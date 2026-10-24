@@ -76,6 +76,7 @@ def chat(
     timeout: float | None = None,
     temperature: float = 0.2,
     reasoning_effort: str | None = None,
+    max_tokens: int | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> LlmResult:
     """调一次 /chat/completions（非流式，网络类失败自动重试 2 次）。
@@ -91,6 +92,7 @@ def chat(
                 timeout=timeout,
                 temperature=temperature,
                 reasoning_effort=reasoning_effort,
+                max_tokens=max_tokens,
                 transport=transport,
             )
         except LlmError as e:
@@ -115,6 +117,7 @@ def _chat_once(
     timeout: float | None = None,
     temperature: float = 0.2,
     reasoning_effort: str | None = None,
+    max_tokens: int | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> LlmResult:
     base_url, api_key, api_model = resolve_model(model_id)
@@ -126,6 +129,8 @@ def _chat_once(
     }
     if reasoning_effort:
         payload["reasoning_effort"] = reasoning_effort
+    if max_tokens is not None:
+        payload["max_tokens"] = max(1, int(max_tokens))
     headers = {"Authorization": f"Bearer {api_key}"}
     try:
         with httpx.Client(timeout=timeout or settings.llm_timeout, transport=transport) as client:
@@ -158,6 +163,7 @@ def chat_stream(
     timeout: float | None = None,
     temperature: float = 0.2,
     reasoning_effort: str | None = None,
+    max_tokens: int | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> LlmResult:
     """流式 /chat/completions（p6.3 真流式管道）。
@@ -179,6 +185,8 @@ def chat_stream(
     }
     if reasoning_effort:
         payload["reasoning_effort"] = reasoning_effort
+    if max_tokens is not None:
+        payload["max_tokens"] = max(1, int(max_tokens))
     headers = {"Authorization": f"Bearer {api_key}"}
     parts: list[str] = []
     usage: dict[str, Any] = {}

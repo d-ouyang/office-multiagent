@@ -1,4 +1,9 @@
-"""query_orders：锅圈订单的具名查询。SQL 写死，模型只传白名单参数。"""
+"""query_orders：锅圈订单的具名查询。SQL 由代码拼，模型只传字段和值。
+
+筛选取订单表里真实存在的列（值做参数绑定，列名必须落在表结构里）。
+城市不是单独的列，按门店地址包含匹配，不维护城市名单。
+状态、渠道等不再用写死的可选值挡在查询前面：表里有什么值就能查什么值。
+"""
 from __future__ import annotations
 
 import re
@@ -9,27 +14,37 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .orders_seed import ensure_orders_loaded
+from .orders_seed import COLUMNS, ensure_orders_loaded
 from .tools_db import _jsonable
 
 _MAX_ROWS = 50
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_STATUSES = ("已完成", "已支付", "配送中", "已退款", "待支付", "已取消")
-_CHANNELS = ("微信小程序", "抖音小程序", "门店扫码", "美团外卖", "饿了么外卖")
-_TYPES = ("普通订单", "拼团订单", "接龙订单")
-_FULFILLMENT = ("门店自提", "同城配送", "平台外卖配送")
-_LEVELS = ("普通会员", "银卡会员", "金卡会员", "黑金会员")
-_CITIES = {"上海": "上海市%", "安庆": "安庆市%"}
-_GROUPS = (
-    "month",
-    "store_name",
-    "order_channel",
+_SPLIT = re.compile(r"[,，、]")
+# 顾客个人信息：可以按这些列筛选（值不回显到结果行），但不能出现在查询结果或分组里。
+_CUSTOMER_PII = frozenset({
+    "receiver_phone",
+    "user_phone",
+    "receiver_name",
+    "user_name",
+    "address",
+})
+_PHONE_COLUMNS = frozenset({"receiver_phone", "user_phone"})
+_FILTER_OPS = frozenset({"eq", "ne", "contains", "gt", "gte", "lt", "lte", "in", "not_in"})
+_EXACT_FIELDS = (
+    "order_no",
     "order_status",
+    "order_channel",
     "order_type",
     "fulfillment_type",
     "member_level",
-    "city",
+    "store_id",
+    "activity_id",
+    "coupon_type",
+    "user_gender",
+    "is_coupon_used",
+    "need_invoice",
 )
+_GROUPABLE = frozenset({"month", "city"}) | (frozenset(COLUMNS) - _CUSTOMER_PII)
 _METRICS = {
     "count": "COUNT(*)",
     "sum_pay": "SUM(pay_amount)",
@@ -38,6 +53,11 @@ _METRICS = {
     "sum_refund": "SUM(refund_amount)",
     "avg_pay": "AVG(pay_amount)",
     "sum_goods": "SUM(goods_quantity)",
+    "sum_goods_amount": "SUM(goods_amount)",
+    "sum_delivery_fee": "SUM(delivery_fee)",
+    "sum_packing_fee": "SUM(packing_fee)",
+    "sum_coupon": "SUM(coupon_value)",
+    "sum_points": "SUM(points_earned)",
 }
 METRIC_DEFINITIONS = {
     "count": "订单条数。每张订单计 1，时间按下单时间。",
@@ -47,6 +67,11 @@ METRIC_DEFINITIONS = {
     "sum_refund": "退款金额合计。已退款订单等于实付，其余为 0。",
     "avg_pay": "实付金额平均值。分母是范围内全部订单，不是只算已支付。",
     "sum_goods": "商品件数合计，字段 goods_quantity。",
+    "sum_goods_amount": "商品金额合计，字段 goods_amount。",
+    "sum_delivery_fee": "配送费合计，字段 delivery_fee。",
+    "sum_packing_fee": "包装费合计，字段 packing_fee。",
+    "sum_coupon": "券面额合计，字段 coupon_value。",
+    "sum_points": "本单获得积分合计，字段 points_earned。",
 }
 _LIST_COLUMNS = (
     "order_no",
@@ -73,11 +98,25 @@ _DETAIL_EXTRA = (
     "need_invoice",
     "activity_name",
 )
-_HIDDEN = ("receiver_phone", "user_phone", "receiver_name", "user_name", "address", "store_phone")
+_HIDDEN = tuple(sorted(_CUSTOMER_PII))
 
 
 def _text(raw: Any) -> str:
     return str(raw or "").strip()
+
+
+def _as_list(raw: Any) -> list[str]:
+    """一个值、列表，或用逗号/顿号分开的多个值。"""
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return [_text(item) for item in raw if _text(item)]
+    value = _text(raw)
+    if not value:
+        return []
+    if _SPLIT.search(value):
+        return [part.strip() for part in _SPLIT.split(value) if part.strip()]
+    return [value]
 
 
 def _date(raw: Any, label: str) -> str | dict[str, str]:
@@ -90,15 +129,6 @@ def _date(raw: Any, label: str) -> str | dict[str, str]:
         datetime.strptime(value, "%Y-%m-%d")
     except ValueError:
         return {"error": f"{label} 不是有效日期"}
-    return value
-
-
-def _choice(raw: Any, label: str, allowed: tuple[str, ...]) -> str | dict[str, str]:
-    value = _text(raw)
-    if not value:
-        return ""
-    if value not in allowed:
-        return {"error": f"没有这个{label}：{value}。可选：{'、'.join(allowed)}"}
     return value
 
 
@@ -116,11 +146,165 @@ def _month_expr(dialect: str) -> str:
     return "strftime('%Y-%m', order_create_time)"
 
 
-def _city_expr() -> str:
+def derive_city(store_address: Any) -> str:
+    """从门店地址取出城市名：上海市…→上海，河南省郑州市…→郑州。没有「市」则记为其他。"""
+    address = str(store_address or "")
+    if "市" not in address:
+        return "其他"
+    head = address.split("市", 1)[0]
+    if "省" in head:
+        head = head.split("省", 1)[1]
+    return head or "其他"
+
+
+def city_like_token(city: str) -> str:
+    """「上海」「上海市」都变成用于 LIKE 的地名，去掉用户自己写的通配符。"""
+    name = _text(city)
+    if name.endswith("市") and len(name) > 1:
+        name = name[:-1]
+    return name.replace("%", "").replace("_", "").replace("\\", "")
+
+
+def city_expr(dialect: str) -> str:
+    """与 derive_city 同一口径，供 GROUP BY 使用。"""
+    if dialect == "mysql":
+        head = "SUBSTRING_INDEX(store_address, '市', 1)"
+        return (
+            "CASE WHEN store_address IS NULL OR LOCATE('市', store_address) = 0 THEN '其他' "
+            f"WHEN LOCATE('省', {head}) > 0 THEN SUBSTRING({head}, LOCATE('省', {head}) + 1) "
+            f"ELSE {head} END"
+        )
+    head = "substr(store_address, 1, instr(store_address, '市') - 1)"
     return (
-        "CASE WHEN store_address LIKE '上海市%' THEN '上海' "
-        "WHEN store_address LIKE '安庆市%' THEN '安庆' ELSE '其他' END"
+        "CASE WHEN store_address IS NULL OR instr(store_address, '市') = 0 THEN '其他' "
+        f"WHEN instr({head}, '省') > 0 THEN substr({head}, instr({head}, '省') + 1) "
+        f"ELSE {head} END"
     )
+
+
+class _Binder:
+    def __init__(self) -> None:
+        self.params: dict[str, Any] = {}
+        self._n = 0
+
+    def add(self, value: Any) -> str:
+        key = f"p{self._n}"
+        self._n += 1
+        self.params[key] = value
+        return f":{key}"
+
+
+def _cmp_clause(binder: _Binder, column: str, op: str, value: Any) -> str | dict[str, str]:
+    if column == "city":
+        if op not in {"eq", "ne", "contains", "in", "not_in"}:
+            return {"error": "城市只支持 eq、ne、contains、in、not_in"}
+        tokens = [city_like_token(item) for item in _as_list(value)]
+        tokens = [item for item in tokens if item]
+        if not tokens:
+            return {"error": "城市条件为空"}
+        likes = [f"store_address LIKE {binder.add(f'%{item}%')}" for item in tokens]
+        joined = " OR ".join(likes)
+        if op in {"ne", "not_in"}:
+            return f"NOT ({joined})"
+        return f"({joined})"
+    if column not in COLUMNS:
+        return {"error": f"没有这个字段：{column}。请用订单表里的列名。"}
+    if op in {"in", "not_in"}:
+        values = _as_list(value)
+        if not values:
+            return {"error": f"{column} 的 {op} 没有给值"}
+        holders = ", ".join(binder.add(item) for item in values)
+        keyword = "NOT IN" if op == "not_in" else "IN"
+        return f"{column} {keyword} ({holders})"
+    if op == "contains":
+        token = _text(value).replace("%", "").replace("_", "").replace("\\", "")
+        if not token:
+            return {"error": f"{column} 的 contains 条件为空"}
+        return f"{column} LIKE {binder.add(f'%{token}%')}"
+    sql_op = {"eq": "=", "ne": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}.get(op)
+    if sql_op is None:
+        return {"error": f"不支持的过滤方式：{op}。可用 eq、ne、contains、gt、gte、lt、lte、in、not_in"}
+    if isinstance(value, (list, tuple)):
+        return {"error": f"{column} 的 {op} 只接受单个值；多个值请用 in 或 not_in"}
+    return f"{column} {sql_op} {binder.add(value)}"
+
+
+def compile_order_filters(raw: dict[str, Any], *, require_dates: bool = False) -> dict[str, Any]:
+    """把具名条件和 filters 列表编成参数化 WHERE。失败时返回带 error 的字典。"""
+    date_from = _date(raw.get("date_from"), "date_from")
+    date_to = _date(raw.get("date_to"), "date_to")
+    if isinstance(date_from, dict):
+        return date_from
+    if isinstance(date_to, dict):
+        return date_to
+    if require_dates and (not date_from or not date_to):
+        return {"error": "导出必须带 date_from 和 date_to（明细导出必须有明确时间范围）"}
+    if date_from and date_to and date_from > date_to:
+        return {"error": "date_from 不能晚于 date_to"}
+
+    binder = _Binder()
+    clauses: list[str] = []
+    applied: dict[str, Any] = {}
+    if date_from:
+        clauses.append(f"order_create_time >= {binder.add(f'{date_from} 00:00:00')}")
+        applied["date_from"] = date_from
+    if date_to:
+        year, month, day = (int(part) for part in date_to.split("-"))
+        nxt = datetime(year, month, day) + timedelta(days=1)
+        clauses.append(f"order_create_time < {binder.add(nxt.strftime('%Y-%m-%d %H:%M:%S'))}")
+        applied["date_to"] = date_to
+
+    city = _text(raw.get("city"))
+    if city:
+        clause = _cmp_clause(binder, "city", "eq", city)
+        if isinstance(clause, dict):
+            return clause
+        clauses.append(clause)
+        applied["city"] = city
+
+    store_name = _text(raw.get("store_name")).replace("%", "").replace("_", "").replace("\\", "")
+    if store_name:
+        clauses.append(f"store_name LIKE {binder.add(f'%{store_name}%')}")
+        applied["store_name"] = store_name
+
+    for key in _EXACT_FIELDS:
+        values = _as_list(raw.get(key))
+        if not values:
+            continue
+        op = "eq" if len(values) == 1 else "in"
+        clause = _cmp_clause(binder, key, op, values if op == "in" else values[0])
+        if isinstance(clause, dict):
+            return clause
+        clauses.append(clause)
+        applied[key] = values[0] if len(values) == 1 else values
+
+    excluded = _as_list(raw.get("exclude_status"))
+    if excluded:
+        op = "ne" if len(excluded) == 1 else "not_in"
+        clause = _cmp_clause(binder, "order_status", op, excluded if op == "not_in" else excluded[0])
+        if isinstance(clause, dict):
+            return clause
+        clauses.append(clause)
+        applied["exclude_status"] = excluded[0] if len(excluded) == 1 else excluded
+
+    extra = raw.get("filters")
+    if extra:
+        items = extra if isinstance(extra, list) else [extra]
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                return {"error": f"filters[{index}] 必须是 {{column, op, value}}"}
+            column = _text(item.get("column"))
+            op = _text(item.get("op")) or "eq"
+            if op not in _FILTER_OPS:
+                return {"error": f"不支持的过滤方式：{op}。可用 {'、'.join(sorted(_FILTER_OPS))}"}
+            clause = _cmp_clause(binder, column, op, item.get("value"))
+            if isinstance(clause, dict):
+                return clause
+            clauses.append(clause)
+        if items:
+            applied["filters"] = items
+
+    return {"clauses": clauses, "params": binder.params, "applied": applied}
 
 
 def make_query_orders_tool(engine: Engine | None, *, max_rows: int = _MAX_ROWS) -> Callable[..., Any]:
@@ -133,80 +317,39 @@ def make_query_orders_tool(engine: Engine | None, *, max_rows: int = _MAX_ROWS) 
         if loaded == "empty-no-csv":
             return {"error": "订单表是空的，且没有找到可导入的 CSV"}
 
-        date_from = _date(raw.get("date_from"), "date_from")
-        date_to = _date(raw.get("date_to"), "date_to")
-        status = _choice(raw.get("order_status"), "订单状态", _STATUSES)
-        channel = _choice(raw.get("order_channel"), "订单渠道", _CHANNELS)
-        order_type = _choice(raw.get("order_type"), "订单类型", _TYPES)
-        fulfillment = _choice(raw.get("fulfillment_type"), "履约方式", _FULFILLMENT)
-        level = _choice(raw.get("member_level"), "会员等级", _LEVELS)
-        excluded = _choice(raw.get("exclude_status"), "要排除的订单状态", _STATUSES)
-        for item in (date_from, date_to, status, channel, order_type, fulfillment, level, excluded):
-            if isinstance(item, dict):
-                return item
+        built = compile_order_filters(raw)
+        if built.get("error"):
+            return built
+        clauses = built["clauses"]
+        params = built["params"]
+        applied = built["applied"]
 
-        city = _text(raw.get("city"))
-        if city and city not in _CITIES:
-            return {"error": f"没有这个城市：{city}。可选：上海、安庆"}
         group_by = _text(raw.get("group_by"))
-        if group_by and group_by not in _GROUPS:
-            return {"error": f"group_by 只能是 {'、'.join(_GROUPS)}"}
+        if group_by and group_by not in _GROUPABLE:
+            return {
+                "error": (
+                    f"不能按 {group_by} 分组。可以用 month、city，"
+                    "或订单表里除手机号、真实姓名、收货地址以外的字段。"
+                )
+            }
         metric = _text(raw.get("metric")) or ("sum_pay" if group_by else "")
         if metric and metric not in _METRICS:
             return {"error": f"metric 只能是 {'、'.join(_METRICS)}"}
-        order_no = _text(raw.get("order_no"))
-        store_name = _text(raw.get("store_name")).replace("%", "").replace("_", "")
         limit = min(max_rows, _limit(raw.get("limit")))
 
-        filters: list[str] = []
-        params: dict[str, Any] = {}
-        applied: dict[str, str] = {}
-        if date_from:
-            filters.append("order_create_time >= :date_from")
-            params["date_from"] = f"{date_from} 00:00:00"
-            applied["date_from"] = date_from
-        if date_to:
-            filters.append("order_create_time < :date_to_next")
-            year, month, day = (int(part) for part in str(date_to).split("-"))
-            nxt = datetime(year, month, day)
-            params["date_to_next"] = (nxt + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
-            applied["date_to"] = date_to
-        if order_no:
-            filters.append("order_no = :order_no")
-            params["order_no"] = order_no
-            applied["order_no"] = order_no
-        if store_name:
-            filters.append("store_name LIKE :store_name")
-            params["store_name"] = f"%{store_name}%"
-            applied["store_name"] = store_name
-        if city:
-            filters.append("store_address LIKE :city")
-            params["city"] = _CITIES[city]
-            applied["city"] = city
-        for key, value in (
-            ("order_status", status),
-            ("order_channel", channel),
-            ("order_type", order_type),
-            ("fulfillment_type", fulfillment),
-            ("member_level", level),
-        ):
-            if value:
-                filters.append(f"{key} = :{key}")
-                params[key] = value
-                applied[key] = str(value)
-        if excluded:
-            filters.append("order_status <> :exclude_status")
-            params["exclude_status"] = excluded
-            applied["exclude_status"] = str(excluded)
+        if not clauses and not group_by and not metric:
+            return {"error": "查询必须带时间、城市、门店、字段筛选或分组，避免整表读取"}
 
-        if not filters and not group_by and not metric:
-            return {"error": "查询必须带时间、城市、门店、渠道、状态或分组，避免整表读取"}
-
-        where = f" WHERE {' AND '.join(filters)}" if filters else ""
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         dialect = engine.dialect.name
         hint = "/*+ MAX_EXECUTION_TIME(3000) */ " if dialect == "mysql" else ""
-        if group_by or (metric and not order_no):
-            label = _city_expr() if group_by == "city" else _month_expr(dialect) if group_by == "month" else group_by
+        if group_by or (metric and "order_no" not in applied):
+            if group_by == "city":
+                label = city_expr(dialect)
+            elif group_by == "month":
+                label = _month_expr(dialect)
+            else:
+                label = group_by
             metric_sql = _METRICS[metric or "count"]
             if group_by:
                 sql = (
@@ -229,7 +372,22 @@ def make_query_orders_tool(engine: Engine | None, *, max_rows: int = _MAX_ROWS) 
                 "rows": rows,
             }
 
-        columns = _LIST_COLUMNS + (_DETAIL_EXTRA if order_no else ())
+        requested = _as_list(raw.get("columns"))
+        if requested:
+            unknown = [name for name in requested if name not in COLUMNS]
+            hidden = [name for name in requested if name in _CUSTOMER_PII]
+            if unknown:
+                return {"error": f"没有这些字段：{'、'.join(unknown)}。请用订单表列名。"}
+            if hidden:
+                return {
+                    "error": (
+                        f"查询结果不返回个人信息：{'、'.join(hidden)}。"
+                        "要带脱敏手机号的明细文件请用 export_orders。"
+                    )
+                }
+            columns = tuple(dict.fromkeys(requested))
+        else:
+            columns = _LIST_COLUMNS + (_DETAIL_EXTRA if "order_no" in applied else ())
         count_sql = f"SELECT COUNT(*) AS n FROM guoquan_orders{where}"
         total = int(_run(engine, count_sql, params)[0]["n"])
         sql = (

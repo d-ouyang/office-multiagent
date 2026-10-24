@@ -161,11 +161,11 @@ def _current_user(authorization: str | None) -> dict[str, Any]:
     return user
 
 
-_OUT_FILE = re.compile(r"^[weg]-[0-9a-f]{16}\.(md|docx|svg|png|csv|xlsx)$")
+_OUT_FILE = re.compile(r"^[weg]-[0-9a-f]{16}\.(md|docx|pdf|pptx|svg|png|csv|xlsx)$")
 
 
 def _generated_file(raw: str, username: str):
-    """生成文档只允许 _out/w-<16位hex>.md|docx，不按上传文件那样拍成 basename。"""
+    """生成产物只认 _out/ 下受控前缀、固定 id 与白名单后缀，不接受任意 basename。"""
     from pathlib import Path as _P
 
     text = str(raw or "").replace("\\", "/").strip().lstrip("/")
@@ -445,12 +445,14 @@ def own_document(name: str, download: bool = Query(default=False), authorization
         media = {
             ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ".csv": "text/csv; charset=utf-8",
+            ".pdf": "application/pdf",
+            ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         }.get(path.suffix.lower(), "application/octet-stream")
         return FileResponse(
             path, media_type=media, filename=filename, content_disposition_type="attachment"
         )
     suffix = path.suffix.lower()
-    if suffix in {".docx", ".xlsx", ".csv", ".json"}:
+    if suffix in {".docx", ".xlsx", ".csv", ".json", ".pptx"}:
         try:
             body = extract_document_text(path)
         except ValueError as e:

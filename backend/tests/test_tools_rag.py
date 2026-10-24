@@ -44,7 +44,30 @@ def test_rag_retrieve_ok_with_proof_headers():
     assert req.url.path == "/api/v1/qa/ask"
     assert req.headers["x-internal-auth"] == "office-secret"
     assert req.headers["x-username"] == quote("张三", safe="")
-    assert json.loads(req.content)["question"] == "公司年假几天"
+    body = json.loads(req.content)
+    assert body["question"] == "公司年假几天"
+    assert body["persist"] is False
+
+
+def test_rag_retrieve_keeps_scores_usage_and_grounding():
+    body = {
+        **_OK_BODY,
+        "sources": [{
+            "index": 1, "source": "upload/a.md", "file_name": "a.md", "snippet": "片段",
+            "chunk_id": "d1:0", "rerank_score": 0.82, "vector_similarity": 0.41,
+        }],
+        "usage": {"input_tokens": 120, "output_tokens": 30},
+        "grounded": {"grounded": True, "unsupported": []},
+        "persisted": False,
+    }
+    handler, _ = _capture_handler(200, body)
+    tool = make_rag_retrieve_tool(base_url="http://rag", transport=httpx.MockTransport(handler))
+    out = tool("居住证积分")
+    assert out["sources"][0]["rerank_score"] == 0.82
+    assert out["sources"][0]["chunk_id"] == "d1:0"
+    assert out["usage"] == {"input_tokens": 120, "output_tokens": 30}
+    assert out["grounded"]["grounded"] is True
+    assert out["persisted"] is False
 
 
 def test_rag_retrieve_no_secret_sends_no_proof():

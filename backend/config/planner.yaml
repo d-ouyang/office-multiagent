@@ -40,10 +40,21 @@ complexity:
   # 依赖/条件词：每命中一个 +dependency_weight
   dependency_markers: [依赖, 基于, 根据前面, 如果, 条件, 关联, 前提]
   dependency_weight: 1.0
-  # 阈值：score >= complex_threshold → 复杂（多 Agent）；否则简单（单 Agent）
-  complex_threshold: 3.0
+  # 阈值：score >= complexity_threshold 才有资格进入多 Agent；
+  # 最终还要检查主 Agent 是否已覆盖全部意图，避免「分析+图表+文档」误拆。
+  complexity_threshold: 3.0
   # 主意图之外最多保留几个意图进任务
   max_intents: 3
+
+# 主意图对应 Agent 能顺序完成的意图集合。命中覆盖时保持 single，即使规则分超过阈值。
+# 只有真实跨能力交接才拆 multi。
+single_agent_covers:
+  analysis: [analysis, cleaning, report, visualization]
+  cleaning: [cleaning]
+  report: [report, analysis, cleaning, visualization, rag]
+  rag: [rag]
+  visualization: [visualization]
+  image_restore: [image_restore]
 
 # DAG 拆分（p3.2，§四.2 第三步）：复杂任务按意图依赖生成子任务图。
 # 只对【同时出现】的意图生效；被依赖方不在任务里则自动忽略该边。
@@ -55,7 +66,7 @@ complexity:
 fold_visualization: true
 dag:
   dependencies:
-    analysis: [cleaning]      # 先清洗再分析
+    analysis: [cleaning, rag] # 有清洗/制度口径时，先拿上游结果再分析
     report: [analysis]        # 报表依赖分析结论
     visualization: [analysis] # 可视化依赖分析结论
     # rag / image_restore / cleaning 无依赖（可并行）

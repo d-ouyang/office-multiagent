@@ -68,6 +68,8 @@ services:
       RAG_BASE_URL: ${RAG_BASE_URL:-http://host.docker.internal:8000}
       # DAG 层内最大并行子任务数（p4.3c；防 LLM 渠道限流，1=串行回落基线）
       DAG_MAX_CONCURRENCY: ${DAG_MAX_CONCURRENCY:-3}
+      # 单任务运行中 token 硬上限（全员统一；与钱包余额/预扣门槛分开）
+      TASK_TOKEN_HARD_LIMIT: ${TASK_TOKEN_HARD_LIMIT:-50000}
     # 不发布宿主端口：①避开与 RAG 宿主进程(FastAPI 127.0.0.1:8000)冲突；②设计 §13.3 后端只内网可达，网关才是入口
     volumes:
       - ./backend/data:/app/data   # 文档目录：read_document 只读 + /documents 上传写入（rw；路径护栏防穿越）

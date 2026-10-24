@@ -1,15 +1,20 @@
 // 用户消息：气泡下方是提问时间，hover 出编辑/复制图标。
 // 助手消息：正文下方独立一行——复制、点赞、点踩、用量、模型、时间、耗时。
 // 点赞/点踩只留在这次渲染里，不入库。
-import { useState, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { Copy, Pencil, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import type { StreamEvent } from '../types';
-import { deriveArtifacts, deriveFailure, deriveProcess, deriveReplyMeta } from '../lib/derive';
+import { deriveArtifacts, deriveFailure, deriveProcess, deriveReplyMeta, deriveVisuals } from '../lib/derive';
+import { FlowChart } from './FlowChart';
+import type { ChartSpec } from './ChartView';
+import type { FlowSpec } from '../lib/flowLayout';
 import { formatClock, formatDuration, formatTokens } from '../lib/format';
 import { modelDisplayName } from './ModelPicker';
 import MarkdownView from './MarkdownView';
 import { ProcessTrace } from './FoldPanels';
+
+const ChartView = lazy(() => import('./ChartView').then((module) => ({ default: module.ChartView })));
 
 export interface ChatMessageData {
   role: 'user' | 'assistant';
@@ -201,6 +206,7 @@ export function ChatMessage({
   const events = msg.events;
   const process = events ? deriveProcess(events) : null;
   const artifacts = events ? deriveArtifacts(events) : [];
+  const visuals = events ? deriveVisuals(events) : [];
   const content = process ? process.result : (msg.content ?? '');
   const failure = events ? deriveFailure(events) : null;
   const meta = events ? deriveReplyMeta(events) : {};
@@ -233,6 +239,19 @@ export function ChatMessage({
           </div>
         )}
         {content && <MarkdownView text={content} streaming={msg.streaming} />}
+        {visuals.map((item, index) => {
+          if (item.kind === 'flow' && Array.isArray(item.nodes) && Array.isArray(item.edges) && Array.isArray(item.path)) {
+            return <FlowChart key={`flow-${index}`} spec={item as unknown as FlowSpec} />;
+          }
+          if (item.kind === 'chart' && typeof item.chart === 'string') {
+            return (
+              <Suspense key={`chart-${index}`} fallback={<div className="chart-card">正在绘制图表…</div>}>
+                <ChartView spec={item as unknown as ChartSpec} />
+              </Suspense>
+            );
+          }
+          return null;
+        })}
         {artifacts.length > 0 && (
           <div className="msg-attachments">
             <span className="attach-label">生成文件</span>

@@ -21,7 +21,9 @@ from sqlalchemy.engine import Engine
 from ..core.config import settings
 from .tools import ToolRegistry
 from .tools_db import make_db_query_tool
+from .tools_compare import make_compare_orders_tool
 from .tools_export import make_export_orders_tool
+from .tools_flow import render_flow
 from .tools_orders import make_query_orders_tool
 from .tools_report import make_sales_report_tool
 from .tools_chart import make_render_chart_tool
@@ -68,19 +70,23 @@ def build_default_registry(
         description=(
             "查询已入库的锅圈食汇订单。不要写 SQL，也不要读订单 CSV。"
             "至少要带一个条件：date_from、date_to（YYYY-MM-DD，按下单时间）、"
-            "order_no、store_name、city（只能是上海或安庆）、order_status、order_channel、"
-            "order_type、fulfillment_type、member_level、group_by。"
-            "order_status：已完成、已支付、配送中、已退款、待支付、已取消。"
-            "order_channel：微信小程序、抖音小程序、门店扫码、美团外卖、饿了么外卖。"
-            "order_type：普通订单、拼团订单、接龙订单。"
-            "fulfillment_type：门店自提、同城配送、平台外卖配送。"
-            "member_level：普通会员、银卡会员、金卡会员、黑金会员。"
-            "group_by：month、store_name、order_channel、order_status、order_type、"
-            "fulfillment_type、member_level、city。分组时 metric 默认 sum_pay，"
-            "还可取 count、sum_total、sum_discount、sum_refund、avg_pay、sum_goods。"
-            "limit 最大 50。不返回手机号、真实姓名和收货地址。"
+            "order_no、store_name（包含匹配）、city、order_status、order_channel、"
+            "order_type、fulfillment_type、member_level、group_by，或 filters。"
+            "city 按门店地址包含匹配：传「上海」或「上海市」都能命中，不限制城市名单。"
+            "状态、渠道、类型、履约方式、会员等级按表里的实际值相等匹配，可传一个值或列表，"
+            "不要用写死的可选值；表里没有该值时结果就是 0 行。"
+            "filters：[{column, op, value}]，column 用订单表列名，"
+            "op 取 eq、ne、contains、gt、gte、lt、lte、in、not_in。"
+            "多个状态可传列表，或用顿号/逗号分隔；排除用 exclude_status，同样可传多个。"
+            "group_by：month、city，或除手机号、真实姓名、收货地址外的任意订单表字段。"
+            "city 分组从门店地址取城市名（上海市→上海，河南省郑州市→郑州）。"
+            "分组时 metric 默认 sum_pay，还可取 count、sum_total、sum_discount、sum_refund、"
+            "avg_pay、sum_goods、sum_goods_amount、sum_delivery_fee、sum_packing_fee、sum_coupon、sum_points。"
+            "columns：可选，指定要返回的列名；不传用默认列。limit 最大 50。"
+            "不返回手机号、真实姓名和收货地址。"
             "不要某状态时传 exclude_status，例如不要退款就传 已退款。"
-            "条件对不上时会说明没有这个过滤条件，不要改去猜列名或改用 db_query。"
+            "字段名对不上时会说明没有这个字段。某个取值在表里不存在时返回 0 行，不要改去猜列名或改用 db_query。"
+            "同比、环比、占比不要自己算，改用 compare_orders。"
             "销售报表不要用本工具拼结论，改用 sales_report。"
             "【要订单明细表格/导出文件时不要用本工具，改用 export_orders】。"
         ),
@@ -91,11 +97,13 @@ def build_default_registry(
         description=(
             "生成锅圈销售报表。数字只来自 query_orders，不要自己计算或改写。"
             "必填 date_from、date_to（YYYY-MM-DD）和 metric。"
-            "metric：count、sum_pay、sum_total、sum_discount、sum_refund、avg_pay、sum_goods。"
-            "可选 city、store_name、order_status、exclude_status、order_channel、order_type、"
+            "metric：count、sum_pay、sum_total、sum_discount、sum_refund、avg_pay、sum_goods、"
+            "sum_goods_amount、sum_delivery_fee、sum_packing_fee、sum_coupon、sum_points。"
+            "可选 city（按门店地址匹配，不限城市）、store_name、order_status、exclude_status、order_channel、order_type、"
             "fulfillment_type、member_level、group_by。用户说只要某城市、不要某状态时，必须传对应参数。"
             "时间范围、指标、口径、数据来源缺任何一项时 complete 为 false，这时不能说报表已完成。"
             "complete 为 true 时，report 就是报表正文。下一步直接分析并给销售建议，不要再次调用本工具，也不要再读文件。"
+            "同比、环比、占比用 compare_orders，不要拿报表数字自己除。"
         ),
     )
     reg.register(
@@ -106,8 +114,9 @@ def build_default_registry(
             username=settings.rag_service_username,
         ),
         description=(
-            "检索公司知识库（制度/文档问答），返回答案与来源清单。参数: query（检索问题）。"
-            "适用于查公司制度、流程、文档内容等非结构化知识。"
+            "检索公司知识库（制度/文档问答）。参数 query。走知识库完整链路，但不写入知识库会话。"
+            "返回 answer、sources（含 rerank_score 重排分）、grounded（依据是否站住）。"
+            "回答必须转述这些字段，不要编造出处。usage 已计入本轮消耗。"
         ),
     )
     owner = (username or "").strip().strip("/") or None
@@ -169,9 +178,10 @@ def build_default_registry(
         ),
         description=(
             "导出订单明细表格文件（csv 或 xlsx），是「形成表格/导出明细」类请求的正解。"
-            "必填 date_from、date_to（YYYY-MM-DD）。可选 city（上海/安庆）、store_name、"
-            "order_status、exclude_status、order_channel、order_type、fulfillment_type、"
-            "member_level、fields（要保留的列名列表，如 [销售金额, 门店, 用户, 是否线上, 平台, 支付方式]）、"
+            "必填 date_from、date_to（YYYY-MM-DD）。可选 city（按门店地址包含匹配，不限城市）、"
+            "store_name、order_status、exclude_status、order_channel、order_type、fulfillment_type、"
+            "member_level（均可传一个值或列表）、filters（同 query_orders，按订单表任意字段筛选）、"
+            "fields（中文列名或订单表列名，如 [销售金额, 门店, 用户, 是否线上, 平台, 门店地址, pay_time]）、"
             "format（csv/xlsx）。字段映射规则：手机号自动脱敏进文件；「是否线上」由渠道推导"
             "（门店扫码→线下，其余→线上）；表里没有的字段（如支付方式）【整列省略】并在返回的 "
             "omitted 里说明，绝不编造该列。返回 export_id 和 file_name：可直接交给 render_chart "
@@ -185,9 +195,10 @@ def build_default_registry(
             base_dir=doc_base, owner=owner, engine=engine, user_id=user_id, task_id=task_id
         ),
         description=(
-            "把已经得到的结论写成 md 或 docx，不画图，也不生成 xlsx。"
+            "把已经得到的结论写成 md、docx、pdf 或 pptx，不画数据图，也不生成 xlsx。"
             "参数 title：标题。content：正文，数字必须来自此前的工具结果。"
-            "format：md 或 docx。clean_id：若结论来自清洗后的表，传入它，文末会写上来源和行数。"
+            "format：md、docx、pdf、pptx。用户要演示文稿用 pptx，要发出去的成稿用 pdf。"
+            "clean_id：若结论来自清洗后的表，传入它，文末会写上来源和行数。"
             "image_file：要把图表嵌进文档时，传 render_chart 返回的 png_file（文档内会嵌入该图）。"
             "返回 file_name。失败就说明没生成，不要给一个不存在的下载地址。"
         ),
@@ -207,7 +218,29 @@ def build_default_registry(
             "series：分组列，和多个 y 不能同时用。heatmap 必须有 x、series 和 y。"
             "scatter 的 x、y 都是数字列。hist 用 y 或 x 做分箱，bins 默认 10。"
             "filters 与 analyze_table 相同。饼图超过 8 类会把其余并成「其他」，且不能有负数。"
-            "返回 svg（预览）和 png（供 write_document 嵌入文档）。"
+            "返回 visual（界面用 ECharts 画）以及 svg/png 文件（供下载和嵌进文档）。"
+        ),
+    )
+    reg.register(
+        "render_flow",
+        render_flow,
+        description=(
+            "画流程图，供界面在回答过程中渲染。不要自己输出 SVG 或坐标。"
+            "参数 title。nodes：[{id, label, kind, lane}]，kind 为 rect 或 diamond，"
+            "lane 取 blue、purple、teal、amber、green、red、gray。"
+            "edges：[{from, to, label}]。path：实走节点 id 列表，按顺序。"
+            "判断用 diamond，其余用 rect。没走到的分支不要放进 path，只放在 edges 里。"
+        ),
+    )
+    reg.register(
+        "compare_orders",
+        make_compare_orders_tool(engine),
+        description=(
+            "计算订单的环比、同比或占比。数字只来自 query_orders，变化率由代码计算。"
+            "必填 date_from、date_to、metric（与 query_orders 相同）。"
+            "mode：mom 环比（紧挨着的上一段等长时间）、yoy 同比（去年同期）、share 占比。"
+            "share 必须带 group_by。其余筛选参数与 query_orders 相同。"
+            "ratio 为空表示上期为 0，不要自己编一个百分比。"
         ),
     )
     # p6.29：显式长期记忆（仅登录用户场景挂载；匿名=无记忆能力，工具不可见）

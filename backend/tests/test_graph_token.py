@@ -33,7 +33,7 @@ def test_quota_interrupt_then_resume_completes():
     graph = build_graph(em, events.append, token_pool=tp, checkpointer=cp)
     cfg = {"configurable": {"thread_id": "t1"}}
     init = {
-        "text": "先清洗，再分析，再出报表",
+        "text": "先查一下制度，然后基于制度分析销售数据",
         "run_id": "r",
         "turn_id": "t",
         "user_id": 1,
@@ -86,7 +86,7 @@ class _FakeUsageBrain:
 
 def test_multi_route_aggregates_subtask_tokens(monkeypatch):
     monkeypatch.setattr("app.orchestration.graph.make_brain", lambda *a, **k: _FakeUsageBrain())
-    result, _events = run_task("先清洗，再分析，再出报表")
+    result, _events = run_task("先查一下制度，然后基于制度分析销售数据")
     assert result["route"] == "multi"
     n = len(result["dag"]["subtasks"])
     assert n >= 2
@@ -98,7 +98,12 @@ def test_multi_route_settles_actual_usage(monkeypatch):
     # 真账：reserve 100 → settle actual=21 → 净扣 21；ledger 两行配对如实记录
     tp, _ = _pool(1000)
     monkeypatch.setattr("app.orchestration.graph.make_brain", lambda *a, **k: _FakeUsageBrain())
-    result, _events = run_task("先清洗，再分析，再出报表", user_id=1, estimate=100, token_pool=tp)
+    result, _events = run_task(
+        "先查一下制度，然后基于制度分析销售数据",
+        user_id=1,
+        estimate=100,
+        token_pool=tp,
+    )
     assert result["status"] == "done"
     assert result["route"] == "multi"
     n = len(result["dag"]["subtasks"])
@@ -111,7 +116,12 @@ def test_multi_route_settles_actual_usage(monkeypatch):
 def test_multi_route_stub_baseline_settles_zero(monkeypatch):
     # StubBrain 无 usage → 汇总 0 → 全额退回（与 single 基线一致，回归不变）
     tp, _ = _pool(1000)
-    result, _events = run_task("先清洗，再分析，再出报表", user_id=1, estimate=100, token_pool=tp)
+    result, _events = run_task(
+        "先查一下制度，然后基于制度分析销售数据",
+        user_id=1,
+        estimate=100,
+        token_pool=tp,
+    )
     assert result["route"] == "multi"
     assert result["tokens_used"] == 0
     assert tp.balance(1) == 1000

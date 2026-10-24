@@ -1,4 +1,4 @@
-"""query_orders：参数白名单、行数上限、不返回个人联系方式。"""
+"""query_orders：按表字段筛选、行数上限、不返回个人联系方式。"""
 import csv
 from pathlib import Path
 
@@ -35,9 +35,54 @@ def test_requires_a_filter(engine):
     assert "必须带" in out["error"]
 
 
-def test_rejects_unknown_status(engine):
+def test_unknown_status_is_a_filter_not_a_whitelist(engine):
     out = make_query_orders_tool(engine)(order_status="已发货")
-    assert "没有这个订单状态" in out["error"]
+    assert "error" not in out
+    assert out["total_matched"] == 0
+    assert out["rows"] == []
+
+
+def test_city_matches_address_not_a_fixed_list(engine):
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO guoquan_orders "
+                "(order_no, order_create_time, order_status, store_address, pay_amount) VALUES "
+                "('GQ-BJ','2025-02-01 10:00:00','已完成','北京市朝阳区建国路1号','7.00'),"
+                "('GQ-ZZ','2025-02-02 10:00:00','已完成','河南省郑州市金水区1号','3.00')"
+            )
+        )
+    beijing = make_query_orders_tool(engine)(city="北京", date_from="2025-02-01", date_to="2025-02-28")
+    assert beijing["total_matched"] == 1
+    assert beijing["rows"][0]["order_no"] == "GQ-BJ"
+    spelled = make_query_orders_tool(engine)(city="上海市", date_from="2025-01-01", date_to="2025-01-31")
+    assert spelled["total_matched"] == 2
+    grouped = make_query_orders_tool(engine)(
+        group_by="city", metric="sum_pay", date_from="2025-01-01", date_to="2025-12-31"
+    )
+    by_city = {row["grp"]: float(row["metric_value"]) for row in grouped["rows"]}
+    assert by_city["北京"] == pytest.approx(7)
+    assert by_city["郑州"] == pytest.approx(3)
+    assert by_city["上海"] == pytest.approx(30.5)
+
+
+def test_filters_any_column_and_rejects_unknown_column(engine):
+    out = make_query_orders_tool(engine)(filters=[{"column": "goods_list", "op": "contains", "value": "毛肚"}])
+    assert {row["order_no"] for row in out["rows"]} == {"GQ1"}
+    bad = make_query_orders_tool(engine)(filters=[{"column": "pay_method", "op": "eq", "value": "微信"}])
+    assert "没有这个字段" in bad["error"]
+    injected = make_query_orders_tool(engine)(group_by="order_status; drop table guoquan_orders")
+    assert "不能按" in injected["error"]
+
+
+def test_exclude_status_accepts_several(engine):
+    out = make_query_orders_tool(engine)(
+        date_from="2025-01-01",
+        date_to="2025-12-31",
+        exclude_status="已取消、已退款",
+    )
+    assert out["total_matched"] == 2
+    assert {row["order_no"] for row in out["rows"]} == {"GQ1", "GQ3"}
 
 
 def test_filters_city_and_hides_phones(engine):
