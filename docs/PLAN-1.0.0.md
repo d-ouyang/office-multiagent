@@ -108,6 +108,7 @@
 - **v1.0.0-p6.26（已完成，2026-10-23）**：管理端升级为独立页面 `/admin`（极简路由，不引 react-router）+ 四板块（用户与额度 / 用量概览 / 任务监控 / 系统状态）；后端补 overview/usage/tasks 三个聚合接口 + 迁移 `0009_ledger_amount`（充值金额）。详见 `docs/iterations/v1.0.0-p6.26-admin-console.md`。三套测试 262/40/73 全绿 + Playwright 真机截图核对。
 - **v1.0.0-p6.27（已完成，2026-10-23）**：管理端升级为独立应用（`/admin` 独立登录页/侧边菜单/个人中心，独立 token）+ 任务监控代续跑（管理员免 owner 校验，消耗记原 owner，operator 可追溯）+ 模型池配置（**`/models` 按登录用户 model_pool_id 过滤**——原先两表无人消费；DB pool_model 优先、回落 yaml；池身份=名字）。详见 `docs/iterations/v1.0.0-p6.27-admin-app-resume-pools.md`。三套测试 279/40/73 全绿 + Playwright 截图核对。
 - **v1.0.0-p6.28（已完成，2026-10-23）**：对照 RAG 管理端做差距分析后的四项补齐——审计日志（0010 表 + audit_repo 只写只读/白名单/敏感拦截 + 8 类埋点 + 审计板块）、管理端独立登录三接口落到后端、三列表分页（Pager）、统一下拉框（Select）、代续跑二次确认+结果弹窗。详见 `docs/iterations/v1.0.0-p6.28-admin-audit-paging.md`。三套测试 295/40/80 全绿。
+- **v1.0.0-p6.33（已完成，2026-10-24）**：真模型冒烟驱动的决策标签校准——补齐标签定义和少样本，修复「销售理由却选 general」。详见 `docs/iterations/v1.0.0-p6.33-decision-label-grounding.md`。
 - **v1.0.0-p6.32（已完成，2026-10-24）**：办公能力与运行治理——订单筛选按真实字段放开；流程图 SVG + ECharts；PDF/PPTX；同比环比占比；RAG 无会话外部工作流；混合意图识别（指代改写/决策小模型/能力覆盖/分歧日志）；全员单任务 50K token 上限。详见 `docs/iterations/v1.0.0-p6.32-office-visual-intent-cap.md`。
 - **v1.0.0-p6.31（已完成，2026-10-24）**：预览升级——界面文案去技术名词（用户拍板原则）、预览浮层加下载按钮（download=true 返回原始文件）、表格大文件分页预览（GET /documents/table + 前端滚动增量加载，236 行 xlsx 全量可读）。pytest 342/3 skipped。详见 `docs/iterations/v1.0.0-p6.31-preview-download.md`。
 - **v1.0.0-p6.30（已完成，2026-10-23）**：销售链路修正（复盘 run 074e6de7 三根因全修）——P0 planner 输入隔离（意图识别只看本轮原文，注入块不再劫持）+ 折叠规则（分析+图表→single 直跑）+ export_orders 明细导出（fields 自选列、手机号脱敏、缺字段整列省略）+ render_chart 吃 export_id/产 png + write_document 嵌图进 docx/md + 子任务 assets 传递 + multi 汇总脑（消除表格重复展示）。详见 `docs/iterations/v1.0.0-p6.30-export-chain.md`。pytest 335/3 skipped；真机用用户原任务逐字重放全链路验证。
@@ -135,7 +136,7 @@
 | 3     | Planner + Router + DAG 拆分 | ✅ 完成 | v1.0.0-p3.2 |
 | 4     | 多 Agent 协调 + 兜底 + 续跑 + token 池 + DAG 结果传递/并行 | ✅ 完成 | v1.0.0-p4.3c |
 | 5     | 办公能力补齐                      | 🚧 进行中 | v1.0.0-p5.2 |
-| 6     | Token 池 + 模型权限 + 前端精细化 + 压缩 + 管理端/暂停续跑 | 🚧 进行中 | v1.0.0-p6.32 |
+| 6     | Token 池 + 模型权限 + 前端精细化 + 压缩 + 管理端/暂停续跑 | 🚧 进行中 | v1.0.0-p6.33 |
 | 7     | 部署到远程服务器                    | ⏳ 待开始 | —           |
 
 ---

@@ -169,9 +169,23 @@ def classify_with_model(
     system = (
         "你是办公助手的路由器，不回答用户问题。"
         f"意图只能从 [{labels}] 中选择，最多3个。"
+        "标签定义："
+        "analysis=查询、统计、对比或分析结构化业务数据，包括口语的“卖得怎么样/销售情况如何”；"
+        "cleaning=清洗上传表格、去重、处理缺失；"
+        "report=明确要求生成报表、报告或交付文件；"
+        "rag=查公司制度、手册、知识库等非结构化资料；"
+        "visualization=主要交付物就是图表或流程图；"
+        "image_restore=识别图片、截图或扫描件；"
+        "general=闲聊、改写、翻译等不需要上述专用能力。"
+        "只要问题包含城市/门店/时间/商品并询问销量、金额、订单或经营表现，优先判 analysis，不能判 general。"
         "mode只能是single或multi。只有任务存在真实的跨能力交接、一个Agent无法顺序完成时才选multi；"
         "分析后导出、画图、写文档通常是single。"
-        '只输出JSON：{"intents":["analysis"],"mode":"single","reason":"一句话","confidence":0.0}'
+        "示例："
+        '“看看上海卖得怎么样”→{"intents":["analysis"],"mode":"single"}；'
+        '“查报销制度”→{"intents":["rag"],"mode":"single"}；'
+        '“先查制度，再按制度分析订单”→{"intents":["rag","analysis"],"mode":"multi"}。'
+        '只输出JSON：{"intents":["analysis"],"mode":"single","reason":"一句话","confidence":0.9}，'
+        "confidence 必须是 0 到 1 的判断置信度。"
     )
     user = (
         f"用户问题：{text}\n"
