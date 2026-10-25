@@ -20,6 +20,8 @@ import {
   adminDeletePool,
   adminSetUserPool,
   adminAuditLogs,
+  adminRun,
+  type AdminRunDetail,
   type ModelPool,
   type AuditRow,
   getHealth,
@@ -43,15 +45,31 @@ const STATUS: Record<string, string> = {
 };
 const REASON: Record<string, string> = { quota: '配额不足', user: '用户主动', error: '中途报错', input: '待补充' };
 
-export type AdminTab = 'users' | 'usage' | 'tasks' | 'pools' | 'audit' | 'system';
-export const ADMIN_TABS: Array<{ key: AdminTab; label: string; hint: string }> = [
-  { key: 'users', label: '用户与额度', hint: '用户列表 / 充值 / 流水' },
-  { key: 'usage', label: '用量概览', hint: '消耗指标与近 N 天趋势' },
-  { key: 'tasks', label: '任务监控', hint: '全局任务 / 暂停原因 / 代续跑' },
-  { key: 'pools', label: '模型池', hint: '池定义 / 模型归属 / 用户分配' },
-  { key: 'audit', label: '审计日志', hint: '谁在什么时候做了什么（只读）' },
-  { key: 'system', label: '系统状态', hint: '服务健康 / 模型清单' },
+export type AdminTab = 'overview' | 'tasks' | 'runs' | 'users' | 'usage' | 'audit' | 'pools' | 'system';
+export type AdminGroup = 'core' | 'ops' | 'advanced';
+export const ADMIN_TABS: Array<{ key: AdminTab; label: string; hint: string; group: AdminGroup }> = [
+  { key: 'overview', label: '概览', hint: '今天要处理的暂停和关键数字', group: 'core' },
+  { key: 'tasks', label: '任务监控', hint: '全局任务 / 暂停原因 / 代续跑', group: 'core' },
+  { key: 'runs', label: '运行溯源', hint: '工具序列、产物和校验', group: 'core' },
+  { key: 'users', label: '用户与额度', hint: '用户列表 / 充值 / 流水', group: 'ops' },
+  { key: 'usage', label: '用量概览', hint: '消耗指标与近 N 天趋势', group: 'ops' },
+  { key: 'audit', label: '审计日志', hint: '谁在什么时候做了什么（只读）', group: 'ops' },
+  { key: 'pools', label: '模型池', hint: '非日常路径：池定义与用户分配', group: 'advanced' },
+  { key: 'system', label: '系统状态', hint: '服务健康 / 模型清单', group: 'advanced' },
 ];
+
+export const ADMIN_GROUPS: Array<{ id: AdminGroup; label: string }> = [
+  { id: 'core', label: '核心' },
+  { id: 'ops', label: '次要' },
+  { id: 'advanced', label: '高级' },
+];
+
+/** 管理端内部跳转。查询参数用来预选用户或过滤任务，hash 决定打开哪一栏。 */
+export function goAdmin(tab: AdminTab, query: Record<string, string> = {}) {
+  const qs = new URLSearchParams(query).toString();
+  window.history.replaceState({}, '', `/admin${qs ? `?${qs}` : ''}#${tab}`);
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+}
 
 /* ------------------------------ 用户与额度 ------------------------------ */
 
@@ -69,10 +87,17 @@ export function UsersTab() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [ledgerFor, setLedgerFor] = useState<number | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
+  const [focusId, setFocusId] = useState(() => Number(new URLSearchParams(window.location.search).get('user_id') || 0));
 
-  const load = useCallback(async (kw: string, pg = page, size = pageSize) => {
+  useEffect(() => {
+    const sync = () => setFocusId(Number(new URLSearchParams(window.location.search).get('user_id') || 0));
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
+
+  const load = useCallback(async (kw: string, pg = page, size = pageSize, userId = focusId) => {
     try {
-      const data = await adminListUsers(kw, pg, size);
+      const data = await adminListUsers(kw, pg, size, userId || undefined);
       setUsers(data.users);
       setTotal(data.total);
       setError('');
@@ -80,7 +105,7 @@ export function UsersTab() {
       const msg = (e as Error).message;
       setError(msg === 'FORBIDDEN' ? '需要管理员权限' : `加载失败：${msg}`);
     }
-  }, [page, pageSize]);
+  }, [page, pageSize, focusId]);
 
   useEffect(() => {
     void load('', page, pageSize);
@@ -166,7 +191,7 @@ export function UsersTab() {
         </thead>
         <tbody>
           {users.map((u) => (
-            <tr key={u.id}>
+            <tr key={u.id} className={u.id === focusId ? 'row-active' : ''}>
               <td>{u.employee_id}</td>
               <td>{u.username}</td>
               <td><span className={`badge ${u.role === 'admin' || u.role === 'superadmin' ? 'agent' : ''}`}>{u.role}</span></td>
@@ -297,6 +322,14 @@ export function UsageTab() {
           <Stat label="暂停中" value={String(overview.tasks_paused)} tone={overview.tasks_paused > 0 ? 'warn' : undefined} />
         </div>
       )}
+      {overview && overview.tasks_paused > 0 && (
+        <p className="admin-sub">
+          有 {overview.tasks_paused} 个任务停着。
+          <button type="button" className="admin-btn" onClick={() => goAdmin('tasks', { flag: 'paused' })}>
+            查看暂停任务
+          </button>
+        </p>
+      )}
 
       <div className="admin-section-head">
         <h3>近 {days} 天任务消耗</h3>
@@ -357,7 +390,8 @@ export function TasksTab() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [filter, setFilter] = useState<string>('');
+  const [filter, setFilter] = useState<string>(() => new URLSearchParams(window.location.search).get('status') || '');
+  const [flag, setFlag] = useState<string>(() => new URLSearchParams(window.location.search).get('flag') || '');
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
   const [result, setResult] = useState<{ title: string; lines: string[] } | null>(null);
@@ -366,14 +400,24 @@ export function TasksTab() {
 
   const load = useCallback(async (status: string, pg = page, size = pageSize) => {
     try {
-      const data = await adminTasks(status || undefined, pg, size);
+      const data = await adminTasks(status || undefined, pg, size, flag || undefined);
       setRows(data.tasks);
       setTotal(data.total);
       setError('');
     } catch (e) {
       setError(`加载失败：${(e as Error).message}`);
     }
-  }, [page, pageSize]);
+  }, [page, pageSize, flag]);
+
+  useEffect(() => {
+    const sync = () => {
+      const q = new URLSearchParams(window.location.search);
+      setFilter(q.get('status') || '');
+      setFlag(q.get('flag') || '');
+    };
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
 
   useEffect(() => {
     void load(filter, page, pageSize);
@@ -445,13 +489,26 @@ export function TasksTab() {
           options={TASK_STATUS_OPTIONS}
           onChange={(v) => { setFilter(v); setPage(1); }}
         />
+        <Select
+          width={160}
+          value={flag}
+          placeholder="全部痕迹"
+          options={[
+            { value: '', label: '全部痕迹' },
+            { value: 'paused', label: '暂停' },
+            { value: 'rag', label: '曾检索知识库' },
+            { value: 'validation', label: '数字未对齐' },
+            { value: 'no_artifact', label: '无产物' },
+          ]}
+          onChange={(v) => { setFlag(v); setPage(1); }}
+        />
         <button type="button" className="admin-btn ghost" onClick={() => void load(filter, page, pageSize)}>刷新</button>
       </div>
       {error && <div className="banner err">{error}</div>}
       {msg && <div className="banner ok">{msg}</div>}
       <table className="admin-table">
         <thead>
-          <tr><th>时间</th><th>用户</th><th>状态</th><th>原因</th><th>任务摘要</th><th>tokens</th><th>操作</th></tr>
+          <tr><th>时间</th><th>用户</th><th>状态</th><th>原因</th><th>任务摘要</th><th>工具</th><th>tokens</th><th>操作</th></tr>
         </thead>
         <tbody>
           {rows.map((r) => (
@@ -465,8 +522,14 @@ export function TasksTab() {
               </td>
               <td className="admin-muted">{r.pause_reason ? REASON[r.pause_reason] ?? r.pause_reason : '—'}</td>
               <td className="admin-task-text" title={r.text}>{r.text || '—'}</td>
+              <td className="admin-muted" title={r.tool_summary || '无 trace'}>{r.tool_summary || (r.has_trace === false ? '无 trace' : '—')}</td>
               <td className="num">{r.tokens_used ? r.tokens_used.toLocaleString() : '—'}</td>
               <td className="admin-ops">
+                {r.pause_reason === 'quota' && r.user_id ? (
+                  <button type="button" className="admin-btn ghost" onClick={() => goAdmin('users', { user_id: String(r.user_id) })}>
+                    去充值
+                  </button>
+                ) : null}
                 {r.status.startsWith('paused') || r.status === 'failed' ? (
                   <button
                     type="button"
@@ -483,7 +546,7 @@ export function TasksTab() {
               </td>
             </tr>
           ))}
-          {rows.length === 0 && <tr><td colSpan={7} className="admin-empty">暂无任务</td></tr>}
+          {rows.length === 0 && <tr><td colSpan={8} className="admin-empty">暂无任务</td></tr>}
         </tbody>
       </table>
       <Pager total={total} page={page} pageSize={pageSize}
@@ -539,6 +602,7 @@ export function SystemTab() {
   return (
     <>
       {error && <div className="banner err">{error}</div>}
+      <p className="admin-sub">系统状态放在高级区。日常先看概览上的健康点。</p>
       <div className="admin-cards">
         <Stat
           label="服务状态"
@@ -659,6 +723,7 @@ export function ModelPoolsTab() {
     <>
       {error && <div className="banner err">{error}</div>}
       {notice && <div className="banner ok">{notice}</div>}
+      <p className="admin-sub">模型池不是日常运营路径。用户已经能对话时，不必先来这里配池。</p>
       <div className="admin-pool-layout">
         <section className="admin-pool-list">
           <h3>模型池</h3>
@@ -884,6 +949,153 @@ export function AuditTab() {
         onPage={(p) => setPage(p)}
         onPageSize={(n) => { setPageSize(n); setPage(1); }}
       />
+    </>
+  );
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  admin: '系统管理员',
+  superadmin: '超级管理员',
+  staff: '员工',
+  user: '成员',
+};
+
+export function roleLabel(role: string): string {
+  return ROLE_LABEL[role] ?? role;
+}
+
+export function OverviewTab() {
+  const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [health, setHealth] = useState<string>('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    adminOverview().then(setOverview).catch((e) => setError((e as Error).message));
+    getHealth().then((h) => setHealth(h.status)).catch(() => setHealth('error'));
+  }, []);
+
+  const reasons = overview?.paused_by_reason ?? {};
+  return (
+    <>
+      {error && <div className="banner err">{error}</div>}
+      <p className="admin-health">
+        <i className={health === 'ok' ? 'ok' : 'bad'} />
+        {health === 'ok' ? '服务正常' : health ? '服务异常' : '正在查看服务'}
+      </p>
+      {overview && (
+        <div className="admin-cards">
+          <Stat label="暂停中" value={String(overview.tasks_paused)} tone={overview.tasks_paused > 0 ? 'warn' : undefined} />
+          <Stat label="近 7 日失败" value={String(overview.tasks_failed_7d ?? 0)} />
+          <Stat label="完成率" value={overview.completion_rate == null ? '—' : `${Math.round(overview.completion_rate * 100)}%`} />
+          <Stat label="数字未对齐" value={String(overview.validation_mismatches ?? 0)} />
+          <Stat label="平均工具步数" value={overview.avg_tool_steps == null ? '—' : String(overview.avg_tool_steps)} />
+          <Stat label="今日任务" value={String(overview.tasks_today)} />
+        </div>
+      )}
+      <h3>待办</h3>
+      <ul className="admin-todo">
+        <li>
+          <button type="button" onClick={() => goAdmin('tasks', { flag: 'paused' })}>
+            暂停任务 {overview?.tasks_paused ?? '…'}
+          </button>
+          <span>{Object.entries(reasons).map(([k, n]) => `${REASON[k] ?? k} ${n}`).join(' · ') || '暂无暂停'}</span>
+        </li>
+        <li>
+          <button type="button" onClick={() => goAdmin('runs', { flag: 'validation' })}>数字未对齐</button>
+          <span>只观察，不拦截回答</span>
+        </li>
+        <li>
+          <button type="button" onClick={() => goAdmin('runs', { flag: 'rag' })}>曾检索知识库</button>
+          <span>核对调用身份是不是服务号</span>
+        </li>
+      </ul>
+    </>
+  );
+}
+
+export function RunsTab() {
+  const [rows, setRows] = useState<AdminTaskRow[]>([]);
+  const [flag, setFlag] = useState(() => new URLSearchParams(window.location.search).get('flag') || '');
+  const [error, setError] = useState('');
+  const [detail, setDetail] = useState<AdminRunDetail | null>(null);
+
+  const load = useCallback(async (nextFlag: string) => {
+    try {
+      const data = await adminTasks(undefined, 1, 20, nextFlag || undefined);
+      setRows(data.tasks);
+      setError('');
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load(flag);
+  }, [flag, load]);
+
+  useEffect(() => {
+    const sync = () => setFlag(new URLSearchParams(window.location.search).get('flag') || '');
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
+
+  return (
+    <>
+      <div className="admin-toolbar">
+        <Select
+          width={180}
+          value={flag}
+          placeholder="全部"
+          options={[
+            { value: '', label: '最近运行' },
+            { value: 'paused', label: '暂停' },
+            { value: 'rag', label: '曾检索知识库' },
+            { value: 'validation', label: '数字未对齐' },
+            { value: 'no_artifact', label: '无产物' },
+          ]}
+          onChange={setFlag}
+        />
+      </div>
+      {error && <div className="banner err">{error}</div>}
+      <table className="admin-table">
+        <thead>
+          <tr><th>时间</th><th>用户</th><th>状态</th><th>工具序列</th><th /></tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id}>
+              <td className="admin-muted">{r.created_at ? r.created_at.replace('T', ' ').slice(5, 16) : '—'}</td>
+              <td>{r.username ?? '—'}</td>
+              <td>{STATUS[r.status] ?? r.status}</td>
+              <td>{r.tool_summary || (r.has_trace ? '—' : '无 trace')}</td>
+              <td><button type="button" className="admin-btn ghost" onClick={() => void adminRun(r.id).then(setDetail).catch((e) => setError((e as Error).message))}>详情</button></td>
+            </tr>
+          ))}
+          {rows.length === 0 && <tr><td colSpan={5} className="admin-empty">没有符合条件的运行</td></tr>}
+        </tbody>
+      </table>
+      {detail && (
+        <div className="ui-confirm-mask" onClick={() => setDetail(null)}>
+          <div className="ui-confirm admin-run-detail" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <h3>运行 {detail.id.slice(0, 12)}</h3>
+            <p>{detail.text}</p>
+            <ul className="ui-confirm-bullets">
+              <li>用户：{detail.username ?? '—'} · 模型：{detail.model || '—'}</li>
+              <li>状态：{STATUS[detail.status] ?? detail.status} · 消耗：{detail.tokens_used || '—'}</li>
+              <li>工具：{detail.tools.length ? detail.tools.join(' → ') : '无 trace'}</li>
+              <li>产物：{detail.artifacts.length ? detail.artifacts.join('、') : '无'}</li>
+              <li className={detail.identity_mismatch ? 'warn-text' : ''}>
+                知识库身份：调用 {detail.rag_username || '—'}，办公用户 {detail.office_username || detail.username || '—'}
+                {detail.identity_mismatch ? '（不一致）' : ''}
+              </li>
+              {detail.validation_note && <li>校验：{detail.validation_note}</li>}
+            </ul>
+            <div className="ui-confirm-actions">
+              <button type="button" className="admin-btn" onClick={() => setDetail(null)}>关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

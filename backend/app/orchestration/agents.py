@@ -112,6 +112,9 @@ def build_default_registry(
             base_url=settings.rag_base_url,
             internal_secret=settings.rag_internal_secret,
             username=settings.rag_service_username,
+            # 知识库账号仍用服务号，避免办公用户在 RAG 用户表里不存在时整段检索 401。
+            # 返回里带上真实办公用户，管理端据此标红身份不一致。
+            actor=username,
         ),
         description=(
             "检索公司知识库（制度/文档问答）。参数 query。走知识库完整链路，但不写入知识库会话。"

@@ -119,6 +119,40 @@ def test_admin_endpoints_require_login(eng):
 # p6.26：概览 / 用量 / 任务监控
 # --------------------------------------------------------------------------- #
 
+def test_run_trace_summary_and_overview_fields(eng):
+    import json
+    from app.core.run_trace import summarize
+
+    events = [
+        {"type": "tool_call_start", "run_id": "run-1", "data": {"name": "query_orders"}},
+        {"type": "tool_call_start", "data": {"name": "rag_retrieve"}},
+        {"type": "observation", "data": {"text": "office_username=dev；rag_username=office-service；identity_mismatch=true"}},
+        {"type": "observation", "data": {"text": "结果校验：终答中的数字 9999 未在工具观察或任务原文中出现"}},
+    ]
+    summary = summarize(events, request={"model": "deepseek-chat"})
+    assert summary["tools"] == ["query_orders", "rag_retrieve"]
+    assert summary["rag_called"] and summary["identity_mismatch"]
+    assert summary["validation_mismatch"]
+
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO session (id, user_id) VALUES ('s1', 2)"))
+        conn.execute(text(
+            "INSERT INTO task (id, session_id, status, text, pause_reason, request_json) "
+            "VALUES ('run-1', 's1', 'done', '看看上海', NULL, :r)"
+        ), {"r": json.dumps({"model": "deepseek-chat"})})
+        conn.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, trace TEXT)"))
+        conn.execute(text("INSERT INTO message (session_id, role, content, trace) VALUES ('s1', 'assistant', 'ok', :t)"), {"t": json.dumps(events)})
+    client = TestClient(app)
+    listed = client.get("/api/v1/admin/runs", params={"flag": "rag"}, headers=_auth())
+    assert listed.status_code == 200
+    assert any(row["id"] == "run-1" for row in listed.json()["tasks"])
+    detail = client.get("/api/v1/admin/runs/run-1", headers=_auth()).json()
+    assert detail["tool_summary"] == "query_orders → rag_retrieve"
+    overview = client.get("/api/v1/admin/overview", headers=_auth()).json()
+    assert "tasks_failed_7d" in overview and "paused_by_reason" in overview
+    assert overview["validation_mismatches"] == 1
+
+
 def test_overview_counts_and_zero_safe(eng):
     c = TestClient(app)
     data = c.get("/api/v1/admin/overview", headers=_auth()).json()

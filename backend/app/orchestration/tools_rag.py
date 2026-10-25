@@ -21,6 +21,7 @@ def make_rag_retrieve_tool(
     base_url: str,
     internal_secret: str = "",
     username: str = "office-service",
+    actor: str | None = None,
     timeout: float = 60.0,
     transport: httpx.BaseTransport | None = None,
 ) -> Callable[..., Any]:
@@ -70,6 +71,9 @@ def make_rag_retrieve_tool(
             "low_confidence": data.get("low_confidence"),
             "qa_trace": data.get("qa_trace"),
             "persisted": data.get("persisted"),
+            "rag_username": username,
+            "office_username": actor or username,
+            "identity_mismatch": bool(actor and actor != username),
             "note": (
                 "未写入知识库自己的会话。重排分在 sources.rerank_score，依据在 grounded。"
                 "usage 会记入本轮办公消耗，不要再向用户报一份知识库侧的账单。"

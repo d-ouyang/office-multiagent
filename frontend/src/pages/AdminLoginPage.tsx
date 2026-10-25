@@ -36,8 +36,9 @@ export default function AdminLoginPage({ onLoggedin }: { onLoggedin: (u: LoginUs
           <h1>管理端</h1>
         </div>
         <p className="sub">office-multiagent · 仅管理员账号可登录</p>
-        <form className="login-form" onSubmit={submit}>
+        <form className="login-form" method="post" action="/api/v1/auth/login" onSubmit={submit}>
           <input
+            name="username"
             placeholder="管理员账号"
             value={username}
             autoFocus
@@ -45,13 +46,14 @@ export default function AdminLoginPage({ onLoggedin }: { onLoggedin: (u: LoginUs
             onChange={(e) => setUsername(e.target.value)}
           />
           <input
+            name="password"
             type="password"
             placeholder="密码"
             value={password}
             autoComplete="current-password"
             onChange={(e) => setPassword(e.target.value)}
           />
-          {error && <div className="banner err">{error}</div>}
+          {error && <p className="login-error" role="alert">{error}</p>}
           <button type="submit" disabled={busy || !username.trim() || !password}>
             {busy ? '登录中…' : '登录管理端'}
           </button>

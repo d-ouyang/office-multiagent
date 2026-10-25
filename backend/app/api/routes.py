@@ -1087,6 +1087,7 @@ def _stream_task(
 @router.get("/admin/users")
 def admin_users(
     q: str | None = Query(default=None, max_length=64),
+    user_id: int | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=5, le=100),
     authorization: str | None = Header(default=None),
@@ -1102,9 +1103,15 @@ def admin_users(
     )
     where = ""
     params: dict[str, Any] = {}
+    filters = []
     if q and q.strip():
-        where = " WHERE u.username LIKE :kw OR u.employee_id LIKE :kw"
+        filters.append("(u.username LIKE :kw OR u.employee_id LIKE :kw)")
         params["kw"] = f"%{q.strip()}%"
+    if user_id is not None:
+        filters.append("u.id = :uid")
+        params["uid"] = user_id
+    if filters:
+        where = " WHERE " + " AND ".join(filters)
     eng = get_engine()
     with eng.connect() as conn:
         total = int(
@@ -1275,17 +1282,85 @@ def admin_overview(authorization: str | None = Header(default=None)):
                 "WHERE kind = 'recharge' AND amount IS NOT NULL"
             )
         ).first() or (0, 0)
+        tasks_done = int(
+            conn.execute(_text("SELECT COUNT(*) FROM task WHERE status = 'done'")).scalar() or 0
+        )
+        week_start = (
+            datetime.now(ZoneInfo("Asia/Shanghai"))
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+        )
+        from datetime import timedelta
+
+        week_utc = (week_start - timedelta(days=6)).astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%d %H:%M:%S")
+        tasks_failed_7d = int(
+            conn.execute(
+                _text(
+                    "SELECT COUNT(*) FROM task WHERE status IN ('failed', 'paused_error') "
+                    "AND created_at >= :w"
+                ),
+                {"w": week_utc},
+            ).scalar()
+            or 0
+        )
+        reason_rows = conn.execute(
+            _text(
+                "SELECT COALESCE(pause_reason, '') AS reason, COUNT(*) AS n FROM task "
+                "WHERE status LIKE 'paused%' GROUP BY pause_reason"
+            )
+        ).mappings().all()
+        trace_stats = _overview_trace_stats(conn)
+    paused_by_reason = {str(r["reason"] or "unknown"): int(r["n"] or 0) for r in reason_rows}
+    finished = tasks_done + tasks_failed_7d + tasks_paused
     return {
         "users_total": users_total,
         "balance_total": balance_total,
         "tasks_total": tasks_total,
         "tasks_today": tasks_today,
         "tasks_paused": tasks_paused,
+        "tasks_done": tasks_done,
+        "tasks_failed_7d": tasks_failed_7d,
+        "paused_by_reason": paused_by_reason,
+        "completion_rate": round(tasks_done / finished, 3) if finished else None,
+        "validation_mismatches": trace_stats["validation_mismatches"],
+        "avg_tool_steps": trace_stats["avg_tool_steps"],
         "month_tokens": int(month_tokens or 0),
         "month_calls": int(month_calls or 0),
         "recharge_total": int(recharge_total or 0),
         "recharge_count": int(recharge_count or 0),
     }
+
+
+def _overview_trace_stats(conn) -> dict[str, Any]:
+    """最近助手 trace 里的校验未对齐次数和平均工具步数。没有 message 表时记 0。"""
+    from sqlalchemy import text as _text
+
+    from ..core.run_trace import summarize
+
+    try:
+        rows = conn.execute(
+            _text(
+                "SELECT trace FROM message WHERE role = 'assistant' AND trace IS NOT NULL "
+                "ORDER BY id DESC LIMIT 200"
+            )
+        ).all()
+    except Exception:  # noqa: BLE001
+        return {"validation_mismatches": 0, "avg_tool_steps": None}
+    steps: list[int] = []
+    mismatches = 0
+    for row in rows:
+        events = []
+        try:
+            parsed = __import__("json").loads(row[0] or "null")
+            events = parsed if isinstance(parsed, list) else []
+        except (TypeError, ValueError):
+            events = []
+        summary = summarize(events)
+        if summary["has_trace"]:
+            steps.append(int(summary["tool_steps"]))
+        if summary["validation_mismatch"]:
+            mismatches += 1
+    avg = round(sum(steps) / len(steps), 2) if steps else None
+    return {"validation_mismatches": mismatches, "avg_tool_steps": avg}
 
 
 @router.get("/admin/usage")
@@ -1324,6 +1399,7 @@ def admin_usage(
 @router.get("/admin/tasks")
 def admin_tasks(
     status: str | None = Query(default=None, max_length=32),
+    flag: str | None = Query(default=None, max_length=32),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=5, le=100),
     authorization: str | None = Header(default=None),
@@ -1344,35 +1420,159 @@ def admin_tasks(
         where = " WHERE t.status = :st"
         params["st"] = status
     eng = get_engine()
+    scan = flag in {"rag", "no_artifact", "validation", "paused"}
     with eng.connect() as conn:
-        total = int(
-            conn.execute(_text("SELECT COUNT(*) " + base + where), params).scalar() or 0
-        )
+        if scan:
+            rows = conn.execute(
+                _text(
+                    "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
+                    "t.created_at, t.request_json, s.user_id, u.username " + base +
+                    " ORDER BY t.created_at DESC LIMIT 200"
+                )
+            ).mappings().all()
+            packed = [_task_row(conn, r) for r in rows]
+            if flag == "rag":
+                packed = [item for item in packed if item["rag_called"]]
+            elif flag == "no_artifact":
+                packed = [item for item in packed if item["has_trace"] and not item["has_artifact"]]
+            elif flag == "validation":
+                packed = [item for item in packed if item["validation_mismatch"]]
+            elif flag == "paused":
+                packed = [item for item in packed if str(item["status"]).startswith("paused")]
+            total = len(packed)
+            start = (page - 1) * page_size
+            packed = packed[start : start + page_size]
+        else:
+            total = int(
+                conn.execute(_text("SELECT COUNT(*) " + base + where), params).scalar() or 0
+            )
+            rows = conn.execute(
+                _text(
+                    "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
+                    "t.created_at, t.request_json, s.user_id, u.username " + base + where +
+                    " ORDER BY t.created_at DESC LIMIT :l OFFSET :o"
+                ),
+                {**params, "l": page_size, "o": (page - 1) * page_size},
+            ).mappings().all()
+            packed = [_task_row(conn, r) for r in rows]
+    return {"tasks": packed, "total": total, "page": page, "page_size": page_size}
+
+
+def _task_row(conn, row) -> dict[str, Any]:
+    import json as _json
+
+    from ..core.run_trace import load_events, summarize
+
+    request: dict[str, Any] = {}
+    try:
+        request = _json.loads(row["request_json"] or "{}")
+    except (TypeError, ValueError):
+        request = {}
+    summary = summarize(load_events(conn, str(row["id"])), request=request)
+    return {
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "username": row["username"],
+        "status": row["status"],
+        "pause_reason": row["pause_reason"],
+        "text": (row["text"] or "")[:80],
+        "tokens_used": int(row["tokens_used"] or 0),
+        "created_at": _iso_or_none(row["created_at"]),
+        "tool_summary": summary["tool_summary"],
+        "rag_called": summary["rag_called"],
+        "has_artifact": summary["has_artifact"],
+        "has_trace": summary["has_trace"],
+        "validation_mismatch": summary["validation_mismatch"],
+        "identity_mismatch": summary["identity_mismatch"],
+    }
+
+
+@router.get("/admin/runs")
+def admin_runs(
+    flag: str | None = Query(default=None, max_length=32),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str | None = Header(default=None),
+):
+    """运行溯源列表。flag：rag / no_artifact / validation / paused / failed。"""
+    _require_admin(authorization)
+    status = "failed" if flag == "failed" else None
+    if flag == "failed":
+        flag = None
+        # 失败含出错暂停，下面单独处理
+    if status == "failed":
+        return _admin_failed_runs(page, page_size)
+    return admin_tasks(status=status, flag=flag, page=page, page_size=page_size, authorization=authorization)
+
+
+def _admin_failed_runs(page: int, page_size: int) -> dict[str, Any]:
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+
+    eng = get_engine()
+    base = (
+        "FROM task t LEFT JOIN session s ON s.id = t.session_id "
+        "LEFT JOIN `user` u ON u.id = s.user_id "
+        "WHERE t.status IN ('failed', 'paused_error')"
+    )
+    with eng.connect() as conn:
+        total = int(conn.execute(_text("SELECT COUNT(*) " + base)).scalar() or 0)
         rows = conn.execute(
             _text(
-                "SELECT t.id, t.status, t.pause_reason, t.text, t.tokens_used, t.created_at, "
-                "s.user_id, u.username " + base + where +
+                "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
+                "t.created_at, t.request_json, s.user_id, u.username " + base +
                 " ORDER BY t.created_at DESC LIMIT :l OFFSET :o"
             ),
-            {**params, "l": page_size, "o": (page - 1) * page_size},
+            {"l": page_size, "o": (page - 1) * page_size},
         ).mappings().all()
+        packed = [_task_row(conn, r) for r in rows]
+    return {"tasks": packed, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/admin/runs/{task_id}")
+def admin_run_detail(task_id: str, authorization: str | None = Header(default=None)):
+    """一条运行的溯源详情。没有 trace 时 tools 为空，并标明无 trace。"""
+    _require_admin(authorization)
+    import json as _json
+
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+    from ..core.run_trace import load_events, summarize
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        row = conn.execute(
+            _text(
+                "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
+                "t.created_at, t.request_json, s.user_id, u.username "
+                "FROM task t LEFT JOIN session s ON s.id = t.session_id "
+                "LEFT JOIN `user` u ON u.id = s.user_id WHERE t.id = :i"
+            ),
+            {"i": task_id},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(404, detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"})
+        request: dict[str, Any] = {}
+        try:
+            request = _json.loads(row["request_json"] or "{}")
+        except (TypeError, ValueError):
+            request = {}
+        events = load_events(conn, task_id)
+        summary = summarize(events, request=request)
     return {
-        "tasks": [
-            {
-                "id": r["id"],
-                "user_id": r["user_id"],
-                "username": r["username"],
-                "status": r["status"],
-                "pause_reason": r["pause_reason"],
-                "text": (r["text"] or "")[:80],
-                "tokens_used": int(r["tokens_used"] or 0),
-                "created_at": _iso_or_none(r["created_at"]),
-            }
-            for r in rows
-        ],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
+        "id": row["id"],
+        "session_id": row["session_id"],
+        "user_id": row["user_id"],
+        "username": row["username"],
+        "status": row["status"],
+        "pause_reason": row["pause_reason"],
+        "text": row["text"] or "",
+        "tokens_used": int(row["tokens_used"] or 0),
+        "created_at": _iso_or_none(row["created_at"]),
+        "model": summary["model"],
+        **summary,
     }
 
 

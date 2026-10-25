@@ -486,9 +486,11 @@ export async function adminListUsers(
   q?: string,
   page = 1,
   pageSize = 20,
+  userId?: number,
 ): Promise<{ users: AdminUser[]; total: number; page: number; page_size: number }> {
   const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (q?.trim()) qs.set('q', q.trim());
+  if (userId) qs.set('user_id', String(userId));
   const res = await fetch(`/api/v1/admin/users?${qs.toString()}`, { headers: adminAuthHeaders() });
   if (res.status === 401) {
     adminClearToken();
@@ -539,6 +541,12 @@ export interface AdminOverview {
   month_calls: number;
   recharge_total: number;
   recharge_count: number;
+  tasks_done?: number;
+  tasks_failed_7d?: number;
+  paused_by_reason?: Record<string, number>;
+  completion_rate?: number | null;
+  validation_mismatches?: number;
+  avg_tool_steps?: number | null;
 }
 
 export interface UsagePoint {
@@ -556,6 +564,11 @@ export interface AdminTaskRow {
   text: string;
   tokens_used: number;
   created_at: string | null;
+  tool_summary?: string;
+  rag_called?: boolean;
+  validation_mismatch?: boolean;
+  identity_mismatch?: boolean;
+  has_trace?: boolean;
 }
 
 async function adminGet<T>(path: string): Promise<T> {
@@ -581,13 +594,31 @@ export async function adminTasks(
   status?: string,
   page = 1,
   pageSize = 20,
+  flag?: string,
 ): Promise<{ tasks: AdminTaskRow[]; total: number; page: number; page_size: number }> {
   const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (status) qs.set('status', status);
+  if (flag) qs.set('flag', flag);
   const data = await adminGet<{ tasks: AdminTaskRow[]; total: number; page: number; page_size: number }>(
     `/api/v1/admin/tasks?${qs.toString()}`,
   );
   return { tasks: data.tasks ?? [], total: data.total ?? 0, page: data.page ?? page, page_size: data.page_size ?? pageSize };
+}
+
+export interface AdminRunDetail extends AdminTaskRow {
+  session_id?: string | null;
+  tools: string[];
+  artifacts: string[];
+  validation_note?: string;
+  rag_username?: string;
+  office_username?: string;
+  intents: string[];
+  model?: string;
+  has_artifact?: boolean;
+}
+
+export function adminRun(id: string): Promise<AdminRunDetail> {
+  return adminGet<AdminRunDetail>(`/api/v1/admin/runs/${encodeURIComponent(id)}`);
 }
 
 // --------------------------------------------------------------------------- //

@@ -7,20 +7,24 @@ import { useEffect, useState } from 'react';
 import AdminLoginPage from './pages/AdminLoginPage';
 import AdminProfilePanel from './components/AdminProfilePanel';
 import {
+  ADMIN_GROUPS,
   ADMIN_TABS,
   AuditTab,
   ModelPoolsTab,
+  OverviewTab,
+  RunsTab,
   SystemTab,
   TasksTab,
   UsageTab,
   UsersTab,
+  roleLabel,
   type AdminTab,
 } from './pages/AdminPanels';
 import { adminCheckSession, type LoginUser } from './lib/api';
 
 function readTabFromHash(): AdminTab {
   const key = window.location.hash.replace('#', '') as AdminTab;
-  return ADMIN_TABS.some((t) => t.key === key) ? key : 'users';
+  return ADMIN_TABS.some((t) => t.key === key) ? key : 'overview';
 }
 
 export default function AdminApp() {
@@ -76,17 +80,27 @@ function AdminShell({ user, onLogout }: { user: LoginUser; onLogout: () => void 
             <p className="admin-sub">office-multiagent</p>
           </div>
         </div>
+        <div className="admin-side-actor">
+          <span>当前操作者</span>
+          <strong>{user.username}</strong>
+          <em>{roleLabel(user.role)}</em>
+        </div>
         <nav className="admin-side-nav">
-          {ADMIN_TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              className={`admin-side-item ${tab === t.key ? 'active' : ''}`}
-              onClick={() => select(t.key)}
-            >
-              <span className="admin-side-label">{t.label}</span>
-              <span className="admin-side-hint">{t.hint}</span>
-            </button>
+          {ADMIN_GROUPS.map((group) => (
+            <div key={group.id} className="admin-side-group">
+              <p>{group.label}</p>
+              {ADMIN_TABS.filter((t) => t.group === group.id).map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  className={`admin-side-item ${tab === t.key ? 'active' : ''}`}
+                  onClick={() => select(t.key)}
+                >
+                  <span className="admin-side-label">{t.label}</span>
+                  <span className="admin-side-hint">{t.hint}</span>
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
         <button type="button" className="admin-side-item back" onClick={goWorkspace}>
@@ -113,9 +127,11 @@ function AdminShell({ user, onLogout }: { user: LoginUser; onLogout: () => void 
           </div>
         </header>
         <div className="admin-main-body">
+          {tab === 'overview' && <OverviewTab />}
           {tab === 'users' && <UsersTab />}
           {tab === 'usage' && <UsageTab />}
           {tab === 'tasks' && <TasksTab />}
+          {tab === 'runs' && <RunsTab />}
           {tab === 'pools' && <ModelPoolsTab />}
           {tab === 'audit' && <AuditTab />}
           {tab === 'system' && <SystemTab />}
