@@ -3,7 +3,7 @@ import { readView } from '../App';
 import { fmtTokens, renderDetail } from '../pages/AdminPanels';
 import { ADMIN_TABS, readAdminTab } from '../admin/nav';
 import { fmtDuration, fmtShanghai } from '../admin/format';
-import { PAGE_SIZE } from '../admin/AdminListPage';
+import { DRAWER_WIDTH, PAGE_SIZE } from '../admin/AdminListPage';
 import { humanizeAdminError, isUglyAdminError } from '../admin/errors';
 import { flowPathOf } from '../admin/FlowPathSvg';
 import { useDebouncedValue } from '../admin/useDebouncedValue';
@@ -143,6 +143,12 @@ describe('flowPathOf', () => {
 describe('PAGE_SIZE', () => {
   it('固定 20，页面不提供每页条数选择', () => {
     expect(PAGE_SIZE).toBe(20);
+  });
+});
+
+describe('DRAWER_WIDTH', () => {
+  it('任务详情和流水抽屉保持加宽', () => {
+    expect(DRAWER_WIDTH).toContain('1080px');
   });
 });
 

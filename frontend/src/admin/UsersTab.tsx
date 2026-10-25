@@ -11,11 +11,19 @@ import {
   type ModelPool,
 } from '../lib/api';
 import { AdminListPage, AdminPager, DRAWER_WIDTH, PAGE_SIZE } from './AdminListPage';
+import { Ellipsis } from './ellipsis';
 import { humanizeAdminError } from './errors';
 import { fmtShanghai, fmtTokens, KIND, roleLabel } from './format';
-import { goAdmin } from './nav';
 import { Alert, Button, Drawer, Empty, Input, InputNumber, Modal, Select, Space, Table, Tag } from './ui';
 import { useDebouncedValue } from './useDebouncedValue';
+
+const ROLE_OPTIONS = [
+  { value: '', label: '全部角色' },
+  { value: 'user', label: roleLabel('user') },
+  { value: 'staff', label: roleLabel('staff') },
+  { value: 'admin', label: roleLabel('admin') },
+  { value: 'superadmin', label: roleLabel('superadmin') },
+];
 
 export default function UsersTab() {
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -23,8 +31,7 @@ export default function UsersTab() {
   const [page, setPage] = useState(1);
   const [pools, setPools] = useState<ModelPool[]>([]);
   const [q, setQ] = useState('');
-  const [balance, setBalance] = useState<number | null>(null);
-  const [balanceOp, setBalanceOp] = useState<'gt' | 'lt'>('gt');
+  const [role, setRole] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [focusId, setFocusId] = useState(() => Number(new URLSearchParams(window.location.search).get('user_id') || 0));
@@ -32,7 +39,6 @@ export default function UsersTab() {
   const [ledgerUser, setLedgerUser] = useState<AdminUser | null>(null);
   const [loading, setLoading] = useState(false);
   const debouncedQ = useDebouncedValue(q, 300);
-  const debouncedBalance = useDebouncedValue(balance, 300);
 
   useEffect(() => {
     const sync = () => setFocusId(Number(new URLSearchParams(window.location.search).get('user_id') || 0));
@@ -42,7 +48,7 @@ export default function UsersTab() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedQ, debouncedBalance, balanceOp, focusId]);
+  }, [debouncedQ, role, focusId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,8 +58,7 @@ export default function UsersTab() {
         page,
         pageSize: PAGE_SIZE,
         userId: focusId || undefined,
-        balance: debouncedBalance ?? undefined,
-        balanceOp: debouncedBalance != null ? balanceOp : undefined,
+        role: role || undefined,
       });
       setUsers(data.users);
       setTotal(data.total);
@@ -63,7 +68,7 @@ export default function UsersTab() {
     } finally {
       setLoading(false);
     }
-  }, [page, focusId, debouncedQ, debouncedBalance, balanceOp]);
+  }, [page, focusId, debouncedQ, role]);
 
   useEffect(() => {
     void load();
@@ -83,8 +88,7 @@ export default function UsersTab() {
 
   const reset = () => {
     setQ('');
-    setBalance(null);
-    setBalanceOp('gt');
+    setRole('');
     setPage(1);
   };
 
@@ -94,25 +98,16 @@ export default function UsersTab() {
         <>
           <Input
             allowClear
-            placeholder="搜索用户名或工号"
+            placeholder="用户名 / 工号"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             style={{ width: 240 }}
           />
-          <InputNumber
-            placeholder="余额"
-            value={balance}
-            onChange={(v) => setBalance(typeof v === 'number' ? v : null)}
-            style={{ width: 140 }}
-          />
           <Select
-            value={balanceOp}
-            onChange={setBalanceOp}
-            style={{ width: 150 }}
-            options={[
-              { value: 'gt', label: '大于该数值' },
-              { value: 'lt', label: '小于该数值' },
-            ]}
+            style={{ width: 170 }}
+            value={role}
+            options={ROLE_OPTIONS}
+            onChange={(v) => { setRole(v); setPage(1); }}
           />
           <Button type="link" className="admin-filter-link" onClick={reset}>清空筛选</Button>
           <Button type="link" className="admin-filter-link" onClick={() => void load()}>刷新</Button>
@@ -131,7 +126,7 @@ export default function UsersTab() {
         loading={loading}
         dataSource={users}
         pagination={false}
-        tableLayout="auto"
+        tableLayout="fixed"
         rowClassName={(u) => (u.id === focusId ? 'admin-row-active' : '')}
         onRow={(u) => ({
           onClick: (e) => {
@@ -142,13 +137,26 @@ export default function UsersTab() {
         })}
         locale={{ emptyText: <Empty description="没有匹配的用户" /> }}
         columns={[
-          { title: '工号', dataIndex: 'employee_id' },
-          { title: '用户名', dataIndex: 'username' },
+          {
+            title: '工号',
+            dataIndex: 'employee_id',
+            width: 140,
+            ellipsis: { showTitle: false },
+            render: (v) => <Ellipsis>{v}</Ellipsis>,
+          },
+          {
+            title: '用户名',
+            dataIndex: 'username',
+            width: 160,
+            ellipsis: { showTitle: false },
+            render: (v) => <Ellipsis>{v}</Ellipsis>,
+          },
           {
             title: '角色',
             dataIndex: 'role',
-            render: (role: string) => (
-              <Tag color={role === 'admin' || role === 'superadmin' ? 'blue' : 'default'}>{roleLabel(role)}</Tag>
+            width: 140,
+            render: (r: string) => (
+              <Tag color={r === 'admin' || r === 'superadmin' ? 'blue' : 'default'}>{roleLabel(r)}</Tag>
             ),
           },
           {
@@ -156,7 +164,7 @@ export default function UsersTab() {
             dataIndex: 'model_pool_id',
             render: (id: number | null | undefined, u) => (
               <Select
-                style={{ minWidth: 160 }}
+                style={{ width: '100%' }}
                 value={id ? String(id) : ''}
                 onChange={(v) => void changePool(u, v ? Number(v) : null)}
                 options={[
@@ -166,10 +174,23 @@ export default function UsersTab() {
               />
             ),
           },
-          { title: '余额（token）', dataIndex: 'balance', align: 'right', render: (n: number) => n.toLocaleString() },
-          { title: '总使用量', dataIndex: 'total_used', align: 'right', render: (n?: number) => fmtTokens(n ?? 0) },
+          {
+            title: '余额（token）',
+            dataIndex: 'balance',
+            width: 150,
+            align: 'right',
+            render: (n: number) => n.toLocaleString(),
+          },
+          {
+            title: '总使用量',
+            dataIndex: 'total_used',
+            width: 130,
+            align: 'right',
+            render: (n?: number) => fmtTokens(n ?? 0),
+          },
           {
             title: '操作',
+            width: 168,
             render: (_, u) => (
               <Space>
                 <Button size="small" type="primary" onClick={() => setRechargeUser(u)}>充值</Button>
@@ -234,6 +255,7 @@ function RechargeModal({
     <Modal
       open={!!user}
       title={user ? `给 ${user.username} 充值` : '充值'}
+      rootClassName="admin-dialog"
       onCancel={onClose}
       onOk={() => void submit()}
       confirmLoading={busy}
@@ -241,7 +263,7 @@ function RechargeModal({
       destroyOnHidden
     >
       {user && (
-        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+        <Space direction="vertical" style={{ width: '100%' }} size={20}>
           <span>工号 {user.employee_id} · 当前余额 {user.balance.toLocaleString()}</span>
           <InputNumber
             style={{ width: '100%' }}
@@ -279,21 +301,17 @@ function LedgerDrawer({ user, onClose }: { user: AdminUser | null; onClose: () =
 
   const showReserve = rows.some((row) => row.kind === 'reserve' || (row.reserve && !row.settle && !row.amount));
 
-  const openTask = (taskId: string) => {
-    onClose();
-    goAdmin('tasks', { task_id: taskId, open: '1' });
-  };
-
   return (
     <Drawer
       open={!!user}
       title={user ? `${user.username} 的流水` : '流水'}
       width={DRAWER_WIDTH}
+      rootClassName="admin-dialog"
       onClose={onClose}
       destroyOnHidden
     >
       {user && (
-        <p className="admin-muted" style={{ marginTop: 0 }}>工号 {user.employee_id} · 点「详情」跳到任务监控并打开该任务</p>
+        <p className="admin-muted" style={{ marginTop: 0 }}>工号 {user.employee_id}</p>
       )}
       <div className="admin-drawer-list">
         <div className="admin-list-body">
@@ -301,20 +319,25 @@ function LedgerDrawer({ user, onClose }: { user: AdminUser | null; onClose: () =
             rowKey={(row, i) => `${row.task_id ?? i}-${row.created_at ?? i}`}
             dataSource={rows}
             pagination={false}
-            tableLayout="auto"
+            tableLayout="fixed"
             locale={{ emptyText: <Empty description="暂无记录" /> }}
             columns={[
-              { title: '类型', dataIndex: 'kind', render: (k?: string) => KIND[k ?? 'settle'] ?? k },
-              { title: '充值数量', render: (_, row) => (row.kind === 'recharge' ? (row.amount ?? '—') : '—') },
-              { title: '消耗数量', dataIndex: 'settle', render: (v) => v ?? '—' },
-              ...(showReserve ? [{ title: '预扣', dataIndex: 'reserve' as const, render: (v: number | null) => v ?? '—' }] : []),
-              { title: '备注', dataIndex: 'note', render: (v?: string | null) => v ?? '—' },
-              { title: '时间', dataIndex: 'created_at', render: (v?: string) => fmtShanghai(v) },
+              { title: '类型', dataIndex: 'kind', width: 96, render: (k?: string) => KIND[k ?? 'settle'] ?? k },
+              { title: '充值数量', width: 120, render: (_, row) => (row.kind === 'recharge' ? (row.amount ?? '—') : '—') },
+              { title: '消耗数量', dataIndex: 'settle', width: 120, render: (v) => v ?? '—' },
+              ...(showReserve ? [{ title: '预扣', dataIndex: 'reserve' as const, width: 100, render: (v: number | null) => v ?? '—' }] : []),
               {
-                title: '',
-                render: (_, row) => row.task_id ? (
-                  <Button type="link" onClick={() => openTask(String(row.task_id))}>详情</Button>
-                ) : '—',
+                title: '备注',
+                dataIndex: 'note',
+                ellipsis: { showTitle: false },
+                render: (v?: string | null) => <Ellipsis>{v ?? '—'}</Ellipsis>,
+              },
+              {
+                title: '时间',
+                dataIndex: 'created_at',
+                width: 188,
+                ellipsis: { showTitle: false },
+                render: (v?: string) => <Ellipsis>{fmtShanghai(v)}</Ellipsis>,
               },
             ]}
           />

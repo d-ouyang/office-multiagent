@@ -511,18 +511,14 @@ export async function adminListUsers(opts: {
   page?: number;
   pageSize?: number;
   userId?: number;
-  balance?: number;
-  balanceOp?: 'gt' | 'lt';
+  role?: string;
 } = {}): Promise<{ users: AdminUser[]; total: number; page: number; page_size: number }> {
   const page = opts.page ?? 1;
   const pageSize = opts.pageSize ?? 20;
   const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (opts.q?.trim()) qs.set('q', opts.q.trim());
   if (opts.userId) qs.set('user_id', String(opts.userId));
-  if (opts.balance != null && opts.balanceOp) {
-    qs.set('balance', String(opts.balance));
-    qs.set('balance_op', opts.balanceOp);
-  }
+  if (opts.role?.trim()) qs.set('role', opts.role.trim());
   const res = await fetch(`/api/v1/admin/users?${qs.toString()}`, { headers: adminAuthHeaders() });
   const data = await readAdminResponse<{ users?: AdminUser[]; total?: number; page?: number; page_size?: number }>(res);
   return { users: data.users ?? [], total: data.total ?? 0, page: data.page ?? page, page_size: data.page_size ?? pageSize };
@@ -597,6 +593,7 @@ export interface AdminTaskRow {
   session_id?: string | null;
   user_id: number | null;
   username: string | null;
+  employee_id?: string | null;
   status: string;
   pause_reason: string | null;
   text: string;
@@ -628,7 +625,7 @@ export async function adminTasks(
   page = 1,
   pageSize = 20,
   flag?: string,
-  extra: { task_id?: string; session_id?: string; user_id?: number } = {},
+  extra: { task_id?: string; session_id?: string; user_id?: number; q?: string; date?: string } = {},
 ): Promise<{ tasks: AdminTaskRow[]; total: number; page: number; page_size: number }> {
   const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (status) qs.set('status', status);
@@ -636,6 +633,8 @@ export async function adminTasks(
   if (extra.task_id) qs.set('task_id', extra.task_id);
   if (extra.session_id) qs.set('session_id', extra.session_id);
   if (extra.user_id) qs.set('user_id', String(extra.user_id));
+  if (extra.q?.trim()) qs.set('q', extra.q.trim());
+  if (extra.date) qs.set('date', extra.date);
   const data = await adminGet<{ tasks: AdminTaskRow[]; total: number; page: number; page_size: number }>(
     `/api/v1/admin/tasks?${qs.toString()}`,
   );

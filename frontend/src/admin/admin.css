@@ -128,6 +128,23 @@
 .admin-list-body table {
   width: 100% !important;
 }
+.admin-list-body .ant-table {
+  font-size: 18px;
+}
+.admin-list-body .ant-table-thead > tr > th {
+  white-space: nowrap;
+  font-size: 18px;
+}
+.admin-list-body .ant-table-tbody > tr > td {
+  white-space: nowrap;
+}
+.admin-ellipsis {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .admin-list-pager {
   flex: 0 0 auto;
   padding: 10px 20px 14px;
@@ -169,8 +186,9 @@
 .admin-model-nums {
   display: grid !important;
   grid-template-columns: repeat(3, 1fr);
+  gap: 0 16px;
 }
-.admin-model-nums .ant-form-item { margin-bottom: 12px; }
+.admin-model-nums .ant-form-item { margin-bottom: 22px; }
 .admin-quote {
   background: #fff;
   color: #1f2937;
@@ -301,6 +319,41 @@
   margin-inline: auto;
   padding: 28px 0;
 }
-.ant-table-cell-ellipsis {
-  white-space: normal;
+.admin-antd .ant-table-cell-ellipsis {
+  white-space: nowrap;
+}
+
+.admin-dialog .ant-modal-content {
+  padding: 28px 32px 24px;
+}
+.admin-dialog .ant-modal-header {
+  margin-bottom: 20px;
+}
+.admin-dialog .ant-modal-body {
+  padding: 8px 0 16px;
+}
+.admin-dialog .ant-modal-footer {
+  margin-top: 20px;
+}
+.admin-dialog .ant-drawer-header {
+  padding: 22px 28px;
+}
+.admin-dialog .ant-drawer-body {
+  padding: 24px 28px 32px;
+}
+.admin-dialog .ant-form-item,
+.admin-dialog-form .ant-form-item {
+  margin-bottom: 22px;
+}
+.admin-dialog .ant-form-item-label,
+.admin-dialog-form .ant-form-item-label {
+  padding-bottom: 8px;
+}
+.admin-dialog .ant-drawer-body .ant-typography-h5,
+.admin-dialog .ant-drawer-body h5.ant-typography {
+  margin-top: 28px;
+  margin-bottom: 12px;
+}
+.admin-dialog .ant-descriptions {
+  margin-top: 4px;
 }

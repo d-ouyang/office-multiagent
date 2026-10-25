@@ -13,6 +13,7 @@ import {
   type AdminModel,
   type ModelPool,
 } from '../lib/api';
+import { Ellipsis } from './ellipsis';
 import { humanizeAdminError } from './errors';
 import { fmtTokens } from './format';
 import { Alert, Button, Empty, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Typography } from './ui';
@@ -30,6 +31,7 @@ export default function PoolsTab() {
   const [currentId, setCurrentId] = useState<number | null>(null);
   const [draft, setDraft] = useState<Record<string, boolean>>({});
   const [newName, setNewName] = useState('');
+  const [poolOpen, setPoolOpen] = useState(false);
   const [editing, setEditing] = useState<AdminModel | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
@@ -82,6 +84,7 @@ export default function PoolsTab() {
     try {
       await adminCreatePool(name);
       setNewName('');
+      setPoolOpen(false);
       await load();
       setNotice(`已创建池「${name}」`);
       setTimeout(() => setNotice(''), 3000);
@@ -134,15 +137,7 @@ export default function PoolsTab() {
               label: `${p.name} · ${ROLE_HINT[p.name] ?? `${p.user_count} 人`}`,
             }))}
           />
-          <Input
-            placeholder="新池名（如 finance）"
-            value={newName}
-            maxLength={32}
-            onChange={(e) => setNewName(e.target.value)}
-            onPressEnter={() => void createPool()}
-            style={{ width: 200 }}
-          />
-          <Button type="primary" disabled={busy || !newName.trim()} onClick={() => void createPool()}>新建池</Button>
+          <Button type="primary" onClick={() => { setNewName(''); setPoolOpen(true); }}>新建池</Button>
           {current && current.user_count === 0 && !ROLE_HINT[current.name] && (
             <Button danger disabled={busy} onClick={() => void removePool(current)}>删除该池</Button>
           )}
@@ -166,14 +161,14 @@ export default function PoolsTab() {
           rowKey="id"
           dataSource={dialogue}
           pagination={false}
-          tableLayout="auto"
+          tableLayout="fixed"
           rowClassName={(m) => (m.enabled === false ? 'admin-row-dim' : '')}
           locale={{ emptyText: <Empty description="没有对话模型" /> }}
           title={() => `「${current.name}」可见模型（${enabledCount}）`}
           columns={[
             {
               title: '可见',
-              width: 80,
+              width: 88,
               render: (_, m) => (
                 <Switch
                   checked={!!draft[m.id]}
@@ -183,21 +178,26 @@ export default function PoolsTab() {
             },
             {
               title: '名称',
-              render: (_, m) => (
-                <div>
-                  <strong>{m.name}</strong>
-                  <div className="admin-muted">登记 id：{m.id}</div>
-                </div>
-              ),
+              width: 220,
+              ellipsis: { showTitle: false },
+              render: (_, m) => <Ellipsis title={`${m.name}（登记 id：${m.id}）`}>{m.name}</Ellipsis>,
             },
             {
               title: '实际调用名',
               dataIndex: 'api_model',
-              render: (v?: string) => <Typography.Text code>{v || '—'}</Typography.Text>,
+              ellipsis: { showTitle: false },
+              render: (v?: string) => <Ellipsis title={v || '—'}>{v || '—'}</Ellipsis>,
             },
-            { title: '渠道', dataIndex: 'provider' },
+            {
+              title: '渠道',
+              dataIndex: 'provider',
+              width: 140,
+              ellipsis: { showTitle: false },
+              render: (v?: string) => <Ellipsis>{v || '—'}</Ellipsis>,
+            },
             {
               title: '上下文 / 输出',
+              width: 180,
               render: (_, m) => `${fmtTokens(m.context_window ?? 0)} / ${fmtTokens(m.max_output ?? 0)}`,
             },
             {
@@ -214,12 +214,37 @@ export default function PoolsTab() {
             },
             {
               title: '',
+              width: 96,
               render: (_, m) => <Button onClick={() => setEditing(m)}>编辑</Button>,
             },
           ]}
         />
       )}
 
+      <Modal
+        open={poolOpen}
+        title="新建模型池"
+        rootClassName="admin-dialog"
+        onCancel={() => setPoolOpen(false)}
+        onOk={() => void createPool()}
+        okButtonProps={{ disabled: busy || !newName.trim() }}
+        confirmLoading={busy}
+        okText={busy ? '创建中…' : '创建'}
+        destroyOnHidden
+      >
+        <Form layout="vertical" requiredMark={false}>
+          <Form.Item label="池名" extra="例如 finance，用来按角色或部门划分可见模型。">
+            <Input
+              placeholder="如 finance"
+              value={newName}
+              maxLength={32}
+              autoFocus
+              onChange={(e) => setNewName(e.target.value)}
+              onPressEnter={() => void createPool()}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
       <ModelFormModal
         open={!!editing || creating}
         model={editing}
@@ -353,14 +378,15 @@ function ModelFormModal({
     <Modal
       open={open}
       title={creating ? '新建模型' : '编辑模型'}
-      width={640}
+      width={720}
+      rootClassName="admin-dialog"
       onCancel={onClose}
       onOk={() => void save()}
       confirmLoading={busy}
       okText={busy ? '保存中…' : '保存'}
       destroyOnClose
     >
-      <Form form={form} layout="vertical" requiredMark={false}>
+      <Form form={form} layout="vertical" requiredMark={false} className="admin-dialog-form">
         <Form.Item
           name="id"
           label="登记 id"

@@ -47,6 +47,7 @@ export default function AdminProfilePanel({
     <Modal
       open={open}
       title="账户与退出"
+      rootClassName="admin-dialog"
       onCancel={onClose}
       footer={null}
       destroyOnHidden

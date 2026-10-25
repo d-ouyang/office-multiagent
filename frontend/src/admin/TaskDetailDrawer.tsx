@@ -21,6 +21,7 @@ export default function TaskDetailDrawer({
       open
       title="任务详情"
       width={DRAWER_WIDTH}
+      rootClassName="admin-dialog"
       onClose={onClose}
     >
       <Typography.Paragraph type="secondary">
@@ -30,7 +31,12 @@ export default function TaskDetailDrawer({
         <Tag color={detail.status.startsWith('paused') || detail.status === 'failed' ? 'warning' : 'blue'}>
           {STATUS[detail.status] ?? detail.status}
         </Tag>
-        <Typography.Text type="secondary">{detail.username ?? '—'} · {detail.model || '未记模型'}</Typography.Text>
+        <Typography.Text type="secondary">
+          {detail.username ?? '—'}
+          {detail.employee_id ? ` · ${detail.employee_id}` : ''}
+          {' · '}
+          {detail.model || '未记模型'}
+        </Typography.Text>
       </div>
 
       <Typography.Title level={5}>问句</Typography.Title>
@@ -44,6 +50,7 @@ export default function TaskDetailDrawer({
       <Typography.Title level={5}>关键指标</Typography.Title>
       <Descriptions column={1} size="small" bordered>
         <Descriptions.Item label="用户">{detail.username ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="工号">{detail.employee_id ?? '—'}</Descriptions.Item>
         <Descriptions.Item label="任务耗时">{fmtDuration(detail.duration_ms)}</Descriptions.Item>
         <Descriptions.Item label="消耗 token">{detail.tokens_used ? fmtTokens(detail.tokens_used) : '—'}</Descriptions.Item>
         <Descriptions.Item label="任务原因">{detail.pause_reason ? REASON[detail.pause_reason] ?? detail.pause_reason : '—'}</Descriptions.Item>

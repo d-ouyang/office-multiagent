@@ -202,14 +202,47 @@ def test_admin_tasks_global_with_username_and_filter(eng):
     rows = c.get("/api/v1/admin/tasks", headers=_auth()).json()["tasks"]
     assert {r["id"] for r in rows} == {"t-a", "t-b"}
     by_id = {r["id"]: r for r in rows}
-    assert by_id["t-a"]["username"] == "dev"
+    assert by_id["t-a"]["username"] == "dev" and by_id["t-a"]["employee_id"] == "EMP001"
     assert by_id["t-b"]["username"] == "chen" and by_id["t-b"]["pause_reason"] == "user"
+    assert by_id["t-b"]["employee_id"] == "EMP002"
     paused = c.get("/api/v1/admin/tasks?status=paused_user", headers=_auth()).json()["tasks"]
     assert [r["id"] for r in paused] == ["t-b"]
 
 
 def test_admin_tasks_requires_admin(eng):
     assert TestClient(app).get("/api/v1/admin/tasks", headers=_auth("EMP002")).status_code == 403
+
+
+def test_admin_tasks_q_date_and_employee_id(eng):
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO session (id, user_id) VALUES ('s1', 1)"))
+        conn.execute(text("INSERT INTO session (id, user_id) VALUES ('s2', 2)"))
+        conn.execute(text(
+            "INSERT INTO task (id, session_id, status, text, tokens_used, created_at) "
+            "VALUES ('t-a', 's1', 'done', '查年假', 120, '2026-03-15 10:00:00')"
+        ))
+        conn.execute(text(
+            "INSERT INTO task (id, session_id, status, text, tokens_used, created_at) "
+            "VALUES ('t-b', 's2', 'paused_user', '清洗表格', 0, '2026-03-16 10:00:00')"
+        ))
+    c = TestClient(app)
+    by_emp = c.get("/api/v1/admin/tasks", params={"q": "EMP002"}, headers=_auth()).json()["tasks"]
+    assert [r["id"] for r in by_emp] == ["t-b"]
+    assert by_emp[0]["employee_id"] == "EMP002"
+    by_name = c.get("/api/v1/admin/tasks", params={"q": "dev"}, headers=_auth()).json()["tasks"]
+    assert [r["id"] for r in by_name] == ["t-a"]
+    day = c.get("/api/v1/admin/tasks", params={"date": "2026_03_15"}, headers=_auth()).json()["tasks"]
+    assert [r["id"] for r in day] == ["t-a"]
+    day2 = c.get("/api/v1/admin/tasks", params={"date": "2026-03-16"}, headers=_auth()).json()["tasks"]
+    assert [r["id"] for r in day2] == ["t-b"]
+
+
+def test_users_role_filter(eng):
+    c = TestClient(app)
+    admins = c.get("/api/v1/admin/users", params={"role": "admin"}, headers=_auth()).json()["users"]
+    assert {u["username"] for u in admins} == {"dev"}
+    members = c.get("/api/v1/admin/users", params={"role": "user"}, headers=_auth()).json()["users"]
+    assert {u["username"] for u in members} == {"chen"}
 
 
 def test_users_exact_search_and_balance_filter(eng):

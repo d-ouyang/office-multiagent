@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { adminAuditLogs, type AuditRow } from '../lib/api';
 import { AdminListPage, AdminPager, PAGE_SIZE } from './AdminListPage';
+import { Ellipsis } from './ellipsis';
 import { humanizeAdminError } from './errors';
 import { fmtShanghai, renderDetail, TARGET_LABEL } from './format';
 import { Alert, Button, Empty, Input, Select, Table, Tag } from './ui';
@@ -98,34 +99,54 @@ export default function AuditTab() {
         loading={loading}
         dataSource={rows}
         pagination={false}
-        tableLayout="auto"
+        tableLayout="fixed"
         locale={{ emptyText: <Empty description="暂无审计记录" /> }}
         columns={[
-          { title: '时间', dataIndex: 'created_at', render: (v) => fmtShanghai(v) },
+          {
+            title: '时间',
+            dataIndex: 'created_at',
+            width: 188,
+            ellipsis: { showTitle: false },
+            render: (v) => <Ellipsis>{fmtShanghai(v)}</Ellipsis>,
+          },
           {
             title: '操作人',
-            render: (_, r) => (
-              <span>
-                {r.actor_username}
-                {r.actor_role && <span className="admin-muted"> · {r.actor_role}</span>}
-              </span>
-            ),
+            width: 180,
+            ellipsis: { showTitle: false },
+            render: (_, r) => {
+              const text = r.actor_role ? `${r.actor_username} · ${r.actor_role}` : r.actor_username;
+              return <Ellipsis>{text}</Ellipsis>;
+            },
           },
-          { title: '动作', render: (_, r) => <Tag color="blue">{r.action_label ?? r.action}</Tag> },
+          {
+            title: '动作',
+            width: 150,
+            render: (_, r) => <Tag color="blue">{r.action_label ?? r.action}</Tag>,
+          },
           {
             title: '对象',
-            render: (_, r) => `${TARGET_LABEL[r.target_type] ?? r.target_type}${r.target_label ? ` · ${r.target_label}` : ''}`,
+            width: 200,
+            ellipsis: { showTitle: false },
+            render: (_, r) => {
+              const text = `${TARGET_LABEL[r.target_type] ?? r.target_type}${r.target_label ? ` · ${r.target_label}` : ''}`;
+              return <Ellipsis>{text}</Ellipsis>;
+            },
           },
           {
             title: '明细',
+            ellipsis: { showTitle: false },
             render: (_, r) => {
-              const lines = renderDetail(r.action, r.detail);
-              return lines.length ? (
-                <div className="audit-detail">{lines.map((line, i) => <span key={i}>{line}</span>)}</div>
-              ) : '—';
+              const text = renderDetail(r.action, r.detail).join('；') || '—';
+              return <Ellipsis>{text}</Ellipsis>;
             },
           },
-          { title: 'IP', dataIndex: 'ip', render: (v) => v ?? '—' },
+          {
+            title: 'IP',
+            dataIndex: 'ip',
+            width: 140,
+            ellipsis: { showTitle: false },
+            render: (v) => <Ellipsis>{v ?? '—'}</Ellipsis>,
+          },
         ]}
       />
     </AdminListPage>

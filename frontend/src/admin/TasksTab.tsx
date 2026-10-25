@@ -1,11 +1,14 @@
+import dayjs, { type Dayjs } from 'dayjs';
 import { useCallback, useEffect, useState } from 'react';
 
 import { adminRun, adminTasks, type AdminRunDetail, type AdminTaskRow } from '../lib/api';
 import { AdminListPage, AdminPager, PAGE_SIZE } from './AdminListPage';
+import { Ellipsis } from './ellipsis';
 import { humanizeAdminError } from './errors';
 import { fmtDuration, fmtShanghai, fmtTokens, isIncomplete, REASON, STATUS } from './format';
 import TaskDetailDrawer from './TaskDetailDrawer';
-import { Alert, Button, Empty, Select, Table, Tag } from './ui';
+import { Alert, Button, DatePicker, Empty, Input, Select, Table, Tag } from './ui';
+import { useDebouncedValue } from './useDebouncedValue';
 
 const TASK_STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -16,14 +19,6 @@ const TASK_STATUS_OPTIONS = [
   { value: 'resumed', label: '续跑' },
 ];
 
-const FLAG_OPTIONS = [
-  { value: '', label: '全部痕迹' },
-  { value: 'paused', label: '暂停' },
-  { value: 'rag', label: '曾检索知识库' },
-  { value: 'validation', label: '数字未对齐' },
-  { value: 'no_artifact', label: '无产物' },
-];
-
 function readQuery() {
   const q = new URLSearchParams(window.location.search);
   return {
@@ -32,6 +27,8 @@ function readQuery() {
     task_id: q.get('task_id') || '',
     session_id: q.get('session_id') || '',
     user_id: q.get('user_id') || '',
+    q: q.get('q') || '',
+    date: q.get('date') || '',
     open: q.get('open') === '1',
   };
 }
@@ -43,10 +40,13 @@ export default function TasksTab() {
   const [page, setPage] = useState(1);
   const [filter, setFilter] = useState(initial.status);
   const [flag, setFlag] = useState(initial.flag);
+  const [userQ, setUserQ] = useState(initial.q);
+  const [date, setDate] = useState(initial.date);
   const [taskId, setTaskId] = useState(initial.task_id);
   const [error, setError] = useState('');
   const [detail, setDetail] = useState<AdminRunDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const debouncedQ = useDebouncedValue(userQ, 300);
 
   const load = useCallback(async (pg = page) => {
     setLoading(true);
@@ -56,6 +56,8 @@ export default function TasksTab() {
         task_id: q.task_id || taskId || undefined,
         session_id: q.session_id || undefined,
         user_id: q.user_id ? Number(q.user_id) : undefined,
+        q: debouncedQ || undefined,
+        date: date || undefined,
       });
       setRows(data.tasks);
       setTotal(data.total);
@@ -67,19 +69,25 @@ export default function TasksTab() {
     } finally {
       setLoading(false);
     }
-  }, [filter, page, flag, taskId]);
+  }, [filter, page, flag, taskId, debouncedQ, date]);
 
   useEffect(() => {
     const sync = () => {
       const q = readQuery();
       setFilter(q.status);
       setFlag(q.flag);
+      setUserQ(q.q);
+      setDate(q.date);
       setTaskId(q.task_id);
       setPage(1);
     };
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
   }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQ, date]);
 
   useEffect(() => {
     void load(page).then((tasks) => {
@@ -102,7 +110,12 @@ export default function TasksTab() {
   const reset = () => {
     setFilter('');
     setFlag('');
+    setUserQ('');
+    setDate('');
     setPage(1);
+    const url = new URL(window.location.href);
+    url.search = '';
+    window.history.replaceState({}, '', `${url.pathname}${url.hash}`);
   };
 
   return (
@@ -115,11 +128,20 @@ export default function TasksTab() {
             options={TASK_STATUS_OPTIONS}
             onChange={(v) => { setFilter(v); setPage(1); }}
           />
-          <Select
-            style={{ width: 180 }}
-            value={flag}
-            options={FLAG_OPTIONS}
-            onChange={(v) => { setFlag(v); setPage(1); }}
+          <Input
+            allowClear
+            placeholder="用户名 / 工号"
+            value={userQ}
+            onChange={(e) => setUserQ(e.target.value)}
+            style={{ width: 220 }}
+          />
+          <DatePicker
+            allowClear
+            placeholder="时间"
+            format="YYYY-MM-DD"
+            value={date ? dayjs(date) : null}
+            onChange={(v: Dayjs | null) => { setDate(v ? v.format('YYYY-MM-DD') : ''); setPage(1); }}
+            style={{ width: 168 }}
           />
           <Button type="link" className="admin-filter-link" onClick={reset}>清空筛选</Button>
           <Button type="link" className="admin-filter-link" onClick={() => void load(page)}>刷新</Button>
@@ -133,16 +155,46 @@ export default function TasksTab() {
         loading={loading}
         dataSource={rows}
         pagination={false}
-        tableLayout="auto"
+        tableLayout="fixed"
         locale={{ emptyText: <Empty description="暂无任务" /> }}
         columns={[
-          { title: '用户', dataIndex: 'username', render: (v) => v ?? '—' },
-          { title: '时间', dataIndex: 'created_at', render: (v) => fmtShanghai(v) },
-          { title: '任务摘要', dataIndex: 'text', render: (v) => v || '—' },
-          { title: '任务耗时', dataIndex: 'duration_ms', render: (v) => fmtDuration(v) },
+          {
+            title: '用户',
+            dataIndex: 'username',
+            width: 110,
+            ellipsis: { showTitle: false },
+            render: (v) => <Ellipsis>{v ?? '—'}</Ellipsis>,
+          },
+          {
+            title: '工号',
+            dataIndex: 'employee_id',
+            width: 120,
+            ellipsis: { showTitle: false },
+            render: (v) => <Ellipsis>{v ?? '—'}</Ellipsis>,
+          },
+          {
+            title: '时间',
+            dataIndex: 'created_at',
+            width: 188,
+            ellipsis: { showTitle: false },
+            render: (v) => <Ellipsis title={fmtShanghai(v)}>{fmtShanghai(v)}</Ellipsis>,
+          },
+          {
+            title: '任务摘要',
+            dataIndex: 'text',
+            ellipsis: { showTitle: false },
+            render: (v) => <Ellipsis>{v || '—'}</Ellipsis>,
+          },
+          {
+            title: '任务耗时',
+            dataIndex: 'duration_ms',
+            width: 100,
+            render: (v) => fmtDuration(v),
+          },
           {
             title: '状态',
             dataIndex: 'status',
+            width: 110,
             render: (status: string) => (
               <Tag color={status.startsWith('paused') || status === 'failed' ? 'warning' : 'blue'}>
                 {STATUS[status] ?? status}
@@ -151,13 +203,37 @@ export default function TasksTab() {
           },
           {
             title: '任务原因',
-            render: (_, r) => (isIncomplete(r.status) && r.pause_reason ? REASON[r.pause_reason] ?? r.pause_reason : '—'),
+            width: 110,
+            ellipsis: { showTitle: false },
+            render: (_, r) => {
+              const text = isIncomplete(r.status) && r.pause_reason ? REASON[r.pause_reason] ?? r.pause_reason : '—';
+              return <Ellipsis>{text}</Ellipsis>;
+            },
           },
-          { title: '任务id', dataIndex: 'id' },
-          { title: '会话id', dataIndex: 'session_id', render: (id?: string | null) => id || '—' },
-          { title: '消耗token', dataIndex: 'tokens_used', align: 'right', render: (n: number) => (n ? fmtTokens(n) : '—') },
+          {
+            title: '任务id',
+            dataIndex: 'id',
+            width: 150,
+            ellipsis: { showTitle: false },
+            render: (v) => <Ellipsis>{v}</Ellipsis>,
+          },
+          {
+            title: '会话id',
+            dataIndex: 'session_id',
+            width: 150,
+            ellipsis: { showTitle: false },
+            render: (id?: string | null) => <Ellipsis>{id || '—'}</Ellipsis>,
+          },
+          {
+            title: '消耗token',
+            dataIndex: 'tokens_used',
+            width: 110,
+            align: 'right',
+            render: (n: number) => (n ? fmtTokens(n) : '—'),
+          },
           {
             title: '',
+            width: 96,
             render: (_, r) => <Button type="link" onClick={() => void openDetail(r.id)}>查看详情</Button>,
           },
         ]}

@@ -1088,6 +1088,7 @@ def _stream_task(
 def admin_users(
     q: str | None = Query(default=None, max_length=64),
     user_id: int | None = Query(default=None),
+    role: str | None = Query(default=None, max_length=32),
     balance_min: int | None = Query(default=None),
     balance_max: int | None = Query(default=None),
     balance: int | None = Query(default=None),
@@ -1096,7 +1097,7 @@ def admin_users(
     page_size: int = Query(default=20, ge=5, le=100),
     authorization: str | None = Header(default=None),
 ):
-    """用户列表：精确搜用户名/工号 + 余额区间 + 总使用量 + 分页。"""
+    """用户列表：精确搜用户名/工号 + 角色 + 余额区间 + 总使用量 + 分页。"""
     _require_admin(authorization)
     from sqlalchemy import text as _text
 
@@ -1118,6 +1119,9 @@ def admin_users(
     if user_id is not None:
         filters.append("u.id = :uid")
         params["uid"] = user_id
+    if role and role.strip():
+        filters.append("u.role = :role")
+        params["role"] = role.strip()
     if balance_min is not None:
         filters.append("COALESCE(w.balance, 0) >= :bmin")
         params["bmin"] = balance_min
@@ -1423,6 +1427,24 @@ def admin_usage(
     }
 
 
+def _parse_day(raw: str | None) -> str | None:
+    """接受 YYYY-MM-DD 或 YYYY_MM_DD，非法值当没传。"""
+    if not isinstance(raw, str) or not raw:
+        return None
+    day = raw.strip().replace("_", "-")
+    if len(day) == 10 and day[4] == "-" and day[7] == "-":
+        return day
+    return None
+
+
+def _query_text(raw: Any) -> str | None:
+    """内部直调路由函数时，未传入的 Query() 默认值不能当字符串用。"""
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    return text or None
+
+
 @router.get("/admin/tasks")
 def admin_tasks(
     status: str | None = Query(default=None, max_length=32),
@@ -1430,11 +1452,13 @@ def admin_tasks(
     task_id: str | None = Query(default=None, max_length=64),
     session_id: str | None = Query(default=None, max_length=64),
     user_id: int | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=64),
+    date: str | None = Query(default=None, max_length=16),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=5, le=100),
     authorization: str | None = Header(default=None),
 ):
-    """最近任务（全局，含所属用户/暂停原因）+ 分页（p6.28b）。"""
+    """最近任务（全局，含所属用户/工号/暂停原因）+ 分页（p6.28b）。"""
     _require_admin(authorization)
     from sqlalchemy import text as _text
 
@@ -1446,6 +1470,13 @@ def admin_tasks(
     )
     filters: list[str] = []
     params: dict[str, Any] = {}
+    status = _query_text(status)
+    flag = _query_text(flag)
+    task_id = _query_text(task_id)
+    session_id = _query_text(session_id)
+    q = _query_text(q)
+    if not isinstance(user_id, int):
+        user_id = None
     if status:
         filters.append("t.status = :st")
         params["st"] = status
@@ -1458,17 +1489,25 @@ def admin_tasks(
     if user_id is not None:
         filters.append("s.user_id = :uid")
         params["uid"] = user_id
+    if q:
+        filters.append("(u.username = :kw OR u.employee_id = :kw)")
+        params["kw"] = q
+    day = _parse_day(date)
+    if day:
+        filters.append("DATE(t.created_at) = :day")
+        params["day"] = day
     where = (" WHERE " + " AND ".join(filters)) if filters else ""
+    cols = (
+        "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
+        "t.created_at, t.request_json, s.user_id, u.username, u.employee_id "
+    )
     eng = get_engine()
     scan = flag in {"rag", "no_artifact", "validation", "paused"}
     with eng.connect() as conn:
         if scan:
             rows = conn.execute(
-                _text(
-                    "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
-                    "t.created_at, t.request_json, s.user_id, u.username " + base +
-                    " ORDER BY t.created_at DESC LIMIT 200"
-                )
+                _text(cols + base + where + " ORDER BY t.created_at DESC LIMIT 200"),
+                params,
             ).mappings().all()
             packed = [_task_row(conn, r) for r in rows]
             if flag == "rag":
@@ -1488,8 +1527,7 @@ def admin_tasks(
             )
             rows = conn.execute(
                 _text(
-                    "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
-                    "t.created_at, t.request_json, s.user_id, u.username " + base + where +
+                    cols + base + where +
                     " ORDER BY t.created_at DESC LIMIT :l OFFSET :o"
                 ),
                 {**params, "l": page_size, "o": (page - 1) * page_size},
@@ -1514,6 +1552,7 @@ def _task_row(conn, row) -> dict[str, Any]:
         "session_id": row["session_id"],
         "user_id": row["user_id"],
         "username": row["username"],
+        "employee_id": row["employee_id"],
         "status": row["status"],
         "pause_reason": row["pause_reason"],
         "text": row["text"] or "",
@@ -1544,7 +1583,15 @@ def admin_runs(
         # 失败含出错暂停，下面单独处理
     if status == "failed":
         return _admin_failed_runs(page, page_size)
-    return admin_tasks(status=status, flag=flag, page=page, page_size=page_size, authorization=authorization)
+    return admin_tasks(
+        status=status,
+        flag=flag,
+        page=page,
+        page_size=page_size,
+        authorization=authorization,
+        q=None,
+        date=None,
+    )
 
 
 def _admin_failed_runs(page: int, page_size: int) -> dict[str, Any]:
@@ -1563,7 +1610,7 @@ def _admin_failed_runs(page: int, page_size: int) -> dict[str, Any]:
         rows = conn.execute(
             _text(
                 "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
-                "t.created_at, t.request_json, s.user_id, u.username " + base +
+                "t.created_at, t.request_json, s.user_id, u.username, u.employee_id " + base +
                 " ORDER BY t.created_at DESC LIMIT :l OFFSET :o"
             ),
             {"l": page_size, "o": (page - 1) * page_size},
@@ -1588,7 +1635,7 @@ def admin_run_detail(task_id: str, authorization: str | None = Header(default=No
         row = conn.execute(
             _text(
                 "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
-                "t.created_at, t.request_json, s.user_id, u.username "
+                "t.created_at, t.request_json, s.user_id, u.username, u.employee_id "
                 "FROM task t LEFT JOIN session s ON s.id = t.session_id "
                 "LEFT JOIN `user` u ON u.id = s.user_id WHERE t.id = :i"
             ),
@@ -1608,6 +1655,7 @@ def admin_run_detail(task_id: str, authorization: str | None = Header(default=No
         "session_id": row["session_id"],
         "user_id": row["user_id"],
         "username": row["username"],
+        "employee_id": row["employee_id"],
         "status": row["status"],
         "pause_reason": row["pause_reason"],
         "text": row["text"] or "",

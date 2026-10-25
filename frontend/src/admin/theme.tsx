@@ -30,9 +30,16 @@ export default function AdminTheme({ children }: { children: ReactNode }) {
             fontSize: 17,
           },
           Table: {
-            cellFontSize: 16,
-            cellPaddingBlock: 14,
+            cellFontSize: 18,
+            cellPaddingBlock: 16,
             cellPaddingInline: 16,
+          },
+          Form: {
+            itemMarginBottom: 22,
+            verticalLabelPadding: '0 0 8px',
+          },
+          Modal: {
+            titleFontSize: 18,
           },
           Pagination: {
             itemSize: 36,
