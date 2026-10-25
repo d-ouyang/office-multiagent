@@ -4,6 +4,7 @@
  * 样式走 CSS-in-JS，不引入 antd/dist/*.css。
  */
 export { default as Alert } from 'antd/es/alert';
+export { default as App } from 'antd/es/app';
 export { default as Avatar } from 'antd/es/avatar';
 export { default as Button } from 'antd/es/button';
 export { default as Card } from 'antd/es/card';
@@ -18,6 +19,7 @@ export { default as Input } from 'antd/es/input';
 export { default as InputNumber } from 'antd/es/input-number';
 export { default as Layout } from 'antd/es/layout';
 export { default as Menu } from 'antd/es/menu';
+export { default as message } from 'antd/es/message';
 export { default as Modal } from 'antd/es/modal';
 export { default as Pagination } from 'antd/es/pagination';
 export { default as Row } from 'antd/es/row';

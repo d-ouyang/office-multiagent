@@ -168,7 +168,7 @@ export default function PoolsTab() {
           columns={[
             {
               title: '可见',
-              width: 88,
+              width: 80,
               render: (_, m) => (
                 <Switch
                   checked={!!draft[m.id]}
@@ -178,31 +178,31 @@ export default function PoolsTab() {
             },
             {
               title: '名称',
-              width: 220,
               ellipsis: { showTitle: false },
               render: (_, m) => <Ellipsis title={`${m.name}（登记 id：${m.id}）`}>{m.name}</Ellipsis>,
             },
             {
               title: '实际调用名',
               dataIndex: 'api_model',
+              width: 220,
               ellipsis: { showTitle: false },
               render: (v?: string) => <Ellipsis title={v || '—'}>{v || '—'}</Ellipsis>,
             },
             {
               title: '渠道',
               dataIndex: 'provider',
-              width: 140,
+              width: 120,
               ellipsis: { showTitle: false },
               render: (v?: string) => <Ellipsis>{v || '—'}</Ellipsis>,
             },
             {
               title: '上下文 / 输出',
-              width: 180,
+              width: 160,
               render: (_, m) => `${fmtTokens(m.context_window ?? 0)} / ${fmtTokens(m.max_output ?? 0)}`,
             },
             {
               title: '启用',
-              width: 140,
+              width: 120,
               render: (_, m) => (
                 <Switch
                   checked={m.enabled !== false}
@@ -214,7 +214,7 @@ export default function PoolsTab() {
             },
             {
               title: '',
-              width: 96,
+              width: 88,
               render: (_, m) => <Button onClick={() => setEditing(m)}>编辑</Button>,
             },
           ]}

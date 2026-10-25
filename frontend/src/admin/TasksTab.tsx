@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { adminRun, adminTasks, type AdminRunDetail, type AdminTaskRow } from '../lib/api';
 import { AdminListPage, AdminPager, PAGE_SIZE } from './AdminListPage';
-import { Ellipsis } from './ellipsis';
+import { CopyCell, Ellipsis } from './ellipsis';
 import { humanizeAdminError } from './errors';
 import { fmtDuration, fmtShanghai, fmtTokens, isIncomplete, REASON, STATUS } from './format';
 import TaskDetailDrawer from './TaskDetailDrawer';
@@ -141,7 +141,7 @@ export default function TasksTab() {
             format="YYYY-MM-DD"
             value={date ? dayjs(date) : null}
             onChange={(v: Dayjs | null) => { setDate(v ? v.format('YYYY-MM-DD') : ''); setPage(1); }}
-            style={{ width: 168 }}
+            style={{ width: 190 }}
           />
           <Button type="link" className="admin-filter-link" onClick={reset}>清空筛选</Button>
           <Button type="link" className="admin-filter-link" onClick={() => void load(page)}>刷新</Button>
@@ -161,40 +161,39 @@ export default function TasksTab() {
           {
             title: '用户',
             dataIndex: 'username',
-            width: 110,
+            width: 78,
             ellipsis: { showTitle: false },
             render: (v) => <Ellipsis>{v ?? '—'}</Ellipsis>,
           },
           {
             title: '工号',
             dataIndex: 'employee_id',
-            width: 120,
+            width: 88,
             ellipsis: { showTitle: false },
             render: (v) => <Ellipsis>{v ?? '—'}</Ellipsis>,
           },
           {
             title: '时间',
             dataIndex: 'created_at',
-            width: 188,
-            ellipsis: { showTitle: false },
-            render: (v) => <Ellipsis title={fmtShanghai(v)}>{fmtShanghai(v)}</Ellipsis>,
+            width: 220,
+            render: (v) => fmtShanghai(v),
           },
           {
             title: '任务摘要',
             dataIndex: 'text',
             ellipsis: { showTitle: false },
-            render: (v) => <Ellipsis>{v || '—'}</Ellipsis>,
+            render: (v) => <CopyCell text={v || '—'} />,
           },
           {
             title: '任务耗时',
             dataIndex: 'duration_ms',
-            width: 100,
+            width: 76,
             render: (v) => fmtDuration(v),
           },
           {
             title: '状态',
             dataIndex: 'status',
-            width: 110,
+            width: 82,
             render: (status: string) => (
               <Tag color={status.startsWith('paused') || status === 'failed' ? 'warning' : 'blue'}>
                 {STATUS[status] ?? status}
@@ -203,7 +202,7 @@ export default function TasksTab() {
           },
           {
             title: '任务原因',
-            width: 110,
+            width: 80,
             ellipsis: { showTitle: false },
             render: (_, r) => {
               const text = isIncomplete(r.status) && r.pause_reason ? REASON[r.pause_reason] ?? r.pause_reason : '—';
@@ -213,27 +212,27 @@ export default function TasksTab() {
           {
             title: '任务id',
             dataIndex: 'id',
-            width: 150,
+            width: 176,
             ellipsis: { showTitle: false },
-            render: (v) => <Ellipsis>{v}</Ellipsis>,
+            render: (v) => <CopyCell text={v} />,
           },
           {
             title: '会话id',
             dataIndex: 'session_id',
-            width: 150,
+            width: 176,
             ellipsis: { showTitle: false },
-            render: (id?: string | null) => <Ellipsis>{id || '—'}</Ellipsis>,
+            render: (id?: string | null) => <CopyCell text={id || '—'} />,
           },
           {
             title: '消耗token',
             dataIndex: 'tokens_used',
-            width: 110,
+            width: 88,
             align: 'right',
             render: (n: number) => (n ? fmtTokens(n) : '—'),
           },
           {
             title: '',
-            width: 96,
+            width: 88,
             render: (_, r) => <Button type="link" onClick={() => void openDetail(r.id)}>查看详情</Button>,
           },
         ]}

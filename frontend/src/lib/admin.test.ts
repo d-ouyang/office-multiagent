@@ -4,6 +4,7 @@ import { fmtTokens, renderDetail } from '../pages/AdminPanels';
 import { ADMIN_TABS, readAdminTab } from '../admin/nav';
 import { fmtDuration, fmtShanghai } from '../admin/format';
 import { DRAWER_WIDTH, PAGE_SIZE } from '../admin/AdminListPage';
+import { copyAdminText } from '../admin/ellipsis';
 import { humanizeAdminError, isUglyAdminError } from '../admin/errors';
 import { flowPathOf } from '../admin/FlowPathSvg';
 import { useDebouncedValue } from '../admin/useDebouncedValue';
@@ -149,6 +150,22 @@ describe('PAGE_SIZE', () => {
 describe('DRAWER_WIDTH', () => {
   it('任务详情和流水抽屉保持加宽', () => {
     expect(DRAWER_WIDTH).toContain('1080px');
+  });
+});
+
+describe('copyAdminText', () => {
+  it('空值和破折号不写剪贴板', async () => {
+    const write = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText: write } });
+    expect(await copyAdminText('')).toBe(false);
+    expect(await copyAdminText('—')).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  });
+  it('有内容则写入剪贴板', async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText: write } });
+    expect(await copyAdminText('  task-123  ')).toBe(true);
+    expect(write).toHaveBeenCalledWith('task-123');
   });
 });
 

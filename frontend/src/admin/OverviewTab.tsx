@@ -129,6 +129,7 @@ export default function OverviewTab() {
         title={`用量概览 · 近 ${days} 天`}
         extra={(
           <Segmented
+            size="large"
             value={days}
             onChange={(v) => setDays(Number(v))}
             options={[7, 14, 30].map((d) => ({ label: `${d} 天`, value: d }))}

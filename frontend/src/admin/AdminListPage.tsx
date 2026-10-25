@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import { Pagination } from './ui';
+import { ConfigProvider, Pagination } from './ui';
 
 export const PAGE_SIZE = 20;
 export const DRAWER_WIDTH = 'min(1080px, 86vw)';
@@ -18,7 +18,11 @@ export function AdminListPage({
 }) {
   return (
     <div className="admin-list-page">
-      {filters && <div className="admin-filter-bar">{filters}</div>}
+      {filters && (
+        <ConfigProvider componentSize="large">
+          <div className="admin-filter-bar">{filters}</div>
+        </ConfigProvider>
+      )}
       {extra && <div className="admin-list-extra">{extra}</div>}
       <div className="admin-list-body">{children}</div>
       {footer && <div className="admin-list-pager">{footer}</div>}

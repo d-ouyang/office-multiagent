@@ -140,21 +140,20 @@ export default function UsersTab() {
           {
             title: '工号',
             dataIndex: 'employee_id',
-            width: 140,
+            width: 168,
             ellipsis: { showTitle: false },
             render: (v) => <Ellipsis>{v}</Ellipsis>,
           },
           {
             title: '用户名',
             dataIndex: 'username',
-            width: 160,
             ellipsis: { showTitle: false },
             render: (v) => <Ellipsis>{v}</Ellipsis>,
           },
           {
             title: '角色',
             dataIndex: 'role',
-            width: 140,
+            width: 150,
             render: (r: string) => (
               <Tag color={r === 'admin' || r === 'superadmin' ? 'blue' : 'default'}>{roleLabel(r)}</Tag>
             ),
@@ -162,9 +161,12 @@ export default function UsersTab() {
           {
             title: '池',
             dataIndex: 'model_pool_id',
+            width: 148,
             render: (id: number | null | undefined, u) => (
               <Select
+                size="middle"
                 style={{ width: '100%' }}
+                popupMatchSelectWidth={false}
                 value={id ? String(id) : ''}
                 onChange={(v) => void changePool(u, v ? Number(v) : null)}
                 options={[
@@ -177,20 +179,20 @@ export default function UsersTab() {
           {
             title: '余额（token）',
             dataIndex: 'balance',
-            width: 150,
+            width: 168,
             align: 'right',
             render: (n: number) => n.toLocaleString(),
           },
           {
             title: '总使用量',
             dataIndex: 'total_used',
-            width: 130,
+            width: 140,
             align: 'right',
             render: (n?: number) => fmtTokens(n ?? 0),
           },
           {
             title: '操作',
-            width: 168,
+            width: 160,
             render: (_, u) => (
               <Space>
                 <Button size="small" type="primary" onClick={() => setRechargeUser(u)}>充值</Button>

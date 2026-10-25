@@ -119,14 +119,28 @@
 .admin-list-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 0;
 }
 .admin-list-body .ant-table-wrapper,
 .admin-list-body .ant-table,
 .admin-list-body .ant-table-container,
+.admin-list-body .ant-table-content,
+.admin-list-body .ant-table-header,
+.admin-list-body .ant-table-body,
 .admin-list-body table {
   width: 100% !important;
+  max-width: 100%;
+}
+.admin-list-body .ant-table-container,
+.admin-list-body .ant-table-content,
+.admin-list-body .ant-table-header,
+.admin-list-body .ant-table-body {
+  overflow-x: hidden !important;
+}
+.admin-list-body table {
+  table-layout: fixed;
 }
 .admin-list-body .ant-table {
   font-size: 18px;
@@ -144,6 +158,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.admin-copy-cell {
+  cursor: pointer;
+}
+.admin-copy-cell:hover {
+  color: #9eb0ff;
 }
 .admin-list-pager {
   flex: 0 0 auto;
