@@ -161,10 +161,9 @@ export default function UsersTab() {
           {
             title: '池',
             dataIndex: 'model_pool_id',
-            width: 148,
+            width: 220,
             render: (id: number | null | undefined, u) => (
               <Select
-                size="middle"
                 style={{ width: '100%' }}
                 popupMatchSelectWidth={false}
                 value={id ? String(id) : ''}
@@ -192,11 +191,11 @@ export default function UsersTab() {
           },
           {
             title: '操作',
-            width: 160,
+            width: 188,
             render: (_, u) => (
               <Space>
-                <Button size="small" type="primary" onClick={() => setRechargeUser(u)}>充值</Button>
-                <Button size="small" onClick={() => setLedgerUser(u)}>流水</Button>
+                <Button type="primary" onClick={() => setRechargeUser(u)}>充值</Button>
+                <Button onClick={() => setLedgerUser(u)}>流水</Button>
               </Space>
             ),
           },

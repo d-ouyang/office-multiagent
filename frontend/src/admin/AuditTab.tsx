@@ -119,12 +119,12 @@ export default function AuditTab() {
           },
           {
             title: '动作',
-            width: 140,
+            width: 176,
             render: (_, r) => <Tag color="blue">{r.action_label ?? r.action}</Tag>,
           },
           {
             title: '对象',
-            width: 180,
+            width: 280,
             ellipsis: { showTitle: false },
             render: (_, r) => {
               const text = `${TARGET_LABEL[r.target_type] ?? r.target_type}${r.target_label ? ` · ${r.target_label}` : ''}`;

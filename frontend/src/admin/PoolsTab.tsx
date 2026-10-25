@@ -137,13 +137,13 @@ export default function PoolsTab() {
               label: `${p.name} · ${ROLE_HINT[p.name] ?? `${p.user_count} 人`}`,
             }))}
           />
+          <Button type="primary" disabled={busy || !current} onClick={() => void savePool()}>
+            {busy ? '保存中…' : '保存可见性'}
+          </Button>
           <Button type="primary" onClick={() => { setNewName(''); setPoolOpen(true); }}>新建池</Button>
           {current && current.user_count === 0 && !ROLE_HINT[current.name] && (
             <Button danger disabled={busy} onClick={() => void removePool(current)}>删除该池</Button>
           )}
-          <Button type="primary" disabled={busy || !current} onClick={() => void savePool()}>
-            {busy ? '保存中…' : '保存可见性'}
-          </Button>
           <Button onClick={() => setCreating(true)}>新建模型</Button>
           <Button type="link" className="admin-filter-link" onClick={() => void load()}>刷新</Button>
         </>
@@ -168,7 +168,7 @@ export default function PoolsTab() {
           columns={[
             {
               title: '可见',
-              width: 80,
+              width: 88,
               render: (_, m) => (
                 <Switch
                   checked={!!draft[m.id]}
@@ -184,25 +184,25 @@ export default function PoolsTab() {
             {
               title: '实际调用名',
               dataIndex: 'api_model',
-              width: 220,
+              width: 360,
               ellipsis: { showTitle: false },
               render: (v?: string) => <Ellipsis title={v || '—'}>{v || '—'}</Ellipsis>,
             },
             {
               title: '渠道',
               dataIndex: 'provider',
-              width: 120,
+              width: 132,
               ellipsis: { showTitle: false },
               render: (v?: string) => <Ellipsis>{v || '—'}</Ellipsis>,
             },
             {
               title: '上下文 / 输出',
-              width: 160,
+              width: 176,
               render: (_, m) => `${fmtTokens(m.context_window ?? 0)} / ${fmtTokens(m.max_output ?? 0)}`,
             },
             {
               title: '启用',
-              width: 120,
+              width: 108,
               render: (_, m) => (
                 <Switch
                   checked={m.enabled !== false}
@@ -213,8 +213,8 @@ export default function PoolsTab() {
               ),
             },
             {
-              title: '',
-              width: 88,
+              title: '操作',
+              width: 96,
               render: (_, m) => <Button onClick={() => setEditing(m)}>编辑</Button>,
             },
           ]}

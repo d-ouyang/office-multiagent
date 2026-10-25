@@ -175,6 +175,18 @@
 }
 .admin-list-body .ant-table-tbody > tr > td {
   white-space: nowrap;
+  font-size: 18px;
+}
+.admin-list-body .ant-table .ant-btn,
+.admin-list-body .ant-table .ant-select,
+.admin-list-body .ant-table .ant-select-selector,
+.admin-list-body .ant-table .ant-select-selection-item,
+.admin-list-body .ant-table .ant-tag,
+.admin-list-body .ant-table .ant-switch,
+.admin-list-body .ant-table .admin-ellipsis,
+.admin-list-body .ant-table .admin-copy-cell,
+.admin-list-body .ant-table .admin-mono {
+  font-size: 18px;
 }
 .admin-ellipsis {
   display: block;
