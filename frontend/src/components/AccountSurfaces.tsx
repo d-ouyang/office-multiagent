@@ -403,7 +403,6 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <p>每次发送前在输入条里选低、高、最大。只作用于你这一次提问。</p>
           </div>
         </div>
-        <p className="account-note">目前没有别的个人开关。长期记忆在旁边那一栏，也只属于你自己。</p>
       </section>
     </Dialog>
   );

@@ -8,6 +8,8 @@ import {
   deriveProcess,
   deriveCurrentAgent,
   deriveReplyMeta,
+  pauseText,
+  quotaPauseText,
   deriveSources,
   deriveThinking,
   deriveToolCalls,
@@ -173,15 +175,12 @@ describe('deriveReplyMeta', () => {
   });
 });
 
-// p7.1：暂停文案
-import { pauseText } from './derive';
-
 describe('pauseText（p7.1 暂停原因）', () => {
-  it('quota 带余额与缺额', () => {
+  it('quota 只保留预扣额，不把暂停当时的余额写进文案', () => {
     const t = pauseText('paused_insufficient_quota', { balance: 0, needed: 2000 });
     expect(t).toContain('余额不足');
-    expect(t).toContain('0');
     expect(t).toContain('2000');
+    expect(t).not.toContain('继续');
   });
   it('user / error 各自文案', () => {
     expect(pauseText('paused_user')).toContain('暂停');
@@ -190,5 +189,13 @@ describe('pauseText（p7.1 暂停原因）', () => {
   });
   it('未知状态兜底', () => {
     expect(pauseText('weird')).toBe('任务已暂停');
+  });
+  it('当前余额够付预扣时不提示，不够时用实时余额', () => {
+    expect(quotaPauseText(2000, 1_000_000)).toBeNull();
+    expect(quotaPauseText(2000, null)).toBeNull();
+    const low = quotaPauseText(2000, 0);
+    expect(low).toContain('当前余额 0');
+    expect(low).toContain('2,000');
+    expect(low).not.toContain('继续');
   });
 });

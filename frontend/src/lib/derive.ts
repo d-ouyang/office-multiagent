@@ -317,12 +317,24 @@ export function deriveReplyMeta(events: StreamEvent[]): ReplyMeta {
   };
 }
 
-/** p7.1：任务暂停原因 → 横幅文案（quota / user / error；input 预留）。 */
+/** 余额不足横幅。数字用当前钱包，不用暂停当时记下的余额。余额已经够付这次预扣时不提示。 */
+export function quotaPauseText(needed: number, balance: number | null): string | null {
+  if (balance == null) return null;
+  const need = Number.isFinite(needed) ? needed : 0;
+  if (need > 0 && balance >= need) return null;
+  if (balance > 0 && need <= 0) return null;
+  const bal = balance.toLocaleString('zh-CN');
+  if (need > 0) {
+    return `余额不足，这次提问大约需要 ${need.toLocaleString('zh-CN')}，当前余额 ${bal}。充值后重新发送即可。`;
+  }
+  return `余额不足，当前余额 ${bal}。充值后重新发送即可。`;
+}
+
+/** p7.1：任务暂停原因 → 横幅文案（user / error）。余额不足不走这里。 */
 export function pauseText(status: string, payload: Record<string, unknown> = {}): string {
   if (status === 'paused_insufficient_quota') {
-    const bal = Number(payload.balance ?? 0);
     const need = Number(payload.needed ?? 0);
-    return `余额不足已暂停（余额 ${bal}，需要 ${need}）。充值后点「继续」`;
+    return need > 0 ? `余额不足，这次提问大约需要 ${need}。` : '余额不足，这次提问没有开始。';
   }
   if (status === 'paused_user') return '任务已按你的要求暂停，可点「继续」重跑';
   if (status === 'paused_error' || status === 'failed') return '任务中途出错已暂停，可点「重试」';

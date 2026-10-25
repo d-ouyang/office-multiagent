@@ -10,7 +10,7 @@ import { sortDialogueModels, toPromptModel, type DialogueModel } from '../compon
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import type { StreamEvent } from '../types';
 import ContextRing from '../components/ContextRing';
-import { deriveContextUsage, deriveCurrentAgent, agentLabel, pauseText } from '../lib/derive';
+import { deriveContextUsage, deriveCurrentAgent, agentLabel, pauseText, quotaPauseText } from '../lib/derive';
 import { authHeaders, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, updateSession } from '../lib/api';
 
 const EFFORTS = ['低', '高', '最大'] as const;
@@ -50,7 +50,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
   const [currentId, setCurrentId] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
-  const [paused, setPaused] = useState<{ taskId: string; message: string } | null>(null);
+  const [paused, setPaused] = useState<{ taskId: string; status: string; needed: number; message: string } | null>(null);
   const [usage, setUsage] = useState<{ month_tokens: number; month_count: number; total_tokens: number; total_count: number } | null>(null);
   const [modelId, setModelId] = useState(() => localStorage.getItem('office_model') || 'deepseek-chat');
   const [locate, setLocate] = useState<{ taskId: string; question: string } | null>(null);
@@ -197,7 +197,17 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     // p7.1：刷新/切会话后，若本会话有"暂停/失败"的任务，横幅提示可继续
     try {
       const t = await latestPausedTask(sid);
-      setPaused(t ? { taskId: t.id, message: pauseText(String(t.status), (t.pause_payload as Record<string, unknown>) ?? {}) } : null);
+      if (!t) {
+        setPaused(null);
+      } else {
+        const payload = (t.pause_payload as Record<string, unknown>) ?? {};
+        setPaused({
+          taskId: t.id,
+          status: String(t.status),
+          needed: Number(payload.needed ?? 0),
+          message: pauseText(String(t.status), payload),
+        });
+      }
     } catch {
       setPaused(null);
     }
@@ -212,7 +222,13 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
       if (doneStatus.startsWith('paused') || doneStatus === 'failed') {
         const quota = [...events].reverse().find((e) => e.type === 'quota_paused');
         const payload = (quota?.data ?? done?.data ?? {}) as Record<string, unknown>;
-        setPaused({ taskId: done?.run_id ?? '', message: pauseText(doneStatus, payload) });
+        setPaused({
+          taskId: done?.run_id ?? '',
+          status: doneStatus,
+          needed: Number(payload.needed ?? 0),
+          message: pauseText(doneStatus, payload),
+        });
+        if (doneStatus === 'paused_insufficient_quota') refreshQuota();
       } else {
         setPaused(null);
       }
@@ -232,7 +248,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     const id = events.find((e) => e.run_id)?.run_id ?? '';
     if (id) {
       void pauseTask(id).then((ok) => {
-        if (ok) setPaused({ taskId: id, message: '任务已按你的要求暂停，可点「继续」重跑' });
+        if (ok) setPaused({ taskId: id, status: 'paused_user', needed: 0, message: '任务已按你的要求暂停，可点「继续」重跑' });
       });
     }
     stop();
@@ -442,6 +458,9 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     [messages, events, status],
   );
 
+  const quotaBanner = paused?.status === 'paused_insufficient_quota'
+    ? quotaPauseText(paused.needed, balance)
+    : paused?.message ?? null;
   const promptModels = useMemo(() => sortDialogueModels(models).map(toPromptModel), [models]);
   const modelWindow = models.find((m) => m.id === modelId)?.context_window
     || models.find((m) => m.id === 'deepseek-chat')?.context_window
@@ -527,15 +546,17 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
         </div>
         {uploadError && <div className="banner warn">{uploadError}</div>}
         {error && <div className="banner err">{error}</div>}
-        {paused && (
+        {paused && quotaBanner && (
           <div className="banner warn pause-banner">
-            <span>⏸ {paused.message}</span>
+            <span>⏸ {quotaBanner}</span>
             <span className="pause-actions">
-              <button type="button" className="admin-btn" onClick={onResume} disabled={status === 'streaming'}>
-                继续
-              </button>
+              {paused.status !== 'paused_insufficient_quota' && (
+                <button type="button" className="admin-btn" onClick={onResume} disabled={status === 'streaming'}>
+                  {paused.status === 'paused_error' || paused.status === 'failed' ? '重试' : '继续'}
+                </button>
+              )}
               <button type="button" className="admin-btn ghost" onClick={() => setPaused(null)}>
-                暂不
+                知道了
               </button>
             </span>
           </div>
