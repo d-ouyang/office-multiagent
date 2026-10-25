@@ -5,6 +5,21 @@
 
 ---
 
+## v1.0.0-p6.41 — 引入 Skill 能力层 P1（2026-10-26）
+
+**类型**：架构（不改动运行时）
+
+- 新增 `backend/app/skills/`：Tool（原子函数）/ Skill（能力包）/ Agent（运行时）三层拆开，
+  补齐参考架构缺失的「Agent Skills」组件。
+- 一个 skill 一个目录：`spec.yaml`（触发条件 + 工具白名单 + 记忆权限）+ `prompt.md`（指令）+ 可选 `run.py`。
+  工具从 Agent 视角隐身，成为 skill 的实现细节。
+- 示例 `doc_writing`：包住现有 `write_document`，只加护栏不重实现；`enabled` 缺省关闭，fail-closed。
+- **只新增，不动运行时**：`router.py` / `agents.py` / `orchestrator.py` 未改。测试 10 例全过。
+
+详见 `docs/iterations/v1.0.0-p6.41-skill-layer.md` 与 `docs/项目架构调整-引入Skill层-2026-10-24.md`。
+
+---
+
 ## v1.0.0-p6.40 — 管理端 antd 深色主题与表格/用量/审计打磨（2026-10-26）
 
 **类型**：功能 + 修复

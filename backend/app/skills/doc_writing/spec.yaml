@@ -1,0 +1,38 @@
+# =====================================================================
+# doc_writing：文档写作能力包（P1 参考实现）
+#
+# 只做"声明"——用什么工具、什么条件下触发、能读哪些记忆；不写实现。
+# 实现仍在 orchestration/tools_write.py，本 skill 只负责编排与约束。
+#
+# 字段说明见 docs/项目架构调整-引入Skill层-2026-10-24.md §四
+# =====================================================================
+
+name: doc_writing
+title: 文档写作
+description: 把已经得到的结论写成 md、docx、pdf 或 pptx 文件
+
+triggers:
+  - intent: write_document
+  - keywords: ["写文档", "生成报告", "导出 word", "导出word", "生成文档",
+               "写成 pdf", "生成 pdf", "做份 ppt", "演示文稿", "输出文件"]
+
+# 工具白名单：必须是 ToolRegistry 里注册过的名字。
+# 未注册的名字会被跳过并对该 skill 不可见（能力缺失，不猜不编）。
+tools:
+  - write_document
+  - render_chart
+  - clean_table
+
+# 留空 = 跟随会话/默认模型，不在 skill 层强制指定
+model_preference: ""
+
+memory:
+  session_read: true      # 需要引用本轮已产出的结论
+  user_longterm: false
+  semantic_search: false
+
+fallback: general
+
+# fail-closed：缺省关闭。doc_writing 是 P1 参考实现，显式打开以便验证加载链路。
+# P2 接入路由后，新 skill 一律先关着上线、验证通过再开。
+enabled: true
