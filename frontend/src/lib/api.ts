@@ -480,6 +480,7 @@ export interface AdminUser {
   role: string;
   model_pool_id?: number | null;
   balance: number;
+  total_used?: number;
 }
 
 export async function adminListUsers(
@@ -487,10 +488,14 @@ export async function adminListUsers(
   page = 1,
   pageSize = 20,
   userId?: number,
+  balanceMin?: number,
+  balanceMax?: number,
 ): Promise<{ users: AdminUser[]; total: number; page: number; page_size: number }> {
   const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (q?.trim()) qs.set('q', q.trim());
   if (userId) qs.set('user_id', String(userId));
+  if (balanceMin != null) qs.set('balance_min', String(balanceMin));
+  if (balanceMax != null) qs.set('balance_max', String(balanceMax));
   const res = await fetch(`/api/v1/admin/users?${qs.toString()}`, { headers: adminAuthHeaders() });
   if (res.status === 401) {
     adminClearToken();
@@ -518,13 +523,23 @@ export async function adminRecharge(userId: number, amount: number, note?: strin
   return Number(data.balance);
 }
 
-export async function adminUserLedger(userId: number, limit = 20): Promise<LedgerEntry[]> {
-  const res = await fetch(`/api/v1/admin/users/${userId}/ledger?limit=${limit}`, {
+export async function adminUserLedger(
+  userId: number,
+  page = 1,
+  pageSize = 20,
+): Promise<{ ledger: LedgerEntry[]; total: number; page: number; page_size: number }> {
+  const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  const res = await fetch(`/api/v1/admin/users/${userId}/ledger?${qs.toString()}`, {
     headers: adminAuthHeaders(),
   });
-  if (!res.ok) return [];
+  if (!res.ok) return { ledger: [], total: 0, page, page_size: pageSize };
   const data = await res.json();
-  return data.ledger ?? [];
+  return {
+    ledger: data.ledger ?? [],
+    total: data.total ?? (data.ledger ?? []).length,
+    page: data.page ?? page,
+    page_size: data.page_size ?? pageSize,
+  };
 }
 
 // --------------------------------------------------------------------------- //
@@ -557,6 +572,7 @@ export interface UsagePoint {
 
 export interface AdminTaskRow {
   id: string;
+  session_id?: string | null;
   user_id: number | null;
   username: string | null;
   status: string;
@@ -564,6 +580,7 @@ export interface AdminTaskRow {
   text: string;
   tokens_used: number;
   created_at: string | null;
+  duration_ms?: number | null;
   tool_summary?: string;
   rag_called?: boolean;
   validation_mismatch?: boolean;
@@ -595,14 +612,32 @@ export async function adminTasks(
   page = 1,
   pageSize = 20,
   flag?: string,
+  extra: { task_id?: string; session_id?: string; user_id?: number } = {},
 ): Promise<{ tasks: AdminTaskRow[]; total: number; page: number; page_size: number }> {
   const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (status) qs.set('status', status);
   if (flag) qs.set('flag', flag);
+  if (extra.task_id) qs.set('task_id', extra.task_id);
+  if (extra.session_id) qs.set('session_id', extra.session_id);
+  if (extra.user_id) qs.set('user_id', String(extra.user_id));
   const data = await adminGet<{ tasks: AdminTaskRow[]; total: number; page: number; page_size: number }>(
     `/api/v1/admin/tasks?${qs.toString()}`,
   );
   return { tasks: data.tasks ?? [], total: data.total ?? 0, page: data.page ?? page, page_size: data.page_size ?? pageSize };
+}
+
+export interface AdminFlowNode {
+  key: string;
+  label: string;
+  kind: string;
+  detail?: string;
+}
+
+export interface AdminRunFlow {
+  question?: string;
+  nodes: AdminFlowNode[];
+  path: string[];
+  events?: Array<{ type: string; ts?: number; seq?: number; data?: Record<string, unknown> }>;
 }
 
 export interface AdminRunDetail extends AdminTaskRow {
@@ -615,6 +650,7 @@ export interface AdminRunDetail extends AdminTaskRow {
   intents: string[];
   model?: string;
   has_artifact?: boolean;
+  flow?: AdminRunFlow;
 }
 
 export function adminRun(id: string): Promise<AdminRunDetail> {
@@ -719,4 +755,30 @@ export function adminDeletePool(poolId: number): Promise<{ ok: boolean }> {
 
 export function adminSetUserPool(userId: number, poolId: number | null): Promise<{ model_pool_id: number | null }> {
   return adminSend(`/api/v1/admin/users/${userId}/pool`, 'PATCH', { model_pool_id: poolId });
+}
+
+export interface AdminModel {
+  id: string;
+  name: string;
+  provider: string;
+  in_dialogue: boolean;
+  enabled?: boolean;
+  role?: string | null;
+  multimodal_input?: boolean;
+  context_window?: number;
+  max_output?: number;
+  supports_reasoning?: boolean;
+  reasoning_efforts?: string[];
+  pool_ids?: string[];
+  cost_per_1k?: number;
+  api_model?: string;
+  description?: string;
+}
+
+export function adminModelsCatalog(): Promise<{ models: AdminModel[]; providers: Record<string, { base_url?: string }> }> {
+  return adminSend('/api/v1/admin/models', 'GET');
+}
+
+export function adminUpdateModel(id: string, patch: Partial<AdminModel>): Promise<{ ok: boolean; model: AdminModel }> {
+  return adminSend(`/api/v1/admin/models/${encodeURIComponent(id)}`, 'PATCH', patch);
 }

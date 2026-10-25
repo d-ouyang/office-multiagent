@@ -17,6 +17,23 @@ from pydantic import BaseModel, Field
 
 from .config import settings
 
+_EDITABLE_FIELDS = (
+    "name",
+    "provider",
+    "in_dialogue",
+    "enabled",
+    "role",
+    "multimodal_input",
+    "context_window",
+    "max_output",
+    "supports_reasoning",
+    "reasoning_efforts",
+    "pool_ids",
+    "cost_per_1k",
+    "api_model",
+    "description",
+)
+
 
 class ModelEntry(BaseModel):
     id: str
@@ -37,6 +54,7 @@ class ModelEntry(BaseModel):
     base_url: str | None = None
     api_key_env: str | None = None
     description: str = ""  # p6.8：模型描述（前端下拉展示）
+    enabled: bool = True  # 管理端可关；关闭后不进对话下拉，逻辑模型也不再被取用
 
 
 class ProviderEntry(BaseModel):
@@ -62,15 +80,86 @@ def _resolve_config_path() -> Path:
     )
 
 
+def _overrides_path() -> Path:
+    return _resolve_config_path().with_name("models.overrides.yaml")
+
+
+def _load_overrides() -> dict[str, dict[str, Any]]:
+    import yaml
+
+    path = _overrides_path()
+    if not path.exists():
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    out: dict[str, dict[str, Any]] = {}
+    for item in data.get("models", []) if isinstance(data, dict) else []:
+        if isinstance(item, dict) and item.get("id"):
+            out[str(item["id"])] = {k: v for k, v in item.items() if k != "id"}
+    return out
+
+
+def _apply_overrides(models: list[ModelEntry]) -> list[ModelEntry]:
+    overrides = _load_overrides()
+    if not overrides:
+        return models
+    merged: list[ModelEntry] = []
+    for model in models:
+        patch = overrides.get(model.id)
+        if not patch:
+            merged.append(model)
+            continue
+        payload = model.model_dump()
+        for key in _EDITABLE_FIELDS:
+            if key in patch:
+                payload[key] = patch[key]
+        merged.append(ModelEntry(**payload))
+    return merged
+
+
 @functools.lru_cache(maxsize=1)
 def load_registry() -> dict[str, Any]:
     import yaml  # 懒导入，隔离重依赖
 
     raw = _resolve_config_path().read_text(encoding="utf-8")
     data = yaml.safe_load(raw) or {}
-    models = [ModelEntry(**m) for m in data.get("models", [])]
+    models = _apply_overrides([ModelEntry(**m) for m in data.get("models", [])])
     providers = {k: ProviderEntry(**v) for k, v in data.get("llm_providers", {}).items()}
     return {"models": models, "providers": providers}
+
+
+def reload_registry() -> dict[str, Any]:
+    load_registry.cache_clear()
+    return load_registry()
+
+
+def list_catalog() -> list[dict[str, Any]]:
+    """管理端模型清单（含逻辑模型与关闭项）。"""
+    return [m.model_dump() for m in load_registry()["models"]]
+
+
+def update_model(model_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+    """把管理端改动写进 models.overrides.yaml，不改手写的 models.yaml。"""
+    import yaml
+
+    entry = next((m for m in load_registry()["models"] if m.id == model_id), None)
+    if entry is None:
+        raise KeyError(model_id)
+    clean = {k: patch[k] for k in _EDITABLE_FIELDS if k in patch}
+    if not clean:
+        return entry.model_dump()
+    overrides = _load_overrides()
+    current = overrides.get(model_id, {})
+    current.update(clean)
+    overrides[model_id] = current
+    path = _overrides_path()
+    payload = {"models": [{"id": mid, **fields} for mid, fields in overrides.items()]}
+    path.write_text(
+        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    reload_registry()
+    updated = next(m for m in load_registry()["models"] if m.id == model_id)
+    return updated.model_dump()
 
 
 def get_dialogue_models(pool_ids: list[str] | None = None) -> list[dict[str, Any]]:
@@ -78,7 +167,7 @@ def get_dialogue_models(pool_ids: list[str] | None = None) -> list[dict[str, Any
     reg = load_registry()
     out: list[dict[str, Any]] = []
     for m in reg["models"]:
-        if not m.in_dialogue:
+        if not m.in_dialogue or not m.enabled:
             continue
         if pool_ids and not (set(m.pool_ids) & set(pool_ids)):
             continue
@@ -103,7 +192,7 @@ def get_logic_model(role: str) -> ModelEntry | None:
     """取后端逻辑专用小模型（embedding / reranker / decision）。"""
     reg = load_registry()
     for m in reg["models"]:
-        if m.role == role:
+        if m.role == role and m.enabled:
             return m
     return None
 

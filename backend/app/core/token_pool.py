@@ -35,29 +35,43 @@ class TokenPool:
             ).first()
             return int(row[0]) if row else 0
 
-    def recent(self, user_id: int, limit: int = 10) -> list[dict]:
+    def recent(self, user_id: int, limit: int = 10, offset: int = 0) -> list[dict]:
         """最近流水（p6.4 /quota 展示用；p7.1 带 kind/note；p6.26 充值带 amount）。"""
+        page, _total = self.ledger_page(user_id, limit=limit, offset=offset)
+        return page
+
+    def ledger_page(self, user_id: int, *, limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
         with self.engine.connect() as conn:
+            total = int(
+                conn.execute(
+                    text("SELECT COUNT(*) FROM token_ledger WHERE user_id=:u"),
+                    {"u": user_id},
+                ).scalar()
+                or 0
+            )
             rows = conn.execute(
                 text(
                     "SELECT id, task_id, model, reserve, settle, kind, note, amount, created_at "
-                    "FROM token_ledger WHERE user_id=:u ORDER BY id DESC LIMIT :l"
+                    "FROM token_ledger WHERE user_id=:u ORDER BY id DESC LIMIT :l OFFSET :o"
                 ),
-                {"u": user_id, "l": limit},
+                {"u": user_id, "l": limit, "o": offset},
             ).mappings().all()
-        return [
-            {
-                "task_id": r["task_id"],
-                "model": r["model"],
-                "reserve": r["reserve"],
-                "settle": r["settle"],
-                "kind": r.get("kind") or "task",
-                "note": r.get("note"),
-                "amount": r.get("amount"),
-                "created_at": _iso_utc(r["created_at"]),
-            }
-            for r in rows
-        ]
+        return (
+            [
+                {
+                    "task_id": r["task_id"],
+                    "model": r["model"],
+                    "reserve": r["reserve"],
+                    "settle": r["settle"],
+                    "kind": r.get("kind") or "task",
+                    "note": r.get("note"),
+                    "amount": r.get("amount"),
+                    "created_at": _iso_utc(r["created_at"]),
+                }
+                for r in rows
+            ],
+            total,
+        )
 
     def credit(
         self,

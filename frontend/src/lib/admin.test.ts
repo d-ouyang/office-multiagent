@@ -1,6 +1,8 @@
 // p6.26：管理端路由与用量格式化（纯函数，jsdom 环境）
 import { readView } from '../App';
-import { fmtTokens } from '../pages/AdminPanels';
+import { fmtTokens, renderDetail } from '../pages/AdminPanels';
+import { ADMIN_TABS, readAdminTab } from '../admin/nav';
+import { fmtDuration, fmtShanghai } from '../admin/format';
 
 describe('readView（管理端独立路由）', () => {
   afterEach(() => {
@@ -62,8 +64,37 @@ describe('pageWindow（分页页码折叠）', () => {
   });
 });
 
+describe('ADMIN_TABS', () => {
+  it('只有五个一级入口，没有分组页', () => {
+    expect(ADMIN_TABS.map((t) => t.key)).toEqual(['overview', 'tasks', 'users', 'pools', 'audit']);
+  });
+});
+
+describe('readAdminTab', () => {
+  it('默认概览，旧 hash 折叠进新导航', () => {
+    expect(readAdminTab('')).toBe('overview');
+    expect(readAdminTab('#usage')).toBe('overview');
+    expect(readAdminTab('#system')).toBe('overview');
+    expect(readAdminTab('#runs')).toBe('tasks');
+    expect(readAdminTab('#users')).toBe('users');
+  });
+});
+
+describe('上海时间与耗时', () => {
+  it('ISO 转 Asia/Shanghai', () => {
+    const text = fmtShanghai('2026-10-25T00:00:00Z');
+    expect(text).toContain('2026');
+    expect(text).toContain('08:00:00');
+  });
+  it('耗时格式', () => {
+    expect(fmtDuration(null)).toBe('—');
+    expect(fmtDuration(800)).toBe('800ms');
+    expect(fmtDuration(12_000)).toBe('12s');
+    expect(fmtDuration(125_000)).toBe('2m 5s');
+  });
+});
+
 // p6.28a：审计明细人话化
-import { renderDetail } from '../pages/AdminPanels';
 
 describe('renderDetail（审计明细翻译）', () => {
   it('充值明细', () => {
@@ -78,5 +109,8 @@ describe('renderDetail（审计明细翻译）', () => {
   it('未知动作返回空（不硬编）', () => {
     expect(renderDetail('admin.unknown', { x: 1 })).toEqual([]);
     expect(renderDetail('admin.recharge', null)).toEqual([]);
+  });
+  it('模型更新写字段名', () => {
+    expect(renderDetail('admin.model.update', { fields: ['name', 'max_output'] }).join(' ')).toContain('name');
   });
 });

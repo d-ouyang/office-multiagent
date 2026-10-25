@@ -6,9 +6,17 @@
   · 逻辑用小模型（embedding/reranker/decision）存在但不在对话列表。
 需 pyyaml：pip install pyyaml
 """
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
-from app.core.model_registry import get_dialogue_models, get_logic_model
+from app.core.model_registry import (
+    get_dialogue_models,
+    get_logic_model,
+    list_catalog,
+    reload_registry,
+    update_model,
+)
 from app.main import app
 
 
@@ -40,6 +48,7 @@ def test_models_pool_filter():
     sample = next(m for m in admin if m["id"] == "deepseek-chat")
     assert sample["description"]
     assert sample["context_window"] > 0
+    assert sample["max_output"] == 393216
 
 
 def test_dialogue_models_excludes_logic():
@@ -54,3 +63,24 @@ def test_logic_models_present():
     assert emb is not None and emb.id == "bge-m3"
     assert rnk is not None and rnk.role == "reranker"
     assert dec is not None and dec.role == "decision"
+
+
+def test_catalog_and_override_roundtrip(tmp_path, monkeypatch):
+    src = Path(__file__).resolve().parents[1] / "config" / "models.yaml"
+    dest = tmp_path / "models.yaml"
+    dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "models_config", str(dest))
+    reload_registry()
+    try:
+        before = next(m for m in list_catalog() if m["id"] == "deepseek-chat")
+        updated = update_model("deepseek-chat", {"name": "测试覆盖名", "enabled": False})
+        assert updated["name"] == "测试覆盖名"
+        assert updated["enabled"] is False
+        assert "deepseek-chat" not in {m["id"] for m in get_dialogue_models()}
+        update_model("deepseek-chat", {"name": before["name"], "enabled": True})
+        assert "deepseek-chat" in {m["id"] for m in get_dialogue_models()}
+    finally:
+        monkeypatch.setattr(settings, "models_config", "")
+        reload_registry()

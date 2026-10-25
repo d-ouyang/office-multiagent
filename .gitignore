@@ -33,3 +33,6 @@ chroma_data/
 htmlcov/
 .pytest_tmp/
 backend/data/
+
+# 管理端模型覆盖层（本机/容器写入，不进仓库）
+backend/config/models.overrides.yaml

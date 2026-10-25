@@ -32,10 +32,10 @@ export default function AdminLoginPage({ onLoggedin }: { onLoggedin: (u: LoginUs
     <div className="page login-page admin-login">
       <div className="login-card">
         <div className="admin-login-brand">
-          <span className="admin-login-badge">ADMIN</span>
-          <h1>管理端</h1>
+          <img className="admin-logo" src="/gq_logo.jpg" alt="锅圈" />
+          <h1>锅圈Agent Admin</h1>
         </div>
-        <p className="sub">office-multiagent · 仅管理员账号可登录</p>
+        <p className="sub">仅管理员账号可登录</p>
         <form className="login-form" method="post" action="/api/v1/auth/login" onSubmit={submit}>
           <input
             name="username"
