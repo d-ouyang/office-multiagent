@@ -179,13 +179,17 @@ def test_overview_month_tokens_only_task_settles(eng):
 
 def test_usage_series_by_day(eng):
     with eng.begin() as conn:
-        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle, created_at) VALUES (1, 'a', 'task', 2000, 100, '2026-10-21 10:00:00')"))
-        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle, created_at) VALUES (1, 'b', 'task', 2000, 200, '2026-10-21 11:00:00')"))
-        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle, created_at) VALUES (2, 'c', 'task', 2000, 300, '2026-10-22 12:00:00')"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (1, 'a', 'deepseek-chat', 'task', 2000, 100, '2026-10-21 10:00:00')"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (1, 'b', 'deepseek-chat', 'task', 2000, 200, '2026-10-21 11:00:00')"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (2, 'c', 'qwen3.5-9b-sf', 'task', 2000, 300, '2026-10-22 12:00:00')"))
     data = TestClient(app).get("/api/v1/admin/usage?days=30", headers=_auth()).json()
     series = {row["date"]: row for row in data["series"]}
+    assert len(data["series"]) == 30
     assert series["2026-10-21"]["tokens"] == 300 and series["2026-10-21"]["calls"] == 2
+    assert series["2026-10-21"]["by_model"]["deepseek-chat"] == 300
     assert series["2026-10-22"]["tokens"] == 300
+    assert series["2026-10-22"]["by_model"]["qwen3.5-9b-sf"] == 300
+    assert data["models"][0] == "deepseek-chat"
 
 
 def test_admin_tasks_global_with_username_and_filter(eng):

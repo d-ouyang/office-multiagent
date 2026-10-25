@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { adminOverview, adminUsage, getHealth, type AdminOverview, type UsagePoint } from '../lib/api';
 import { humanizeAdminError } from './errors';
 import { fmtTokens } from './format';
 import { goAdmin, type AdminTab } from './nav';
+import UsageChart from './UsageChart';
 import { Alert, Button, Card, Col, Row, Segmented, Space, Statistic, Tag, Typography } from './ui';
 
 function KpiCard({
@@ -43,6 +44,7 @@ export default function OverviewTab() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [health, setHealth] = useState<{ status: string; services?: Record<string, { ok: boolean; detail?: string | null }> } | null>(null);
   const [series, setSeries] = useState<UsagePoint[]>([]);
+  const [models, setModels] = useState<string[]>([]);
   const [days, setDays] = useState(7);
   const [error, setError] = useState('');
 
@@ -52,10 +54,15 @@ export default function OverviewTab() {
   }, []);
 
   useEffect(() => {
-    adminUsage(days).then((u) => setSeries(u.series)).catch(() => setSeries([]));
+    adminUsage(days).then((u) => {
+      setSeries(u.series ?? []);
+      setModels(u.models ?? []);
+    }).catch(() => {
+      setSeries([]);
+      setModels([]);
+    });
   }, [days]);
 
-  const max = useMemo(() => Math.max(1, ...series.map((p) => p.tokens)), [series]);
   const services = health?.services ?? {};
 
   return (
@@ -161,19 +168,10 @@ export default function OverviewTab() {
             </Col>
           </Row>
         )}
-        {series.length === 0 && <Typography.Text type="secondary">这段时间还没有消耗记录。</Typography.Text>}
-        <div className="admin-bars">
-          {series.map((p) => (
-            <div className="admin-bar-row" key={p.date}>
-              <span className="admin-bar-date">{p.date.slice(5)}</span>
-              <span className="admin-bar-track">
-                <span className="admin-bar-fill" style={{ width: `${Math.max(2, (p.tokens / max) * 100)}%` }} />
-              </span>
-              <span className="admin-bar-value">{fmtTokens(p.tokens)}</span>
-              <span className="admin-muted">{p.calls} 次</span>
-            </div>
-          ))}
-        </div>
+        {series.every((point) => !point.tokens) && (
+          <Typography.Text type="secondary">这段时间还没有消耗记录。</Typography.Text>
+        )}
+        <UsageChart models={models} series={series} />
       </Card>
 
       <Card title="快捷入口">

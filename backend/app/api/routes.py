@@ -1399,7 +1399,7 @@ def admin_usage(
     days: int = Query(default=7, ge=1, le=30),
     authorization: str | None = Header(default=None),
 ):
-    """最近 N 天任务消耗（按 settle 汇总，按天分桶）。"""
+    """最近 N 天任务消耗：按天补齐，并按模型拆开（竖向堆叠柱用）。"""
     _require_admin(authorization)
     from datetime import datetime, timedelta, timezone
 
@@ -1407,24 +1407,38 @@ def admin_usage(
 
     from ..core.db import get_engine
 
-    since = (datetime.now(timezone.utc) - timedelta(days=days - 1)).strftime("%Y-%m-%d 00:00:00")
+    today = datetime.now(timezone.utc).date()
+    start = today - timedelta(days=days - 1)
+    since = start.strftime("%Y-%m-%d 00:00:00")
+    buckets: dict[str, dict[str, Any]] = {}
+    for offset in range(days):
+        day = (start + timedelta(days=offset)).isoformat()
+        buckets[day] = {"date": day, "tokens": 0, "calls": 0, "by_model": {}}
+    totals: dict[str, int] = {}
     eng = get_engine()
     with eng.connect() as conn:
         rows = conn.execute(
             _text(
-                "SELECT DATE(created_at) AS d, COALESCE(SUM(settle), 0) AS tokens, COUNT(*) AS calls "
+                "SELECT DATE(created_at) AS d, COALESCE(NULLIF(model, ''), '未记模型') AS model_name, "
+                "COALESCE(SUM(settle), 0) AS tokens, COUNT(*) AS calls "
                 "FROM token_ledger WHERE kind = 'task' AND settle IS NOT NULL AND created_at >= :s "
-                "GROUP BY DATE(created_at) ORDER BY d"
+                "GROUP BY DATE(created_at), model_name ORDER BY d"
             ),
             {"s": since},
         ).mappings().all()
-    return {
-        "days": days,
-        "series": [
-            {"date": str(r["d"]), "tokens": int(r["tokens"] or 0), "calls": int(r["calls"] or 0)}
-            for r in rows
-        ],
-    }
+    for row in rows:
+        day = str(row["d"])[:10]
+        if day not in buckets:
+            continue
+        name = str(row["model_name"] or "未记模型")
+        tokens = int(row["tokens"] or 0)
+        calls = int(row["calls"] or 0)
+        buckets[day]["tokens"] += tokens
+        buckets[day]["calls"] += calls
+        buckets[day]["by_model"][name] = buckets[day]["by_model"].get(name, 0) + tokens
+        totals[name] = totals.get(name, 0) + tokens
+    models = sorted(totals, key=lambda name: (-totals[name], name))
+    return {"days": days, "models": models, "series": [buckets[(start + timedelta(days=i)).isoformat()] for i in range(days)]}
 
 
 def _parse_day(raw: str | None) -> str | None:

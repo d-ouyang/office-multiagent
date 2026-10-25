@@ -586,6 +586,7 @@ export interface UsagePoint {
   date: string;
   tokens: number;
   calls: number;
+  by_model?: Record<string, number>;
 }
 
 export interface AdminTaskRow {
@@ -616,7 +617,7 @@ export function adminOverview(): Promise<AdminOverview> {
   return adminGet<AdminOverview>('/api/v1/admin/overview');
 }
 
-export function adminUsage(days = 7): Promise<{ days: number; series: UsagePoint[] }> {
+export function adminUsage(days = 7): Promise<{ days: number; models: string[]; series: UsagePoint[] }> {
   return adminGet(`/api/v1/admin/usage?days=${days}`);
 }
 
