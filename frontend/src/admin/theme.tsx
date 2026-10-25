@@ -8,10 +8,13 @@ export default function AdminTheme({ children }: { children: ReactNode }) {
   return (
     <ConfigProvider
       locale={zhCN}
+      componentSize="large"
       theme={{
         algorithm: theme.darkAlgorithm,
         token: {
           fontSize: 17,
+          controlHeight: 44,
+          controlHeightLG: 48,
           borderRadius: 8,
           colorPrimary: '#4f6ef7',
           colorBgLayout: '#0f1420',
@@ -31,12 +34,22 @@ export default function AdminTheme({ children }: { children: ReactNode }) {
           },
           Table: {
             cellFontSize: 18,
-            cellPaddingBlock: 16,
+            cellPaddingBlock: 22,
             cellPaddingInline: 16,
           },
           Form: {
-            itemMarginBottom: 22,
-            verticalLabelPadding: '0 0 8px',
+            itemMarginBottom: 32,
+            verticalLabelPadding: '0 0 12px',
+          },
+          Input: {
+            controlHeight: 48,
+            paddingBlock: 10,
+          },
+          Select: {
+            controlHeight: 48,
+          },
+          DatePicker: {
+            controlHeight: 48,
           },
           Modal: {
             titleFontSize: 18,
