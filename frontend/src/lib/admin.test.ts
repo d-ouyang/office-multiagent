@@ -3,6 +3,8 @@ import { readView } from '../App';
 import { fmtTokens, renderDetail } from '../pages/AdminPanels';
 import { ADMIN_TABS, readAdminTab } from '../admin/nav';
 import { fmtDuration, fmtShanghai } from '../admin/format';
+import { humanizeAdminError, isUglyAdminError } from '../admin/errors';
+import { flowPathOf } from '../admin/FlowPathSvg';
 
 describe('readView（管理端独立路由）', () => {
   afterEach(() => {
@@ -112,5 +114,25 @@ describe('renderDetail（审计明细翻译）', () => {
   });
   it('模型更新写字段名', () => {
     expect(renderDetail('admin.model.update', { fields: ['name', 'max_output'] }).join(' ')).toContain('name');
+  });
+  it('新建模型写实际调用名', () => {
+    const lines = renderDetail('admin.model.create', { api_model: 'deepseek-ai/DeepSeek-V4.1-Flash', provider: 'siliconflow' });
+    expect(lines.join(' ')).toContain('deepseek-ai/DeepSeek-V4.1-Flash');
+  });
+});
+
+describe('humanizeAdminError', () => {
+  it('把 JSON 解析垃圾收成中文', () => {
+    expect(isUglyAdminError('Unexpected token \'|\', "|internalS"... is not valid JSON')).toBe(true);
+    expect(humanizeAdminError(new Error('Unexpected token "|" is not valid JSON'), '加载用户列表失败，请稍后重试'))
+      .toBe('加载用户列表失败，请稍后重试');
+    expect(humanizeAdminError(new Error('FORBIDDEN'))).toBe('需要管理员权限');
+  });
+});
+
+describe('flowPathOf', () => {
+  it('优先用后端 flow_path', () => {
+    expect(flowPathOf({ nodes: [], path: ['received'], flow_path: ['received', 'tools'] })).toEqual(['received', 'tools']);
+    expect(flowPathOf({ nodes: [], path: ['received'] })).toEqual(['received']);
   });
 });

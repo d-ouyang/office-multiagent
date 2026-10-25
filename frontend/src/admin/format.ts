@@ -101,6 +101,9 @@ export function renderDetail(action: string, detail: Record<string, unknown> | n
   } else if (action === 'admin.model.update') {
     const fields = Array.isArray(detail.fields) ? detail.fields.join('、') : '—';
     push('改动字段', fields);
+  } else if (action === 'admin.model.create') {
+    if (detail.api_model) push('实际调用名', String(detail.api_model));
+    if (detail.provider) push('渠道', String(detail.provider));
   } else if (action === 'admin.password.change') {
     push('结果', '已修改，旧登录态已全部失效');
   } else if (action === 'admin.login.failure') {

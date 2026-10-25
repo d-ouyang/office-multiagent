@@ -53,6 +53,7 @@ ACTION_LABELS: Final[dict[str, str]] = {
     "admin.pool.delete": "删除模型池",
     "admin.pool.models.set": "设置池模型成员",
     "admin.model.update": "更新模型登记",
+    "admin.model.create": "新建模型登记",
     # 任务
     "admin.task.resume": "代续跑用户任务",
 }

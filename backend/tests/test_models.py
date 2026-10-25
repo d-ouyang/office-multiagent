@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.core.model_registry import (
+    create_model,
     get_dialogue_models,
     get_logic_model,
     list_catalog,
@@ -81,6 +82,18 @@ def test_catalog_and_override_roundtrip(tmp_path, monkeypatch):
         assert "deepseek-chat" not in {m["id"] for m in get_dialogue_models()}
         update_model("deepseek-chat", {"name": before["name"], "enabled": True})
         assert "deepseek-chat" in {m["id"] for m in get_dialogue_models()}
+        created = create_model(
+            {
+                "id": "unit-new-flash",
+                "name": "单元测试新模型",
+                "provider": "siliconflow",
+                "api_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+                "enabled": True,
+                "in_dialogue": True,
+            }
+        )
+        assert created["api_model"] == "deepseek-ai/DeepSeek-V4.1-Flash"
+        assert "unit-new-flash" in {m["id"] for m in get_dialogue_models()}
     finally:
         monkeypatch.setattr(settings, "models_config", "")
         reload_registry()

@@ -222,6 +222,10 @@ def test_users_exact_search_and_balance_filter(eng):
     assert {u["username"] for u in low} == {"chen"}
     high = c.get("/api/v1/admin/users", params={"balance_min": 1000}, headers=_auth()).json()["users"]
     assert {u["username"] for u in high} == {"dev"}
+    gt = c.get("/api/v1/admin/users", params={"balance": 500, "balance_op": "gt"}, headers=_auth()).json()["users"]
+    assert {u["username"] for u in gt} == {"dev"}
+    lt = c.get("/api/v1/admin/users", params={"balance": 1000, "balance_op": "lt"}, headers=_auth()).json()["users"]
+    assert {u["username"] for u in lt} == {"chen"}
 
 
 def test_users_total_used_and_ledger_page(eng):
@@ -260,4 +264,8 @@ def test_run_detail_includes_flow(eng):
     detail = TestClient(app).get("/api/v1/admin/runs/run-flow", headers=_auth()).json()
     assert detail["duration_ms"] == 2000
     assert detail["flow"]["path"][0] == "received"
-    assert any(n["kind"] == "tool" for n in detail["flow"]["nodes"])
+    assert detail["flow"]["flow_path"][0] == "received"
+    assert "tools" in detail["flow"]["flow_path"]
+    assert "done" in detail["flow"]["flow_path"]
+    assert any(n["key"] == "tools" for n in detail["flow"]["nodes"])
+    assert any(e["from"] == "route" and e["to"] == "tools" for e in detail["flow"]["edges"])

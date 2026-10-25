@@ -1090,6 +1090,8 @@ def admin_users(
     user_id: int | None = Query(default=None),
     balance_min: int | None = Query(default=None),
     balance_max: int | None = Query(default=None),
+    balance: int | None = Query(default=None),
+    balance_op: str | None = Query(default=None, pattern="^(gt|lt)$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=5, le=100),
     authorization: str | None = Header(default=None),
@@ -1100,11 +1102,12 @@ def admin_users(
 
     from ..core.db import get_engine
 
+    # 子查询别名不能用 MySQL 保留字 usage（USAGE），否则生产库 1064 → 整表 500。
     base = (
         "FROM `user` u LEFT JOIN wallet w ON w.user_id = u.id "
         "LEFT JOIN (SELECT user_id, COALESCE(SUM(settle), 0) AS total_used "
-        "FROM token_ledger WHERE settle IS NOT NULL GROUP BY user_id) usage "
-        "ON usage.user_id = u.id"
+        "FROM token_ledger WHERE settle IS NOT NULL GROUP BY user_id) usage_agg "
+        "ON usage_agg.user_id = u.id"
     )
     where = ""
     params: dict[str, Any] = {}
@@ -1121,6 +1124,12 @@ def admin_users(
     if balance_max is not None:
         filters.append("COALESCE(w.balance, 0) <= :bmax")
         params["bmax"] = balance_max
+    if balance is not None and balance_op == "gt":
+        filters.append("COALESCE(w.balance, 0) > :bval")
+        params["bval"] = balance
+    elif balance is not None and balance_op == "lt":
+        filters.append("COALESCE(w.balance, 0) < :bval")
+        params["bval"] = balance
     if filters:
         where = " WHERE " + " AND ".join(filters)
     eng = get_engine()
@@ -1132,7 +1141,7 @@ def admin_users(
             _text(
                 "SELECT u.id, u.employee_id, u.username, u.role, u.model_pool_id, "
                 "COALESCE(w.balance, 0) AS balance, "
-                "COALESCE(usage.total_used, 0) AS total_used " + base + where +
+                "COALESCE(usage_agg.total_used, 0) AS total_used " + base + where +
                 " ORDER BY u.id LIMIT :l OFFSET :o"
             ),
             {**params, "l": page_size, "o": (page - 1) * page_size},
@@ -1883,6 +1892,23 @@ class UpdateModelRequest(BaseModel):
     reasoning_efforts: list[str] | None = None
 
 
+class CreateModelRequest(BaseModel):
+    id: str
+    name: str
+    provider: str
+    api_model: str
+    description: str | None = None
+    in_dialogue: bool = True
+    enabled: bool = True
+    context_window: int | None = None
+    max_output: int | None = None
+    cost_per_1k: float | None = None
+    supports_reasoning: bool | None = None
+    multimodal_input: bool | None = None
+    pool_ids: list[str] | None = None
+    reasoning_efforts: list[str] | None = None
+
+
 @router.get("/admin/model-pools")
 def admin_model_pools(authorization: str | None = Header(default=None)):
     """池列表 + 每个池的模型矩阵（enabled=生效成员：DB 显式配置，否则 yaml 默认）。"""
@@ -2099,6 +2125,35 @@ def admin_models_catalog(authorization: str | None = Header(default=None)):
 
     providers = {name: {"base_url": p.base_url} for name, p in load_registry()["providers"].items()}
     return {"models": list_catalog(), "providers": providers}
+
+
+@router.post("/admin/models")
+def admin_create_model(
+    body: CreateModelRequest,
+    authorization: str | None = Header(default=None),
+):
+    """新建对话模型登记。写入 overrides，实际调用名是发给供应商的 model 字段。"""
+    admin = _require_admin(authorization)
+    from ..core import audit_repo
+    from ..core.model_registry import create_model
+
+    try:
+        model = create_model(body.model_dump())
+    except KeyError:
+        raise HTTPException(409, detail={"code": "MODEL_EXISTS", "message": "该登记 id 已存在"}) from None
+    except ValueError as exc:
+        raise HTTPException(400, detail={"code": "BAD_MODEL", "message": str(exc)}) from exc
+    audit_repo.record_safe(
+        actor_user_id=int(admin["id"]),
+        actor_username=str(admin["username"]),
+        actor_role=str(admin.get("role")),
+        action="admin.model.create",
+        target_type="model",
+        target_id=str(model.get("id") or body.id),
+        target_label=str(model.get("name") or body.id),
+        detail={"api_model": model.get("api_model"), "provider": model.get("provider")},
+    )
+    return {"ok": True, "model": model}
 
 
 @router.patch("/admin/models/{model_id}")

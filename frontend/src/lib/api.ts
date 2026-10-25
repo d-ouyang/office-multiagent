@@ -483,26 +483,48 @@ export interface AdminUser {
   total_used?: number;
 }
 
-export async function adminListUsers(
-  q?: string,
-  page = 1,
-  pageSize = 20,
-  userId?: number,
-  balanceMin?: number,
-  balanceMax?: number,
-): Promise<{ users: AdminUser[]; total: number; page: number; page_size: number }> {
-  const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-  if (q?.trim()) qs.set('q', q.trim());
-  if (userId) qs.set('user_id', String(userId));
-  if (balanceMin != null) qs.set('balance_min', String(balanceMin));
-  if (balanceMax != null) qs.set('balance_max', String(balanceMax));
-  const res = await fetch(`/api/v1/admin/users?${qs.toString()}`, { headers: adminAuthHeaders() });
+async function readAdminResponse<T>(res: Response): Promise<T> {
   if (res.status === 401) {
     adminClearToken();
     throw new Error('UNAUTHORIZED');
   }
   if (res.status === 403) throw new Error('FORBIDDEN');
-  const data = await res.json();
+  const text = await res.text();
+  let data: Record<string, unknown> = {};
+  if (text) {
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new Error(res.ok ? 'BAD_JSON' : 'LOAD_FAILED');
+    }
+  }
+  if (!res.ok) {
+    const detail = data.detail as { message?: string } | undefined;
+    const msg = detail?.message ?? data.message;
+    throw new Error(typeof msg === 'string' && msg ? msg : 'LOAD_FAILED');
+  }
+  return data as T;
+}
+
+export async function adminListUsers(opts: {
+  q?: string;
+  page?: number;
+  pageSize?: number;
+  userId?: number;
+  balance?: number;
+  balanceOp?: 'gt' | 'lt';
+} = {}): Promise<{ users: AdminUser[]; total: number; page: number; page_size: number }> {
+  const page = opts.page ?? 1;
+  const pageSize = opts.pageSize ?? 20;
+  const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (opts.q?.trim()) qs.set('q', opts.q.trim());
+  if (opts.userId) qs.set('user_id', String(opts.userId));
+  if (opts.balance != null && opts.balanceOp) {
+    qs.set('balance', String(opts.balance));
+    qs.set('balance_op', opts.balanceOp);
+  }
+  const res = await fetch(`/api/v1/admin/users?${qs.toString()}`, { headers: adminAuthHeaders() });
+  const data = await readAdminResponse<{ users?: AdminUser[]; total?: number; page?: number; page_size?: number }>(res);
   return { users: data.users ?? [], total: data.total ?? 0, page: data.page ?? page, page_size: data.page_size ?? pageSize };
 }
 
@@ -590,13 +612,7 @@ export interface AdminTaskRow {
 
 async function adminGet<T>(path: string): Promise<T> {
   const res = await fetch(path, { headers: adminAuthHeaders() });
-  if (res.status === 401) {
-    clearToken();
-    throw new Error('UNAUTHORIZED');
-  }
-  if (res.status === 403) throw new Error('FORBIDDEN');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return (await res.json()) as T;
+  return readAdminResponse<T>(res);
 }
 
 export function adminOverview(): Promise<AdminOverview> {
@@ -630,13 +646,24 @@ export interface AdminFlowNode {
   key: string;
   label: string;
   kind: string;
+  color?: string;
+  terminal?: boolean;
   detail?: string;
+}
+
+export interface AdminFlowEdge {
+  from: string;
+  to: string;
+  label?: string;
 }
 
 export interface AdminRunFlow {
   question?: string;
   nodes: AdminFlowNode[];
+  edges?: AdminFlowEdge[];
   path: string[];
+  flow_path?: string[];
+  marks?: string[];
   events?: Array<{ type: string; ts?: number; seq?: number; data?: Record<string, unknown> }>;
 }
 
@@ -725,16 +752,7 @@ async function adminSend<T>(path: string, method: string, body?: unknown): Promi
     headers: { 'Content-Type': 'application/json', ...adminAuthHeaders() },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (res.status === 401) {
-    adminClearToken();
-    throw new Error('UNAUTHORIZED');
-  }
-  if (res.status === 403) throw new Error('FORBIDDEN');
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(String(data?.detail?.message ?? data?.message ?? `HTTP ${res.status}`));
-  }
-  return data as T;
+  return readAdminResponse<T>(res);
 }
 
 export function adminModelPools(): Promise<{ pools: ModelPool[] }> {
@@ -781,4 +799,8 @@ export function adminModelsCatalog(): Promise<{ models: AdminModel[]; providers:
 
 export function adminUpdateModel(id: string, patch: Partial<AdminModel>): Promise<{ ok: boolean; model: AdminModel }> {
   return adminSend(`/api/v1/admin/models/${encodeURIComponent(id)}`, 'PATCH', patch);
+}
+
+export function adminCreateModel(body: Partial<AdminModel> & { id: string; name: string; provider: string; api_model: string }): Promise<{ ok: boolean; model: AdminModel }> {
+  return adminSend('/api/v1/admin/models', 'POST', body);
 }
