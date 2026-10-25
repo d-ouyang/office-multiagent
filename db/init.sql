@@ -261,13 +261,23 @@ CREATE TABLE IF NOT EXISTS `audit_log` (
   KEY `idx_audit_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- ===== 显式长期记忆（p6.29）：用户可查可删，只增不改 =====
+-- ===== 显式长期记忆（p6.29 / 迁移 0011）：用户可查可删，只增不改 =====
+-- 迁移 0012：content 放宽到 TEXT，并加 section（工作背景 / 个人背景 / 当前关注 / 近期记录）
 CREATE TABLE IF NOT EXISTS `user_memory` (
   `id`         BIGINT       NOT NULL AUTO_INCREMENT,
   `user_id`    BIGINT       NOT NULL,
-  `content`    VARCHAR(512) NOT NULL,
+  `section`    VARCHAR(32)  NULL,
+  `content`    TEXT         NOT NULL,
   `source`     VARCHAR(16)  NOT NULL DEFAULT 'agent',
   `created_at` DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   KEY `idx_user_memory_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ===== 运行时设置（p6.35 / 迁移 0012）：个人中心「系统」页可改的全员开关，覆盖环境变量默认值 =====
+CREATE TABLE IF NOT EXISTS `runtime_setting` (
+  `setting_key`   VARCHAR(64)  NOT NULL,
+  `setting_value` VARCHAR(255) NOT NULL,
+  `updated_at`    DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`setting_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
