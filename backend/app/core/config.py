@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # ---- 业务 Agent 注册表（p5.1b，配置驱动 §五）----
     agents_config: str = ""          # 留空则自动定位 backend/config/agents.yaml
 
+    # ---- Skill 能力层（P1，配置驱动：docs/项目架构调整-引入Skill层-2026-10-24.md）----
+    # 能力包目录；留空则自动定位 backend/app/skills。
+    # P1 仅加载不接路由，是否启用由每个 skill 自己的 spec.yaml 的 enabled 决定。
+    skills_dir: str = ""
+
     # ---- 云端模型密钥（仅存环境变量，不进 git）----
     siliconflow_api_key: str = ""
     deepseek_api_key: str = ""
