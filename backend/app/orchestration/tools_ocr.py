@@ -10,6 +10,18 @@ from ..core.llm import LlmError, resolve_model
 
 OCR_MODEL_ID = "deepseek-ocr"
 _PROMPT = "<image>\nFree OCR."
+_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def recognize_path(path, *, transport: httpx.BaseTransport | None = None) -> str:
+    """读一张已落盘的图片并识别。不是图片或读失败时如实抛错。"""
+    from pathlib import Path
+
+    file = Path(path)
+    mime = _MIME.get(file.suffix.lower())
+    if mime is None:
+        raise ValueError(f"不是可识别的图片：{file.name}")
+    return recognize(file.read_bytes(), mime, transport=transport)
 
 
 def recognize(data: bytes, mime: str, *, transport: httpx.BaseTransport | None = None) -> str:

@@ -604,7 +604,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
           <input
             ref={fileRef}
             type="file"
-            accept=".md,.txt,.json,.csv,.docx,.xlsx,.pdf"
+            accept=".md,.txt,.json,.csv,.docx,.xlsx,.pdf,.png,.jpg,.jpeg,.webp"
             hidden
             onChange={(e) => {
               const file = e.target.files?.[0] ?? null;

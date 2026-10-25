@@ -220,16 +220,57 @@ def _validate_attachment(path: str | None, username: str) -> list[str]:
     return _validate_attachments([path] if path else [], username)
 
 
-def _compose_task_text(text: str, attachments: list[str]) -> str:
-    """p6.12：附件以 prompt 前缀注入（不动正文），告知 LLM 有哪些文件可读。"""
-    if not attachments:
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _is_image_attachment(path: str) -> bool:
+    from pathlib import Path as _P
+
+    return _P(path).suffix.lower() in _IMAGE_SUFFIXES
+
+
+def _recognize_images(attachments: list[str]) -> str:
+    """图片在进对话模型之前转成文字。对话模型始终只收文本。"""
+    from pathlib import Path as _P
+
+    from ..orchestration.tools_ocr import recognize_path
+
+    base = _P(settings.documents_dir).resolve()
+    blocks: list[str] = []
+    for rel in attachments:
+        if not _is_image_attachment(rel):
+            continue
+        name = rel.split("/", 1)[-1]
+        try:
+            text = recognize_path((base / rel).resolve())
+            blocks.append(f"—— {name} ——\n{text}")
+        except Exception as e:  # noqa: BLE001 - 识别失败写进提示，让模型如实告诉用户
+            blocks.append(f"—— {name} ——\n识别失败：{e}")
+    return "\n\n".join(blocks)
+
+
+def _compose_task_text(text: str, attachments: list[str], image_text: str = "") -> str:
+    """附件以 prompt 前缀注入。文档仍让模型去读；图片已经识别成文字，不再交给视觉。"""
+    docs = [a for a in attachments if not _is_image_attachment(a)]
+    images = [a for a in attachments if _is_image_attachment(a)]
+    blocks: list[str] = []
+    if docs:
+        names = "、".join(a.split("/", 1)[-1] for a in docs)
+        blocks.append(
+            f"[用户随消息上传了这些文件，已放在当前用户的上传目录：{names}。"
+            f"请调用 read_document，file_name 只填文件名，不要加目录，也不要写本机路径。"
+            f"回答前先读取文件内容。]"
+        )
+    if images:
+        names = "、".join(a.split("/", 1)[-1] for a in images)
+        recognized = image_text.strip() or "（没有识别出文字）"
+        blocks.append(
+            f"[用户上传了图片：{names}。系统已用 DeepSeek-OCR 转成下面的文字，"
+            f"对话模型看不到画面。只根据识别文字回答，不要说你看见了图片。]\n{recognized}"
+        )
+    if not blocks:
         return text
-    names = "、".join(a.split("/", 1)[-1] for a in attachments)
-    return (
-        f"[用户随消息上传了这些文件，已放在当前用户的上传目录：{names}。"
-        f"请调用 read_document，file_name 只填文件名，不要加目录，也不要写本机路径。"
-        f"回答前先读取文件内容。]\n\n{text}"
-    )
+    return "\n\n".join(blocks) + f"\n\n{text}"
 
 
 @router.post("/sessions")
@@ -525,6 +566,10 @@ async def upload_document(file: UploadFile = File(...), authorization: str | Non
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(400, detail={"code": "TOO_LARGE", "message": "文件超过 10MB 上限"})
+    from ..orchestration.tools_doc import IMAGE_SUFFIXES
+
+    if name.lower().endswith(tuple(IMAGE_SUFFIXES)) and len(content) > 4 * 1024 * 1024:
+        raise HTTPException(400, detail={"code": "TOO_LARGE", "message": "图片超过 4MB，请先裁小再上传"})
     if not content:
         raise HTTPException(400, detail={"code": "EMPTY_FILE", "message": "文件内容为空"})
     dest = _Path(settings.documents_dir) / str(user["username"]) / name
@@ -930,7 +975,7 @@ def _stream_task(
 
     prior = repo.list_messages(session_id)
     remembered, context_parts = prepare_turn(prior, text)
-    effective_text = _compose_task_text(remembered, attachments)
+    effective_text = _compose_task_text(remembered, attachments, _recognize_images(attachments))
     if attachments:
         context_parts["current"] = effective_text
 

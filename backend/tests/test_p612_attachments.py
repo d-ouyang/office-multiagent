@@ -136,3 +136,12 @@ def test_compose_task_text_with_attachments_prefix():
     assert "file_name 只填文件名" in out
     assert "read_document" in out
     assert out.endswith("总结一下")  # 原文在后，未被改写
+
+
+def test_compose_task_text_image_is_ocr_text_not_vision():
+    out = _compose_task_text("这张图写了什么", ["dev/票据.png"], "—— 票据.png ——\n实付 88 元")
+    assert "DeepSeek-OCR" in out
+    assert "看不到画面" in out
+    assert "实付 88 元" in out
+    assert "read_document" not in out
+    assert out.endswith("这张图写了什么")
