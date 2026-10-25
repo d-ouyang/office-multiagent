@@ -38,6 +38,9 @@ export default function UsageChart({ models, series }: { models: string[]; serie
     const instance = chart.current;
     if (!instance) return;
     const names = models.length ? models : ['未记模型'];
+    const valueAt = (name: string, point: UsagePoint) => (
+      point.by_model?.[name] ?? (names.length === 1 && name === '未记模型' ? point.tokens : 0)
+    );
     instance.setOption({
       backgroundColor: 'transparent',
       color: COLORS,
@@ -80,13 +83,17 @@ export default function UsageChart({ models, series }: { models: string[]; serie
         name,
         type: 'bar',
         stack: 'usage',
-        barMaxWidth: 12,
-        barCategoryGap: '58%',
-        itemStyle: {
-          color: COLORS[index % COLORS.length],
-          borderRadius: [6, 6, 0, 0],
-        },
-        data: series.map((point) => point.by_model?.[name] ?? (names.length === 1 && name === '未记模型' ? point.tokens : 0)),
+        barMaxWidth: 22,
+        barCategoryGap: '42%',
+        itemStyle: { color: COLORS[index % COLORS.length] },
+        data: series.map((point) => {
+          const value = valueAt(name, point);
+          const top = names.slice(index + 1).every((later) => valueAt(later, point) <= 0);
+          return {
+            value,
+            itemStyle: { borderRadius: value > 0 && top ? [5, 5, 0, 0] : 0 },
+          };
+        }),
       })),
     }, true);
   }, [models, series]);
