@@ -160,9 +160,12 @@
   overflow: hidden;
   text-overflow: clip;
 }
-.admin-tasks-table .admin-cell-time {
+.admin-list-body td.admin-cell-time,
+.admin-list-body th.admin-cell-time {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
 }
 .admin-tasks-table .admin-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

@@ -140,20 +140,21 @@ export default function UsersTab() {
           {
             title: '工号',
             dataIndex: 'employee_id',
-            width: 168,
+            width: '14%',
             ellipsis: { showTitle: false },
             render: (v) => <Ellipsis>{v}</Ellipsis>,
           },
           {
             title: '用户名',
             dataIndex: 'username',
+            width: '16%',
             ellipsis: { showTitle: false },
             render: (v) => <Ellipsis>{v}</Ellipsis>,
           },
           {
             title: '角色',
             dataIndex: 'role',
-            width: 150,
+            width: '14%',
             render: (r: string) => (
               <Tag color={r === 'admin' || r === 'superadmin' ? 'blue' : 'default'}>{roleLabel(r)}</Tag>
             ),
@@ -161,7 +162,7 @@ export default function UsersTab() {
           {
             title: '池',
             dataIndex: 'model_pool_id',
-            width: 220,
+            width: '16%',
             render: (id: number | null | undefined, u) => (
               <Select
                 style={{ width: '100%' }}
@@ -178,20 +179,20 @@ export default function UsersTab() {
           {
             title: '余额（token）',
             dataIndex: 'balance',
-            width: 168,
+            width: '14%',
             align: 'right',
             render: (n: number) => n.toLocaleString(),
           },
           {
             title: '总使用量',
             dataIndex: 'total_used',
-            width: 140,
+            width: '12%',
             align: 'right',
             render: (n?: number) => fmtTokens(n ?? 0),
           },
           {
             title: '操作',
-            width: 188,
+            width: '14%',
             render: (_, u) => (
               <Space>
                 <Button type="primary" onClick={() => setRechargeUser(u)}>充值</Button>
@@ -323,22 +324,23 @@ function LedgerDrawer({ user, onClose }: { user: AdminUser | null; onClose: () =
             tableLayout="fixed"
             locale={{ emptyText: <Empty description="暂无记录" /> }}
             columns={[
-              { title: '类型', dataIndex: 'kind', width: 96, render: (k?: string) => KIND[k ?? 'settle'] ?? k },
-              { title: '充值数量', width: 120, render: (_, row) => (row.kind === 'recharge' ? (row.amount ?? '—') : '—') },
-              { title: '消耗数量', dataIndex: 'settle', width: 120, render: (v) => v ?? '—' },
-              ...(showReserve ? [{ title: '预扣', dataIndex: 'reserve' as const, width: 100, render: (v: number | null) => v ?? '—' }] : []),
+              { title: '类型', dataIndex: 'kind', width: showReserve ? '12%' : '14%', render: (k?: string) => KIND[k ?? 'settle'] ?? k },
+              { title: '充值数量', width: showReserve ? '14%' : '16%', render: (_, row) => (row.kind === 'recharge' ? (row.amount ?? '—') : '—') },
+              { title: '消耗数量', dataIndex: 'settle', width: showReserve ? '14%' : '16%', render: (v) => v ?? '—' },
+              ...(showReserve ? [{ title: '预扣', dataIndex: 'reserve' as const, width: '12%', render: (v: number | null) => v ?? '—' }] : []),
               {
                 title: '备注',
                 dataIndex: 'note',
+                width: showReserve ? '22%' : '26%',
                 ellipsis: { showTitle: false },
                 render: (v?: string | null) => <Ellipsis>{v ?? '—'}</Ellipsis>,
               },
               {
                 title: '时间',
                 dataIndex: 'created_at',
-                width: 188,
-                ellipsis: { showTitle: false },
-                render: (v?: string) => <Ellipsis>{fmtShanghai(v)}</Ellipsis>,
+                width: showReserve ? '26%' : '28%',
+                className: 'admin-cell-time',
+                render: (v?: string) => fmtShanghai(v),
               },
             ]}
           />

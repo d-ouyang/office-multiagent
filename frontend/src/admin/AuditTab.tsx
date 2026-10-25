@@ -100,12 +100,12 @@ export default function AuditTab() {
           {
             title: '时间',
             dataIndex: 'created_at',
-            width: 210,
+            width: '20%',
             render: (v) => fmtShanghai(v),
           },
           {
             title: '操作人',
-            width: 160,
+            width: '14%',
             ellipsis: { showTitle: false },
             render: (_, r) => {
               const text = r.actor_role ? `${r.actor_username} · ${r.actor_role}` : r.actor_username;
@@ -114,12 +114,12 @@ export default function AuditTab() {
           },
           {
             title: '动作',
-            width: 176,
+            width: '16%',
             render: (_, r) => <Tag color="blue">{r.action_label ?? r.action}</Tag>,
           },
           {
             title: '对象',
-            width: 280,
+            width: '18%',
             ellipsis: { showTitle: false },
             render: (_, r) => {
               const text = `${TARGET_LABEL[r.target_type] ?? r.target_type}${r.target_label ? ` · ${r.target_label}` : ''}`;
@@ -129,12 +129,13 @@ export default function AuditTab() {
           {
             title: 'IP',
             dataIndex: 'ip',
-            width: 140,
+            width: '14%',
             ellipsis: { showTitle: false },
             render: (v) => <Ellipsis>{v ?? '—'}</Ellipsis>,
           },
           {
             title: '明细',
+            width: '18%',
             ellipsis: { showTitle: false },
             render: (_, r) => {
               const text = renderDetail(r.action, r.detail).join('；') || '—';
