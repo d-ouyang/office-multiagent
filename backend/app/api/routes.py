@@ -1088,23 +1088,27 @@ def _stream_task(
 def admin_users(
     q: str | None = Query(default=None, max_length=64),
     user_id: int | None = Query(default=None),
+    role: str | None = Query(default=None, max_length=32),
     balance_min: int | None = Query(default=None),
     balance_max: int | None = Query(default=None),
+    balance: int | None = Query(default=None),
+    balance_op: str | None = Query(default=None, pattern="^(gt|lt)$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=5, le=100),
     authorization: str | None = Header(default=None),
 ):
-    """用户列表：精确搜用户名/工号 + 余额区间 + 总使用量 + 分页。"""
+    """用户列表：精确搜用户名/工号 + 角色 + 余额区间 + 总使用量 + 分页。"""
     _require_admin(authorization)
     from sqlalchemy import text as _text
 
     from ..core.db import get_engine
 
+    # 子查询别名不能用 MySQL 保留字 usage（USAGE），否则生产库 1064 → 整表 500。
     base = (
         "FROM `user` u LEFT JOIN wallet w ON w.user_id = u.id "
         "LEFT JOIN (SELECT user_id, COALESCE(SUM(settle), 0) AS total_used "
-        "FROM token_ledger WHERE settle IS NOT NULL GROUP BY user_id) usage "
-        "ON usage.user_id = u.id"
+        "FROM token_ledger WHERE settle IS NOT NULL GROUP BY user_id) usage_agg "
+        "ON usage_agg.user_id = u.id"
     )
     where = ""
     params: dict[str, Any] = {}
@@ -1115,12 +1119,21 @@ def admin_users(
     if user_id is not None:
         filters.append("u.id = :uid")
         params["uid"] = user_id
+    if role and role.strip():
+        filters.append("u.role = :role")
+        params["role"] = role.strip()
     if balance_min is not None:
         filters.append("COALESCE(w.balance, 0) >= :bmin")
         params["bmin"] = balance_min
     if balance_max is not None:
         filters.append("COALESCE(w.balance, 0) <= :bmax")
         params["bmax"] = balance_max
+    if balance is not None and balance_op == "gt":
+        filters.append("COALESCE(w.balance, 0) > :bval")
+        params["bval"] = balance
+    elif balance is not None and balance_op == "lt":
+        filters.append("COALESCE(w.balance, 0) < :bval")
+        params["bval"] = balance
     if filters:
         where = " WHERE " + " AND ".join(filters)
     eng = get_engine()
@@ -1132,7 +1145,7 @@ def admin_users(
             _text(
                 "SELECT u.id, u.employee_id, u.username, u.role, u.model_pool_id, "
                 "COALESCE(w.balance, 0) AS balance, "
-                "COALESCE(usage.total_used, 0) AS total_used " + base + where +
+                "COALESCE(usage_agg.total_used, 0) AS total_used " + base + where +
                 " ORDER BY u.id LIMIT :l OFFSET :o"
             ),
             {**params, "l": page_size, "o": (page - 1) * page_size},
@@ -1386,7 +1399,7 @@ def admin_usage(
     days: int = Query(default=7, ge=1, le=30),
     authorization: str | None = Header(default=None),
 ):
-    """最近 N 天任务消耗（按 settle 汇总，按天分桶）。"""
+    """最近 N 天任务消耗：按天补齐，并按模型拆开（竖向堆叠柱用）。"""
     _require_admin(authorization)
     from datetime import datetime, timedelta, timezone
 
@@ -1394,24 +1407,56 @@ def admin_usage(
 
     from ..core.db import get_engine
 
-    since = (datetime.now(timezone.utc) - timedelta(days=days - 1)).strftime("%Y-%m-%d 00:00:00")
+    today = datetime.now(timezone.utc).date()
+    start = today - timedelta(days=days - 1)
+    since = start.strftime("%Y-%m-%d 00:00:00")
+    buckets: dict[str, dict[str, Any]] = {}
+    for offset in range(days):
+        day = (start + timedelta(days=offset)).isoformat()
+        buckets[day] = {"date": day, "tokens": 0, "calls": 0, "by_model": {}}
+    totals: dict[str, int] = {}
     eng = get_engine()
     with eng.connect() as conn:
         rows = conn.execute(
             _text(
-                "SELECT DATE(created_at) AS d, COALESCE(SUM(settle), 0) AS tokens, COUNT(*) AS calls "
+                "SELECT DATE(created_at) AS d, COALESCE(NULLIF(model, ''), '未记模型') AS model_name, "
+                "COALESCE(SUM(settle), 0) AS tokens, COUNT(*) AS calls "
                 "FROM token_ledger WHERE kind = 'task' AND settle IS NOT NULL AND created_at >= :s "
-                "GROUP BY DATE(created_at) ORDER BY d"
+                "GROUP BY DATE(created_at), model_name ORDER BY d"
             ),
             {"s": since},
         ).mappings().all()
-    return {
-        "days": days,
-        "series": [
-            {"date": str(r["d"]), "tokens": int(r["tokens"] or 0), "calls": int(r["calls"] or 0)}
-            for r in rows
-        ],
-    }
+    for row in rows:
+        day = str(row["d"])[:10]
+        if day not in buckets:
+            continue
+        name = str(row["model_name"] or "未记模型")
+        tokens = int(row["tokens"] or 0)
+        calls = int(row["calls"] or 0)
+        buckets[day]["tokens"] += tokens
+        buckets[day]["calls"] += calls
+        buckets[day]["by_model"][name] = buckets[day]["by_model"].get(name, 0) + tokens
+        totals[name] = totals.get(name, 0) + tokens
+    models = sorted(totals, key=lambda name: (-totals[name], name))
+    return {"days": days, "models": models, "series": [buckets[(start + timedelta(days=i)).isoformat()] for i in range(days)]}
+
+
+def _parse_day(raw: str | None) -> str | None:
+    """接受 YYYY-MM-DD 或 YYYY_MM_DD，非法值当没传。"""
+    if not isinstance(raw, str) or not raw:
+        return None
+    day = raw.strip().replace("_", "-")
+    if len(day) == 10 and day[4] == "-" and day[7] == "-":
+        return day
+    return None
+
+
+def _query_text(raw: Any) -> str | None:
+    """内部直调路由函数时，未传入的 Query() 默认值不能当字符串用。"""
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    return text or None
 
 
 @router.get("/admin/tasks")
@@ -1421,11 +1466,13 @@ def admin_tasks(
     task_id: str | None = Query(default=None, max_length=64),
     session_id: str | None = Query(default=None, max_length=64),
     user_id: int | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=64),
+    date: str | None = Query(default=None, max_length=16),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=5, le=100),
     authorization: str | None = Header(default=None),
 ):
-    """最近任务（全局，含所属用户/暂停原因）+ 分页（p6.28b）。"""
+    """最近任务（全局，含所属用户/工号/暂停原因）+ 分页（p6.28b）。"""
     _require_admin(authorization)
     from sqlalchemy import text as _text
 
@@ -1437,6 +1484,13 @@ def admin_tasks(
     )
     filters: list[str] = []
     params: dict[str, Any] = {}
+    status = _query_text(status)
+    flag = _query_text(flag)
+    task_id = _query_text(task_id)
+    session_id = _query_text(session_id)
+    q = _query_text(q)
+    if not isinstance(user_id, int):
+        user_id = None
     if status:
         filters.append("t.status = :st")
         params["st"] = status
@@ -1449,17 +1503,25 @@ def admin_tasks(
     if user_id is not None:
         filters.append("s.user_id = :uid")
         params["uid"] = user_id
+    if q:
+        filters.append("(u.username = :kw OR u.employee_id = :kw)")
+        params["kw"] = q
+    day = _parse_day(date)
+    if day:
+        filters.append("DATE(t.created_at) = :day")
+        params["day"] = day
     where = (" WHERE " + " AND ".join(filters)) if filters else ""
+    cols = (
+        "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
+        "t.created_at, t.request_json, s.user_id, u.username, u.employee_id "
+    )
     eng = get_engine()
     scan = flag in {"rag", "no_artifact", "validation", "paused"}
     with eng.connect() as conn:
         if scan:
             rows = conn.execute(
-                _text(
-                    "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
-                    "t.created_at, t.request_json, s.user_id, u.username " + base +
-                    " ORDER BY t.created_at DESC LIMIT 200"
-                )
+                _text(cols + base + where + " ORDER BY t.created_at DESC LIMIT 200"),
+                params,
             ).mappings().all()
             packed = [_task_row(conn, r) for r in rows]
             if flag == "rag":
@@ -1479,8 +1541,7 @@ def admin_tasks(
             )
             rows = conn.execute(
                 _text(
-                    "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
-                    "t.created_at, t.request_json, s.user_id, u.username " + base + where +
+                    cols + base + where +
                     " ORDER BY t.created_at DESC LIMIT :l OFFSET :o"
                 ),
                 {**params, "l": page_size, "o": (page - 1) * page_size},
@@ -1505,6 +1566,7 @@ def _task_row(conn, row) -> dict[str, Any]:
         "session_id": row["session_id"],
         "user_id": row["user_id"],
         "username": row["username"],
+        "employee_id": row["employee_id"],
         "status": row["status"],
         "pause_reason": row["pause_reason"],
         "text": row["text"] or "",
@@ -1535,7 +1597,15 @@ def admin_runs(
         # 失败含出错暂停，下面单独处理
     if status == "failed":
         return _admin_failed_runs(page, page_size)
-    return admin_tasks(status=status, flag=flag, page=page, page_size=page_size, authorization=authorization)
+    return admin_tasks(
+        status=status,
+        flag=flag,
+        page=page,
+        page_size=page_size,
+        authorization=authorization,
+        q=None,
+        date=None,
+    )
 
 
 def _admin_failed_runs(page: int, page_size: int) -> dict[str, Any]:
@@ -1554,7 +1624,7 @@ def _admin_failed_runs(page: int, page_size: int) -> dict[str, Any]:
         rows = conn.execute(
             _text(
                 "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
-                "t.created_at, t.request_json, s.user_id, u.username " + base +
+                "t.created_at, t.request_json, s.user_id, u.username, u.employee_id " + base +
                 " ORDER BY t.created_at DESC LIMIT :l OFFSET :o"
             ),
             {"l": page_size, "o": (page - 1) * page_size},
@@ -1579,7 +1649,7 @@ def admin_run_detail(task_id: str, authorization: str | None = Header(default=No
         row = conn.execute(
             _text(
                 "SELECT t.id, t.session_id, t.status, t.pause_reason, t.text, t.tokens_used, "
-                "t.created_at, t.request_json, s.user_id, u.username "
+                "t.created_at, t.request_json, s.user_id, u.username, u.employee_id "
                 "FROM task t LEFT JOIN session s ON s.id = t.session_id "
                 "LEFT JOIN `user` u ON u.id = s.user_id WHERE t.id = :i"
             ),
@@ -1599,6 +1669,7 @@ def admin_run_detail(task_id: str, authorization: str | None = Header(default=No
         "session_id": row["session_id"],
         "user_id": row["user_id"],
         "username": row["username"],
+        "employee_id": row["employee_id"],
         "status": row["status"],
         "pause_reason": row["pause_reason"],
         "text": row["text"] or "",
@@ -1883,6 +1954,23 @@ class UpdateModelRequest(BaseModel):
     reasoning_efforts: list[str] | None = None
 
 
+class CreateModelRequest(BaseModel):
+    id: str
+    name: str
+    provider: str
+    api_model: str
+    description: str | None = None
+    in_dialogue: bool = True
+    enabled: bool = True
+    context_window: int | None = None
+    max_output: int | None = None
+    cost_per_1k: float | None = None
+    supports_reasoning: bool | None = None
+    multimodal_input: bool | None = None
+    pool_ids: list[str] | None = None
+    reasoning_efforts: list[str] | None = None
+
+
 @router.get("/admin/model-pools")
 def admin_model_pools(authorization: str | None = Header(default=None)):
     """池列表 + 每个池的模型矩阵（enabled=生效成员：DB 显式配置，否则 yaml 默认）。"""
@@ -2099,6 +2187,35 @@ def admin_models_catalog(authorization: str | None = Header(default=None)):
 
     providers = {name: {"base_url": p.base_url} for name, p in load_registry()["providers"].items()}
     return {"models": list_catalog(), "providers": providers}
+
+
+@router.post("/admin/models")
+def admin_create_model(
+    body: CreateModelRequest,
+    authorization: str | None = Header(default=None),
+):
+    """新建对话模型登记。写入 overrides，实际调用名是发给供应商的 model 字段。"""
+    admin = _require_admin(authorization)
+    from ..core import audit_repo
+    from ..core.model_registry import create_model
+
+    try:
+        model = create_model(body.model_dump())
+    except KeyError:
+        raise HTTPException(409, detail={"code": "MODEL_EXISTS", "message": "该登记 id 已存在"}) from None
+    except ValueError as exc:
+        raise HTTPException(400, detail={"code": "BAD_MODEL", "message": str(exc)}) from exc
+    audit_repo.record_safe(
+        actor_user_id=int(admin["id"]),
+        actor_username=str(admin["username"]),
+        actor_role=str(admin.get("role")),
+        action="admin.model.create",
+        target_type="model",
+        target_id=str(model.get("id") or body.id),
+        target_label=str(model.get("name") or body.id),
+        detail={"api_model": model.get("api_model"), "provider": model.get("provider")},
+    )
+    return {"ok": True, "model": model}
 
 
 @router.patch("/admin/models/{model_id}")

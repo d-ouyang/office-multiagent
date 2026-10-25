@@ -3,6 +3,13 @@ import { readView } from '../App';
 import { fmtTokens, renderDetail } from '../pages/AdminPanels';
 import { ADMIN_TABS, readAdminTab } from '../admin/nav';
 import { fmtDuration, fmtShanghai } from '../admin/format';
+import { DRAWER_WIDTH, PAGE_SIZE } from '../admin/AdminListPage';
+import { TASK_COLUMN_TITLES, TASK_COL_WIDTH } from '../admin/TasksTab';
+import { copyAdminText } from '../admin/ellipsis';
+import { humanizeAdminError, isUglyAdminError } from '../admin/errors';
+import { flowPathOf } from '../admin/FlowPathSvg';
+import { useDebouncedValue } from '../admin/useDebouncedValue';
+import { act, renderHook } from '@testing-library/react';
 
 describe('readView（管理端独立路由）', () => {
   afterEach(() => {
@@ -82,9 +89,7 @@ describe('readAdminTab', () => {
 
 describe('上海时间与耗时', () => {
   it('ISO 转 Asia/Shanghai', () => {
-    const text = fmtShanghai('2026-10-25T00:00:00Z');
-    expect(text).toContain('2026');
-    expect(text).toContain('08:00:00');
+    expect(fmtShanghai('2026-10-25T00:00:00Z')).toBe('2026-10-25 08:00:00');
   });
   it('耗时格式', () => {
     expect(fmtDuration(null)).toBe('—');
@@ -112,5 +117,84 @@ describe('renderDetail（审计明细翻译）', () => {
   });
   it('模型更新写字段名', () => {
     expect(renderDetail('admin.model.update', { fields: ['name', 'max_output'] }).join(' ')).toContain('name');
+  });
+  it('新建模型写实际调用名', () => {
+    const lines = renderDetail('admin.model.create', { api_model: 'deepseek-ai/DeepSeek-V4.1-Flash', provider: 'siliconflow' });
+    expect(lines.join(' ')).toContain('deepseek-ai/DeepSeek-V4.1-Flash');
+  });
+});
+
+describe('humanizeAdminError', () => {
+  it('把 JSON 解析垃圾收成中文', () => {
+    expect(isUglyAdminError('Unexpected token \'|\', "|internalS"... is not valid JSON')).toBe(true);
+    expect(humanizeAdminError(new Error('Unexpected token "|" is not valid JSON'), '加载用户列表失败，请稍后重试'))
+      .toBe('加载用户列表失败，请稍后重试');
+    expect(humanizeAdminError(new Error('FORBIDDEN'))).toBe('需要管理员权限');
+  });
+});
+
+describe('flowPathOf', () => {
+  it('优先用后端 flow_path', () => {
+    expect(flowPathOf({ nodes: [], path: ['received'], flow_path: ['received', 'tools'] })).toEqual(['received', 'tools']);
+    expect(flowPathOf({ nodes: [], path: ['received'] })).toEqual(['received']);
+  });
+});
+
+describe('PAGE_SIZE', () => {
+  it('固定 20，页面不提供每页条数选择', () => {
+    expect(PAGE_SIZE).toBe(20);
+  });
+});
+
+describe('DRAWER_WIDTH', () => {
+  it('任务详情和流水抽屉保持加宽', () => {
+    expect(DRAWER_WIDTH).toContain('1080px');
+  });
+});
+
+describe('任务监控列', () => {
+  it('没有任务原因幽灵列，操作列有标题', () => {
+    expect(TASK_COLUMN_TITLES).toEqual([
+      '用户', '工号', '时间', '任务摘要', '任务耗时', '状态', '任务id', '会话id', '消耗token', '操作',
+    ]);
+    expect(TASK_COLUMN_TITLES).not.toContain('任务原因');
+  });
+  it('只有摘要弹性；id 列按完整 16/18 位加宽', () => {
+    expect('summary' in TASK_COL_WIDTH).toBe(false);
+    expect(TASK_COL_WIDTH.username).toBeGreaterThanOrEqual(88);
+    expect(TASK_COL_WIDTH.duration).toBeGreaterThanOrEqual(96);
+    expect(TASK_COL_WIDTH.token).toBeGreaterThanOrEqual(100);
+    expect(TASK_COL_WIDTH.taskId).toBe(204);
+    expect(TASK_COL_WIDTH.sessionId).toBe(224);
+    expect(TASK_COL_WIDTH.action).toBeGreaterThanOrEqual(110);
+  });
+});
+
+describe('copyAdminText', () => {
+  it('空值和破折号不写剪贴板', async () => {
+    const write = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText: write } });
+    expect(await copyAdminText('')).toBe(false);
+    expect(await copyAdminText('—')).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  });
+  it('有内容则写入剪贴板', async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText: write } });
+    expect(await copyAdminText('  task-123  ')).toBe(true);
+    expect(write).toHaveBeenCalledWith('task-123');
+  });
+});
+
+describe('useDebouncedValue', () => {
+  it('300ms 后才更新', () => {
+    vi.useFakeTimers();
+    const { result, rerender } = renderHook(({ v }) => useDebouncedValue(v, 300), { initialProps: { v: 'a' } });
+    expect(result.current).toBe('a');
+    rerender({ v: 'ab' });
+    expect(result.current).toBe('a');
+    act(() => { vi.advanceTimersByTime(300); });
+    expect(result.current).toBe('ab');
+    vi.useRealTimers();
   });
 });

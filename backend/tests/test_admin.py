@@ -179,13 +179,17 @@ def test_overview_month_tokens_only_task_settles(eng):
 
 def test_usage_series_by_day(eng):
     with eng.begin() as conn:
-        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle, created_at) VALUES (1, 'a', 'task', 2000, 100, '2026-10-21 10:00:00')"))
-        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle, created_at) VALUES (1, 'b', 'task', 2000, 200, '2026-10-21 11:00:00')"))
-        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle, created_at) VALUES (2, 'c', 'task', 2000, 300, '2026-10-22 12:00:00')"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (1, 'a', 'deepseek-chat', 'task', 2000, 100, '2026-10-21 10:00:00')"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (1, 'b', 'deepseek-chat', 'task', 2000, 200, '2026-10-21 11:00:00')"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (2, 'c', 'qwen3.5-9b-sf', 'task', 2000, 300, '2026-10-22 12:00:00')"))
     data = TestClient(app).get("/api/v1/admin/usage?days=30", headers=_auth()).json()
     series = {row["date"]: row for row in data["series"]}
+    assert len(data["series"]) == 30
     assert series["2026-10-21"]["tokens"] == 300 and series["2026-10-21"]["calls"] == 2
+    assert series["2026-10-21"]["by_model"]["deepseek-chat"] == 300
     assert series["2026-10-22"]["tokens"] == 300
+    assert series["2026-10-22"]["by_model"]["qwen3.5-9b-sf"] == 300
+    assert data["models"][0] == "deepseek-chat"
 
 
 def test_admin_tasks_global_with_username_and_filter(eng):
@@ -202,14 +206,47 @@ def test_admin_tasks_global_with_username_and_filter(eng):
     rows = c.get("/api/v1/admin/tasks", headers=_auth()).json()["tasks"]
     assert {r["id"] for r in rows} == {"t-a", "t-b"}
     by_id = {r["id"]: r for r in rows}
-    assert by_id["t-a"]["username"] == "dev"
+    assert by_id["t-a"]["username"] == "dev" and by_id["t-a"]["employee_id"] == "EMP001"
     assert by_id["t-b"]["username"] == "chen" and by_id["t-b"]["pause_reason"] == "user"
+    assert by_id["t-b"]["employee_id"] == "EMP002"
     paused = c.get("/api/v1/admin/tasks?status=paused_user", headers=_auth()).json()["tasks"]
     assert [r["id"] for r in paused] == ["t-b"]
 
 
 def test_admin_tasks_requires_admin(eng):
     assert TestClient(app).get("/api/v1/admin/tasks", headers=_auth("EMP002")).status_code == 403
+
+
+def test_admin_tasks_q_date_and_employee_id(eng):
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO session (id, user_id) VALUES ('s1', 1)"))
+        conn.execute(text("INSERT INTO session (id, user_id) VALUES ('s2', 2)"))
+        conn.execute(text(
+            "INSERT INTO task (id, session_id, status, text, tokens_used, created_at) "
+            "VALUES ('t-a', 's1', 'done', '查年假', 120, '2026-03-15 10:00:00')"
+        ))
+        conn.execute(text(
+            "INSERT INTO task (id, session_id, status, text, tokens_used, created_at) "
+            "VALUES ('t-b', 's2', 'paused_user', '清洗表格', 0, '2026-03-16 10:00:00')"
+        ))
+    c = TestClient(app)
+    by_emp = c.get("/api/v1/admin/tasks", params={"q": "EMP002"}, headers=_auth()).json()["tasks"]
+    assert [r["id"] for r in by_emp] == ["t-b"]
+    assert by_emp[0]["employee_id"] == "EMP002"
+    by_name = c.get("/api/v1/admin/tasks", params={"q": "dev"}, headers=_auth()).json()["tasks"]
+    assert [r["id"] for r in by_name] == ["t-a"]
+    day = c.get("/api/v1/admin/tasks", params={"date": "2026_03_15"}, headers=_auth()).json()["tasks"]
+    assert [r["id"] for r in day] == ["t-a"]
+    day2 = c.get("/api/v1/admin/tasks", params={"date": "2026-03-16"}, headers=_auth()).json()["tasks"]
+    assert [r["id"] for r in day2] == ["t-b"]
+
+
+def test_users_role_filter(eng):
+    c = TestClient(app)
+    admins = c.get("/api/v1/admin/users", params={"role": "admin"}, headers=_auth()).json()["users"]
+    assert {u["username"] for u in admins} == {"dev"}
+    members = c.get("/api/v1/admin/users", params={"role": "user"}, headers=_auth()).json()["users"]
+    assert {u["username"] for u in members} == {"chen"}
 
 
 def test_users_exact_search_and_balance_filter(eng):
@@ -222,6 +259,10 @@ def test_users_exact_search_and_balance_filter(eng):
     assert {u["username"] for u in low} == {"chen"}
     high = c.get("/api/v1/admin/users", params={"balance_min": 1000}, headers=_auth()).json()["users"]
     assert {u["username"] for u in high} == {"dev"}
+    gt = c.get("/api/v1/admin/users", params={"balance": 500, "balance_op": "gt"}, headers=_auth()).json()["users"]
+    assert {u["username"] for u in gt} == {"dev"}
+    lt = c.get("/api/v1/admin/users", params={"balance": 1000, "balance_op": "lt"}, headers=_auth()).json()["users"]
+    assert {u["username"] for u in lt} == {"chen"}
 
 
 def test_users_total_used_and_ledger_page(eng):
@@ -260,4 +301,8 @@ def test_run_detail_includes_flow(eng):
     detail = TestClient(app).get("/api/v1/admin/runs/run-flow", headers=_auth()).json()
     assert detail["duration_ms"] == 2000
     assert detail["flow"]["path"][0] == "received"
-    assert any(n["kind"] == "tool" for n in detail["flow"]["nodes"])
+    assert detail["flow"]["flow_path"][0] == "received"
+    assert "tools" in detail["flow"]["flow_path"]
+    assert "done" in detail["flow"]["flow_path"]
+    assert any(n["key"] == "tools" for n in detail["flow"]["nodes"])
+    assert any(e["from"] == "route" and e["to"] == "tools" for e in detail["flow"]["edges"])

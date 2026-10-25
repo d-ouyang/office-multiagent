@@ -47,7 +47,7 @@ export function fmtShanghai(value?: string | null): string {
     : value.replace(' ', 'T') + 'Z';
   const date = new Date(raw);
   if (Number.isNaN(date.getTime())) return value.replace('T', ' ').slice(0, 19);
-  return new Intl.DateTimeFormat('zh-CN', {
+  const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Shanghai',
     year: 'numeric',
     month: '2-digit',
@@ -56,7 +56,9 @@ export function fmtShanghai(value?: string | null): string {
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
-  }).format(date).replace(/\//g, '-');
+  }).formatToParts(date);
+  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}:${pick('second')}`;
 }
 
 export function fmtDuration(ms?: number | null): string {
@@ -101,6 +103,9 @@ export function renderDetail(action: string, detail: Record<string, unknown> | n
   } else if (action === 'admin.model.update') {
     const fields = Array.isArray(detail.fields) ? detail.fields.join('、') : '—';
     push('改动字段', fields);
+  } else if (action === 'admin.model.create') {
+    if (detail.api_model) push('实际调用名', String(detail.api_model));
+    if (detail.provider) push('渠道', String(detail.provider));
   } else if (action === 'admin.password.change') {
     push('结果', '已修改，旧登录态已全部失效');
   } else if (action === 'admin.login.failure') {

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import Select from '../components/ui/Select';
+import { AdminListPage, DRAWER_WIDTH } from './AdminListPage';
+
 import {
+  adminCreateModel,
   adminCreatePool,
   adminDeletePool,
   adminModelPools,
@@ -11,7 +13,10 @@ import {
   type AdminModel,
   type ModelPool,
 } from '../lib/api';
+import { Ellipsis } from './ellipsis';
+import { humanizeAdminError } from './errors';
 import { fmtTokens } from './format';
+import { Alert, Button, Drawer, Empty, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Typography } from './ui';
 
 const ROLE_HINT: Record<string, string> = {
   default: '默认员工可见',
@@ -26,7 +31,9 @@ export default function PoolsTab() {
   const [currentId, setCurrentId] = useState<number | null>(null);
   const [draft, setDraft] = useState<Record<string, boolean>>({});
   const [newName, setNewName] = useState('');
+  const [poolOpen, setPoolOpen] = useState(false);
   const [editing, setEditing] = useState<AdminModel | null>(null);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -40,7 +47,7 @@ export default function PoolsTab() {
       setCurrentId((prev) => (prev && nextPools.some((p) => p.id === prev) ? prev : nextPools[0]?.id ?? null));
       setError('');
     } catch (e) {
-      setError(`加载失败：${(e as Error).message}`);
+      setError(humanizeAdminError(e, '加载模型池失败，请稍后重试'));
     }
   }, []);
 
@@ -56,15 +63,19 @@ export default function PoolsTab() {
     if (!current) return;
     setBusy(true);
     try {
+      const closed = new Set(models.filter((m) => m.enabled === false).map((m) => m.id));
       await adminSavePoolModels(
         current.id,
-        Object.entries(draft).map(([model_name, enabled]) => ({ model_name, enabled })),
+        Object.entries(draft).map(([model_name, enabled]) => ({
+          model_name,
+          enabled: closed.has(model_name) ? false : enabled,
+        })),
       );
       setNotice(`已保存「${current.name}」的可见模型`);
       await load();
       setTimeout(() => setNotice(''), 3000);
     } catch (e) {
-      setError(`保存失败：${(e as Error).message}`);
+      setError(humanizeAdminError(e, '保存失败，请稍后重试'));
     } finally {
       setBusy(false);
     }
@@ -77,11 +88,12 @@ export default function PoolsTab() {
     try {
       await adminCreatePool(name);
       setNewName('');
+      setPoolOpen(false);
       await load();
       setNotice(`已创建池「${name}」`);
       setTimeout(() => setNotice(''), 3000);
     } catch (e) {
-      setError(`创建失败：${(e as Error).message}`);
+      setError(humanizeAdminError(e, '创建失败，请稍后重试'));
     } finally {
       setBusy(false);
     }
@@ -95,195 +107,348 @@ export default function PoolsTab() {
       setNotice(`已删除池「${p.name}」`);
       setTimeout(() => setNotice(''), 3000);
     } catch (e) {
-      setError(`删除失败：${(e as Error).message}`);
+      setError(humanizeAdminError(e, '删除失败，请稍后重试'));
     } finally {
       setBusy(false);
     }
   };
 
-  const dialogue = useMemo(() => models.filter((m) => m.in_dialogue || m.role == null), [models]);
-  const enabledCount = Object.values(draft).filter(Boolean).length;
+  const toggleEnabled = async (m: AdminModel, enabled: boolean) => {
+    try {
+      await adminUpdateModel(m.id, { enabled, in_dialogue: m.in_dialogue });
+      if (!enabled) setDraft((prev) => ({ ...prev, [m.id]: false }));
+      setNotice(enabled ? `已启用 ${m.name}` : `已关闭 ${m.name}（不再出现在模型池）`);
+      await load();
+      setTimeout(() => setNotice(''), 3000);
+    } catch (e) {
+      setError(humanizeAdminError(e, '更新启用状态失败，请稍后重试'));
+    }
+  };
+
+  const dialogue = useMemo(
+    () => models.filter((m) => (m.in_dialogue || m.role == null) && m.enabled !== false),
+    [models],
+  );
+  const enabledCount = dialogue.filter((m) => draft[m.id]).length;
 
   return (
-    <div className="admin-stack">
-      {error && <div className="banner err">{error}</div>}
-      {notice && <div className="banner ok">{notice}</div>}
-      <p className="admin-sub">按角色池决定谁能看见哪些对话模型；右侧可改名称、描述、参数、渠道和启用。</p>
-      <div className="admin-pool-layout">
-        <section className="admin-panel">
-          <h3>角色 / 可见范围</h3>
-          <div className="admin-toolbar">
-            <input
-              className="admin-search"
-              placeholder="新池名（如 finance）"
-              value={newName}
-              maxLength={32}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void createPool(); }}
-            />
-            <button type="button" className="admin-btn" disabled={busy || !newName.trim()} onClick={() => void createPool()}>新建</button>
-          </div>
-          <div className="admin-role-list">
-            {pools.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className={`admin-role-item ${p.id === currentId ? 'on' : ''}`}
-                onClick={() => setCurrentId(p.id)}
-              >
-                <strong>{p.name}</strong>
-                <span>{ROLE_HINT[p.name] ?? `${p.user_count} 人`}</span>
-                <em>{p.user_count} 人</em>
-              </button>
-            ))}
-          </div>
+    <AdminListPage
+      filters={(
+        <>
+          <Select
+            style={{ minWidth: 260 }}
+            value={currentId ?? undefined}
+            placeholder="角色 / 可见范围"
+            onChange={(id) => setCurrentId(id)}
+            options={pools.map((p) => ({
+              value: p.id,
+              label: `${p.name} · ${ROLE_HINT[p.name] ?? `${p.user_count} 人`}`,
+            }))}
+          />
+          <Button type="primary" disabled={busy || !current} onClick={() => void savePool()}>
+            {busy ? '保存中…' : '保存可见性'}
+          </Button>
+          <Button type="primary" onClick={() => { setNewName(''); setPoolOpen(true); }}>新建池</Button>
           {current && current.user_count === 0 && !ROLE_HINT[current.name] && (
-            <button type="button" className="admin-btn ghost" disabled={busy} onClick={() => void removePool(current)}>删除该池</button>
+            <Button danger disabled={busy} onClick={() => void removePool(current)}>删除该池</Button>
           )}
-        </section>
-
-        <section className="admin-panel">
-          {!current && <p className="admin-sub">先选择一个角色池。</p>}
-          {current && (
-            <>
-              <div className="admin-section-head">
-                <h3>「{current.name}」可见模型（{enabledCount}）</h3>
-                <button type="button" className="admin-btn" disabled={busy} onClick={() => void savePool()}>
-                  {busy ? '保存中…' : '保存可见性'}
-                </button>
-              </div>
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>可见</th>
-                    <th>名称</th>
-                    <th>渠道</th>
-                    <th>上下文 / 输出</th>
-                    <th>启用</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {dialogue.map((m) => (
-                    <tr key={m.id} className={m.enabled === false ? 'dim' : ''}>
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={!!draft[m.id]}
-                          onChange={(e) => setDraft((prev) => ({ ...prev, [m.id]: e.target.checked }))}
-                        />
-                      </td>
-                      <td>
-                        <strong>{m.name}</strong>
-                        <div className="admin-muted">{m.id}</div>
-                      </td>
-                      <td>{m.provider}</td>
-                      <td className="admin-muted">{fmtTokens(m.context_window ?? 0)} / {fmtTokens(m.max_output ?? 0)}</td>
-                      <td>{m.enabled === false ? '已关闭' : '启用'}</td>
-                      <td><button type="button" className="admin-btn ghost" onClick={() => setEditing(m)}>编辑</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-        </section>
-      </div>
-
-      {editing && (
-        <ModelEditModal
-          model={editing}
-          providers={providers}
-          onClose={() => setEditing(null)}
-          onSaved={async (msg) => {
-            setNotice(msg);
-            setEditing(null);
-            await load();
-            setTimeout(() => setNotice(''), 3000);
-          }}
-          onError={setError}
+          <Button onClick={() => setCreating(true)}>新建模型</Button>
+          <Button type="link" className="admin-filter-link" onClick={() => void load()}>刷新</Button>
+        </>
+      )}
+      extra={(
+        <>
+          {error && <Alert type="error" showIcon message={error} />}
+          {notice && <Alert type="success" showIcon message={notice} style={{ marginTop: error ? 8 : 0 }} />}
+        </>
+      )}
+    >
+      {!current && <Empty description="先选择一个角色池。" />}
+      {current && (
+        <Table<AdminModel>
+          rowKey="id"
+          dataSource={dialogue}
+          pagination={false}
+          tableLayout="fixed"
+          locale={{ emptyText: <Empty description="没有已开启的模型" /> }}
+          title={() => `「${current.name}」可见模型（${enabledCount}）`}
+          columns={[
+            {
+              title: '可见',
+              width: '8%',
+              render: (_, m) => (
+                <Switch
+                  checked={!!draft[m.id]}
+                  onChange={(checked) => setDraft((prev) => ({ ...prev, [m.id]: checked }))}
+                />
+              ),
+            },
+            {
+              title: '名称',
+              width: '16%',
+              ellipsis: true,
+              render: (_, m) => m.name,
+            },
+            {
+              title: '模型id',
+              dataIndex: 'id',
+              width: '18%',
+              ellipsis: true,
+            },
+            {
+              title: '实际调用名',
+              dataIndex: 'api_model',
+              width: '20%',
+              ellipsis: { showTitle: false },
+              render: (v?: string) => <Ellipsis title={v || '—'}>{v || '—'}</Ellipsis>,
+            },
+            {
+              title: '渠道',
+              dataIndex: 'provider',
+              width: '12%',
+              ellipsis: { showTitle: false },
+              render: (v?: string) => <Ellipsis>{v || '—'}</Ellipsis>,
+            },
+            {
+              title: '上下文 / 输出',
+              width: '12%',
+              render: (_, m) => `${fmtTokens(m.context_window ?? 0)} / ${fmtTokens(m.max_output ?? 0)}`,
+            },
+            {
+              title: '启用',
+              width: '8%',
+              render: (_, m) => (
+                <Switch
+                  checked={m.enabled !== false}
+                  checkedChildren="开启"
+                  unCheckedChildren="关闭"
+                  onChange={(checked) => void toggleEnabled(m, checked)}
+                />
+              ),
+            },
+            {
+              title: '操作',
+              width: '6%',
+              render: (_, m) => <Button onClick={() => setEditing(m)}>编辑</Button>,
+            },
+          ]}
         />
       )}
-    </div>
+
+      <Modal
+        open={poolOpen}
+        title="新建模型池"
+        rootClassName="admin-dialog"
+        onCancel={() => setPoolOpen(false)}
+        onOk={() => void createPool()}
+        okButtonProps={{ disabled: busy || !newName.trim() }}
+        confirmLoading={busy}
+        okText={busy ? '创建中…' : '创建'}
+        destroyOnHidden
+      >
+        <Form layout="vertical" requiredMark={false}>
+          <Form.Item label="池名" extra="例如 finance，用来按角色或部门划分可见模型。">
+            <Input
+              placeholder="如 finance"
+              value={newName}
+              maxLength={32}
+              autoFocus
+              onChange={(e) => setNewName(e.target.value)}
+              onPressEnter={() => void createPool()}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <ModelFormDrawer
+        open={!!editing || creating}
+        model={editing}
+        creating={creating}
+        providers={providers}
+        onClose={() => { setEditing(null); setCreating(false); }}
+        onSaved={async (msg) => {
+          setNotice(msg);
+          setEditing(null);
+          setCreating(false);
+          await load();
+          setTimeout(() => setNotice(''), 3000);
+        }}
+        onError={setError}
+      />
+    </AdminListPage>
   );
 }
 
-function ModelEditModal({
+function ModelFormDrawer({
+  open,
   model,
+  creating,
   providers,
   onClose,
   onSaved,
   onError,
 }: {
-  model: AdminModel;
+  open: boolean;
+  model: AdminModel | null;
+  creating: boolean;
   providers: string[];
   onClose: () => void;
   onSaved: (msg: string) => Promise<void>;
   onError: (msg: string) => void;
 }) {
-  const [name, setName] = useState(model.name);
-  const [description, setDescription] = useState(model.description ?? '');
-  const [provider, setProvider] = useState(model.provider);
-  const [apiModel, setApiModel] = useState(model.api_model ?? '');
-  const [context, setContext] = useState(String(model.context_window ?? 0));
-  const [maxOut, setMaxOut] = useState(String(model.max_output ?? 0));
-  const [cost, setCost] = useState(String(model.cost_per_1k ?? 0));
-  const [enabled, setEnabled] = useState(model.enabled !== false);
+  const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
+  const providerOptions = useMemo(() => {
+    const current = model?.provider;
+    const list = current && !providers.includes(current) ? [current, ...providers] : providers;
+    return list.map((p) => ({ value: p, label: p }));
+  }, [providers, model]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (creating) {
+      form.setFieldsValue({
+        id: '',
+        name: '',
+        description: '',
+        provider: providers[0],
+        api_model: '',
+        context_window: 0,
+        max_output: 0,
+        cost_per_1k: 0,
+        enabled: true,
+      });
+      return;
+    }
+    if (model) {
+      form.setFieldsValue({
+        id: model.id,
+        name: model.name,
+        description: model.description ?? '',
+        provider: model.provider,
+        api_model: model.api_model ?? '',
+        context_window: model.context_window ?? 0,
+        max_output: model.max_output ?? 0,
+        cost_per_1k: model.cost_per_1k ?? 0,
+        enabled: model.enabled !== false,
+      });
+    }
+  }, [open, creating, model, providers, form]);
 
   const save = async () => {
+    let values: {
+      id: string;
+      name: string;
+      description?: string;
+      provider: string;
+      api_model: string;
+      context_window?: number;
+      max_output?: number;
+      cost_per_1k?: number;
+      enabled?: boolean;
+    };
+    try {
+      values = await form.validateFields();
+    } catch {
+      return;
+    }
     setBusy(true);
     try {
-      await adminUpdateModel(model.id, {
-        name: name.trim() || model.name,
-        description,
-        provider,
-        api_model: apiModel,
-        context_window: Number(context) || 0,
-        max_output: Number(maxOut) || 0,
-        cost_per_1k: Number(cost) || 0,
-        enabled,
-        in_dialogue: model.in_dialogue,
-      });
-      await onSaved(`已更新 ${name || model.id}`);
+      if (creating) {
+        await adminCreateModel({
+          id: String(values.id).trim(),
+          name: String(values.name).trim(),
+          description: values.description,
+          provider: values.provider,
+          api_model: String(values.api_model).trim(),
+          context_window: Number(values.context_window) || 0,
+          max_output: Number(values.max_output) || 0,
+          cost_per_1k: Number(values.cost_per_1k) || 0,
+          enabled: !!values.enabled,
+          in_dialogue: true,
+        });
+        await onSaved(`已新建 ${values.name || values.id}`);
+      } else if (model) {
+        await adminUpdateModel(model.id, {
+          name: String(values.name).trim() || model.name,
+          description: values.description,
+          provider: values.provider,
+          api_model: String(values.api_model).trim(),
+          context_window: Number(values.context_window) || 0,
+          max_output: Number(values.max_output) || 0,
+          cost_per_1k: Number(values.cost_per_1k) || 0,
+          enabled: !!values.enabled,
+          in_dialogue: model.in_dialogue,
+        });
+        await onSaved(`已更新 ${values.name || model.id}`);
+      }
     } catch (e) {
-      onError(`保存失败：${(e as Error).message}`);
+      onError(humanizeAdminError(e, '保存失败，请稍后重试'));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="ui-confirm-mask" onClick={onClose}>
-      <div className="ui-confirm admin-model-edit" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <h3>编辑模型</h3>
-        <p className="admin-sub mono">{model.id}</p>
-        <label className="admin-field">名称<input value={name} onChange={(e) => setName(e.target.value)} /></label>
-        <label className="admin-field">描述<textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} /></label>
-        <label className="admin-field">
-          渠道
-          <Select
-            width={220}
-            value={provider}
-            options={(providers.includes(provider) ? providers : [provider, ...providers]).map((p) => ({ value: p, label: p }))}
-            onChange={setProvider}
-          />
-        </label>
-        <label className="admin-field">调用名<input value={apiModel} onChange={(e) => setApiModel(e.target.value)} /></label>
-        <div className="admin-field-row">
-          <label className="admin-field">上下文窗口<input value={context} onChange={(e) => setContext(e.target.value.replace(/[^\d]/g, ''))} /></label>
-          <label className="admin-field">单次最多输出<input value={maxOut} onChange={(e) => setMaxOut(e.target.value.replace(/[^\d]/g, ''))} /></label>
-          <label className="admin-field">每千 token 成本<input value={cost} onChange={(e) => setCost(e.target.value)} /></label>
-        </div>
-        <label className="admin-check">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          启用（关闭后不进对话下拉）
-        </label>
-        <div className="ui-confirm-actions">
-          <button type="button" className="admin-btn ghost" onClick={onClose}>取消</button>
-          <button type="button" className="admin-btn" disabled={busy} onClick={() => void save()}>{busy ? '保存中…' : '保存'}</button>
-        </div>
-      </div>
-    </div>
+    <Drawer
+      open={open}
+      title={creating ? '新建模型' : '编辑模型'}
+      width={DRAWER_WIDTH}
+      rootClassName="admin-dialog"
+      onClose={onClose}
+      destroyOnHidden
+      footer={(
+        <Space>
+          <Button onClick={onClose}>取消</Button>
+          <Button type="primary" loading={busy} onClick={() => void save()}>
+            {busy ? '保存中…' : '保存'}
+          </Button>
+        </Space>
+      )}
+    >
+      <Form form={form} layout="vertical" requiredMark={false} className="admin-dialog-form">
+        <Form.Item
+          name="id"
+          label="登记 id"
+          extra="内部稳定键，例如 deepseek-v4.1-flash-sf。创建后不可改。"
+          rules={creating ? [{ required: true, message: '请填写登记 id' }] : undefined}
+        >
+          <Input disabled={!creating} placeholder="deepseek-v4.1-flash-sf" />
+        </Form.Item>
+        <Form.Item name="name" label="名称" rules={[{ required: true, message: '请填写名称' }]}>
+          <Input />
+        </Form.Item>
+        <Form.Item name="description" label="描述">
+          <Input.TextArea rows={3} />
+        </Form.Item>
+        <Form.Item name="provider" label="渠道" rules={[{ required: true, message: '请选择渠道' }]}>
+          <Select options={providerOptions} />
+        </Form.Item>
+        <Form.Item
+          name="api_model"
+          label="实际调用名"
+          extra="发给供应商 /chat/completions 的 model 字段，例如 deepseek-ai/DeepSeek-V4.1-Flash，不是登记 id 或 *-sf 短名。"
+          rules={[{ required: true, message: '请填写实际调用名' }]}
+        >
+          <Input placeholder="deepseek-ai/DeepSeek-V4.1-Flash" />
+        </Form.Item>
+        <Space size={12} style={{ width: '100%' }} className="admin-model-nums">
+          <Form.Item name="context_window" label="上下文窗口">
+            <InputNumber min={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="max_output" label="单次最多输出">
+            <InputNumber min={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="cost_per_1k" label="每千 token 成本">
+            <InputNumber min={0} step={0.0001} style={{ width: '100%' }} />
+          </Form.Item>
+        </Space>
+        <Form.Item name="enabled" label="启用" valuePropName="checked">
+          <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+        </Form.Item>
+        <Typography.Paragraph type="secondary">
+          关闭后不会出现在模型池，也不会进入对话下拉。模型 id 给系统内部用；实际调用名才是渠道接口收到的名字。
+        </Typography.Paragraph>
+      </Form>
+    </Drawer>
   );
 }

@@ -1,6 +1,7 @@
-// 管理端独立登录页（p6.27）：与工作台登录同一账号体系，但独立 token + 角色校验。
 import { useState } from 'react';
 
+import { humanizeAdminError } from '../admin/errors';
+import { Button, Card, Form, Input, Typography } from '../admin/ui';
 import { adminLogin, type LoginUser } from '../lib/api';
 
 function goWorkspace() {
@@ -9,59 +10,46 @@ function goWorkspace() {
 }
 
 export default function AdminLoginPage({ onLoggedin }: { onLoggedin: (u: LoginUser) => void }) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (values: { username: string; password: string }) => {
     if (busy) return;
     setBusy(true);
     setError('');
     try {
-      onLoggedin(await adminLogin(username.trim(), password));
+      onLoggedin(await adminLogin(values.username.trim(), values.password));
     } catch (err) {
-      setError((err as Error).message || '登录失败');
+      setError(humanizeAdminError(err, '登录失败，请检查账号或稍后重试'));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="page login-page admin-login">
-      <div className="login-card">
+    <div className="admin-login-page">
+      <Card className="admin-login-card">
         <div className="admin-login-brand">
           <img className="admin-logo" src="/gq_logo.jpg" alt="锅圈" />
-          <h1>锅圈Agent Admin</h1>
+          <Typography.Title level={3} style={{ margin: 0 }}>锅圈Agent Admin</Typography.Title>
         </div>
-        <p className="sub">仅管理员账号可登录</p>
-        <form className="login-form" method="post" action="/api/v1/auth/login" onSubmit={submit}>
-          <input
-            name="username"
-            placeholder="管理员账号"
-            value={username}
-            autoFocus
-            autoComplete="username"
-            onChange={(e) => setUsername(e.target.value)}
-          />
-          <input
-            name="password"
-            type="password"
-            placeholder="密码"
-            value={password}
-            autoComplete="current-password"
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          {error && <p className="login-error" role="alert">{error}</p>}
-          <button type="submit" disabled={busy || !username.trim() || !password}>
-            {busy ? '登录中…' : '登录管理端'}
-          </button>
-        </form>
-        <button type="button" className="admin-login-back" onClick={goWorkspace}>
-          ← 返回工作台
-        </button>
-      </div>
+        <Typography.Paragraph type="secondary">仅管理员账号可登录</Typography.Paragraph>
+        <Form layout="vertical" onFinish={submit} requiredMark={false}>
+          <Form.Item name="username" rules={[{ required: true, message: '请输入管理员账号' }]}>
+            <Input name="username" placeholder="管理员账号" autoFocus autoComplete="username" size="large" />
+          </Form.Item>
+          <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }]}>
+            <Input.Password name="password" placeholder="密码" autoComplete="current-password" size="large" />
+          </Form.Item>
+          {error && <Typography.Paragraph type="danger" role="alert">{error}</Typography.Paragraph>}
+          <Form.Item>
+            <Button type="primary" htmlType="submit" loading={busy} block size="large">
+              {busy ? '登录中…' : '登录管理端'}
+            </Button>
+          </Form.Item>
+        </Form>
+        <Button type="link" onClick={goWorkspace} block>← 返回工作台</Button>
+      </Card>
     </div>
   );
 }

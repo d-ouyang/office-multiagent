@@ -1,79 +1,73 @@
 import type { AdminRunDetail } from '../lib/api';
+import { DRAWER_WIDTH } from './AdminListPage';
 import { fmtDuration, fmtShanghai, fmtTokens, REASON, STATUS } from './format';
+import FlowPathSvg from './FlowPathSvg';
+import { Descriptions, Drawer, Tag, Typography } from './ui';
 
 export default function TaskDetailDrawer({
   detail,
   onClose,
 }: {
-  detail: AdminRunDetail;
+  detail: AdminRunDetail | null;
   onClose: () => void;
 }) {
+  if (!detail) {
+    return <Drawer open={false} onClose={onClose} />;
+  }
   const flow = detail.flow;
-  const nodes = flow?.nodes ?? [];
-  const path = new Set(flow?.path ?? []);
 
   return (
-    <div className="admin-drawer-mask" onClick={onClose}>
-      <aside className="admin-drawer" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <header className="admin-drawer-head">
-          <div>
-            <h3>任务详情</h3>
-            <p className="admin-sub">{fmtShanghai(detail.created_at)} · {fmtDuration(detail.duration_ms)}</p>
-          </div>
-          <button type="button" className="admin-btn ghost" onClick={onClose}>关闭</button>
-        </header>
+    <Drawer
+      open
+      title="任务详情"
+      width={DRAWER_WIDTH}
+      rootClassName="admin-dialog"
+      onClose={onClose}
+    >
+      <Typography.Paragraph type="secondary">
+        {fmtShanghai(detail.created_at)} · {fmtDuration(detail.duration_ms)}
+      </Typography.Paragraph>
+      <div className="admin-detail-head">
+        <Tag color={detail.status.startsWith('paused') || detail.status === 'failed' ? 'warning' : 'blue'}>
+          {STATUS[detail.status] ?? detail.status}
+        </Tag>
+        <Typography.Text type="secondary">
+          {detail.username ?? '—'}
+          {detail.employee_id ? ` · ${detail.employee_id}` : ''}
+          {' · '}
+          {detail.model || '未记模型'}
+        </Typography.Text>
+      </div>
 
-        <div className="admin-drawer-body">
-          <div className="admin-detail-head">
-            <span className={`badge ${detail.status.startsWith('paused') || detail.status === 'failed' ? 'warn' : 'agent'}`}>
-              {STATUS[detail.status] ?? detail.status}
-            </span>
-            <span className="admin-muted">{detail.username ?? '—'} · {detail.model || '未记模型'}</span>
-          </div>
+      <Typography.Title level={5}>问句</Typography.Title>
+      <blockquote className="admin-quote">{detail.text || flow?.question || '—'}</blockquote>
 
-          <h4 className="admin-sec">问句</h4>
-          <p className="admin-quote">{detail.text || flow?.question || '—'}</p>
+      <Typography.Title level={5}>实走路径</Typography.Title>
+      <div className="admin-flow-card">
+        <FlowPathSvg flow={flow} />
+      </div>
 
-          <h4 className="admin-sec">实走路径</h4>
-          <div className="admin-flow-card">
-            {nodes.length === 0 && <p className="admin-sub">没有可用的节点流（无 trace）。</p>}
-            <ol className="admin-flow">
-              {nodes.map((node, i) => {
-                const on = path.has(node.key);
-                return (
-                  <li key={node.key} className={`admin-flow-node ${node.kind} ${on ? 'on' : 'off'}`}>
-                    <i>{on ? i + 1 : '·'}</i>
-                    <div>
-                      <strong>{node.label}</strong>
-                      {node.detail && <p>{node.detail}</p>}
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
-          </div>
-
-          <h4 className="admin-sec">关键指标</h4>
-          <dl className="admin-kv">
-            <div><dt>用户</dt><dd>{detail.username ?? '—'}</dd></div>
-            <div><dt>任务耗时</dt><dd>{fmtDuration(detail.duration_ms)}</dd></div>
-            <div><dt>消耗 token</dt><dd>{detail.tokens_used ? fmtTokens(detail.tokens_used) : '—'}</dd></div>
-            <div><dt>任务原因</dt><dd>{detail.pause_reason ? REASON[detail.pause_reason] ?? detail.pause_reason : '—'}</dd></div>
-            <div><dt>任务 id</dt><dd className="mono">{detail.id}</dd></div>
-            <div><dt>会话 id</dt><dd className="mono">{detail.session_id || '—'}</dd></div>
-            <div><dt>工具</dt><dd>{detail.tools?.length ? detail.tools.join(' → ') : '无'}</dd></div>
-            <div><dt>产物</dt><dd>{detail.artifacts?.length ? detail.artifacts.join('、') : '无'}</dd></div>
-            <div>
-              <dt>知识库身份</dt>
-              <dd className={detail.identity_mismatch ? 'warn-text' : ''}>
-                调用 {detail.rag_username || '—'}，办公用户 {detail.office_username || detail.username || '—'}
-                {detail.identity_mismatch ? '（不一致）' : ''}
-              </dd>
-            </div>
-            {detail.validation_note && <div><dt>校验</dt><dd>{detail.validation_note}</dd></div>}
-          </dl>
-        </div>
-      </aside>
-    </div>
+      <Typography.Title level={5}>关键指标</Typography.Title>
+      <Descriptions column={1} size="small" bordered>
+        <Descriptions.Item label="用户">{detail.username ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="工号">{detail.employee_id ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="任务耗时">{fmtDuration(detail.duration_ms)}</Descriptions.Item>
+        <Descriptions.Item label="消耗 token">{detail.tokens_used ? fmtTokens(detail.tokens_used) : '—'}</Descriptions.Item>
+        <Descriptions.Item label="任务原因">{detail.pause_reason ? REASON[detail.pause_reason] ?? detail.pause_reason : '—'}</Descriptions.Item>
+        <Descriptions.Item label="任务 id">{detail.id}</Descriptions.Item>
+        <Descriptions.Item label="会话 id">{detail.session_id || '—'}</Descriptions.Item>
+        <Descriptions.Item label="工具">{detail.tools?.length ? detail.tools.join(' → ') : '无'}</Descriptions.Item>
+        <Descriptions.Item label="产物">{detail.artifacts?.length ? detail.artifacts.join('、') : '无'}</Descriptions.Item>
+        <Descriptions.Item label="知识库身份">
+          <span className={detail.identity_mismatch ? 'warn-text' : ''}>
+            调用 {detail.rag_username || '—'}，办公用户 {detail.office_username || detail.username || '—'}
+            {detail.identity_mismatch ? '（不一致）' : ''}
+          </span>
+        </Descriptions.Item>
+        {detail.validation_note && (
+          <Descriptions.Item label="校验">{detail.validation_note}</Descriptions.Item>
+        )}
+      </Descriptions>
+    </Drawer>
   );
 }

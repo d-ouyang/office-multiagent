@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import Pager from '../components/ui/Pager';
-import Select from '../components/ui/Select';
 import {
   adminListUsers,
   adminModelPools,
@@ -12,26 +10,35 @@ import {
   type LedgerEntry,
   type ModelPool,
 } from '../lib/api';
-import { fmtShanghai, fmtTokens, KIND } from './format';
-import { goAdmin } from './nav';
+import { AdminListPage, AdminPager, DRAWER_WIDTH, PAGE_SIZE } from './AdminListPage';
+import { Ellipsis } from './ellipsis';
+import { humanizeAdminError } from './errors';
+import { fmtShanghai, fmtTokens, KIND, roleLabel } from './format';
+import { Alert, Button, Drawer, Empty, Input, InputNumber, Modal, Select, Space, Table, Tag } from './ui';
+import { useDebouncedValue } from './useDebouncedValue';
+
+const ROLE_OPTIONS = [
+  { value: '', label: '全部角色' },
+  { value: 'user', label: roleLabel('user') },
+  { value: 'staff', label: roleLabel('staff') },
+  { value: 'admin', label: roleLabel('admin') },
+  { value: 'superadmin', label: roleLabel('superadmin') },
+];
 
 export default function UsersTab() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
   const [pools, setPools] = useState<ModelPool[]>([]);
   const [q, setQ] = useState('');
-  const [appliedQ, setAppliedQ] = useState('');
-  const [balanceMin, setBalanceMin] = useState('');
-  const [balanceMax, setBalanceMax] = useState('');
-  const [appliedMin, setAppliedMin] = useState('');
-  const [appliedMax, setAppliedMax] = useState('');
+  const [role, setRole] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [focusId, setFocusId] = useState(() => Number(new URLSearchParams(window.location.search).get('user_id') || 0));
   const [rechargeUser, setRechargeUser] = useState<AdminUser | null>(null);
   const [ledgerUser, setLedgerUser] = useState<AdminUser | null>(null);
+  const [loading, setLoading] = useState(false);
+  const debouncedQ = useDebouncedValue(q, 300);
 
   useEffect(() => {
     const sync = () => setFocusId(Number(new URLSearchParams(window.location.search).get('user_id') || 0));
@@ -39,140 +46,175 @@ export default function UsersTab() {
     return () => window.removeEventListener('hashchange', sync);
   }, []);
 
-  const load = useCallback(async (kw: string, pg = page, size = pageSize, userId = focusId) => {
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQ, role, focusId]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const min = appliedMin.trim() ? Number(appliedMin) : undefined;
-      const max = appliedMax.trim() ? Number(appliedMax) : undefined;
-      const data = await adminListUsers(kw, pg, size, userId || undefined, min, max);
+      const data = await adminListUsers({
+        q: debouncedQ,
+        page,
+        pageSize: PAGE_SIZE,
+        userId: focusId || undefined,
+        role: role || undefined,
+      });
       setUsers(data.users);
       setTotal(data.total);
       setError('');
     } catch (e) {
-      const msg = (e as Error).message;
-      setError(msg === 'FORBIDDEN' ? '需要管理员权限' : `加载失败：${msg}`);
+      setError(humanizeAdminError(e, '加载用户列表失败，请稍后重试'));
+    } finally {
+      setLoading(false);
     }
-  }, [page, pageSize, focusId, appliedMin, appliedMax]);
+  }, [page, focusId, debouncedQ, role]);
 
   useEffect(() => {
-    void load(appliedQ, page, pageSize);
+    void load();
     adminModelPools().then((d) => setPools(d.pools)).catch(() => setPools([]));
-  }, [load, page, pageSize, appliedQ]);
+  }, [load]);
 
   const changePool = async (u: AdminUser, poolId: number | null) => {
     try {
       await adminSetUserPool(u.id, poolId);
       setNotice(`已将 ${u.username} 移到 ${poolId ? pools.find((p) => p.id === poolId)?.name ?? poolId : '不限制'}`);
-      await load(q, page, pageSize);
+      await load();
       setTimeout(() => setNotice(''), 3000);
     } catch (e) {
-      setError(`分配失败：${(e as Error).message}`);
+      setError(humanizeAdminError(e, '分配失败，请稍后重试'));
     }
   };
 
-  const search = () => {
-    setAppliedQ(q);
-    setAppliedMin(balanceMin);
-    setAppliedMax(balanceMax);
+  const reset = () => {
+    setQ('');
+    setRole('');
     setPage(1);
   };
 
   return (
-    <div className="list-page">
-      <div className="admin-toolbar wrap">
-        <input
-          className="admin-search"
-          placeholder="精确搜索用户名或工号"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') search(); }}
-        />
-        <input
-          className="admin-search narrow"
-          inputMode="numeric"
-          placeholder="余额 ≥"
-          value={balanceMin}
-          onChange={(e) => setBalanceMin(e.target.value.replace(/[^\d-]/g, ''))}
-          onKeyDown={(e) => { if (e.key === 'Enter') search(); }}
-        />
-        <input
-          className="admin-search narrow"
-          inputMode="numeric"
-          placeholder="余额 ≤"
-          value={balanceMax}
-          onChange={(e) => setBalanceMax(e.target.value.replace(/[^\d-]/g, ''))}
-          onKeyDown={(e) => { if (e.key === 'Enter') search(); }}
-        />
-        <button type="button" className="admin-btn" onClick={search}>搜索</button>
-        <button type="button" className="admin-btn ghost" onClick={() => { setQ(''); setAppliedQ(''); setBalanceMin(''); setBalanceMax(''); setAppliedMin(''); setAppliedMax(''); setPage(1); }}>重置</button>
-      </div>
-
-      {error && <div className="banner err">{error}</div>}
-      {notice && <div className="banner ok">{notice}</div>}
-
-      <div className="table-wrap">
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>工号</th>
-              <th>用户名</th>
-              <th>角色</th>
-              <th>池</th>
-              <th>余额（token）</th>
-              <th>总使用量</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id} className={u.id === focusId ? 'row-active' : ''}>
-                <td>{u.employee_id}</td>
-                <td>{u.username}</td>
-                <td><span className={`badge ${u.role === 'admin' || u.role === 'superadmin' ? 'agent' : ''}`}>{u.role}</span></td>
-                <td>
-                  <Select
-                    width={120}
-                    value={u.model_pool_id ? String(u.model_pool_id) : ''}
-                    placeholder="不限制"
-                    options={[
-                      { value: '', label: '不限制', hint: '全部模型' },
-                      ...pools.map((p) => ({ value: String(p.id), label: p.name, hint: `${p.user_count} 人` })),
-                    ]}
-                    onChange={(v) => void changePool(u, v ? Number(v) : null)}
-                  />
-                </td>
-                <td className="num">{u.balance.toLocaleString()}</td>
-                <td className="num">{fmtTokens(u.total_used ?? 0)}</td>
-                <td className="admin-ops">
-                  <button type="button" className="admin-btn" onClick={() => setRechargeUser(u)}>充值</button>
-                  <button type="button" className="admin-btn ghost" onClick={() => setLedgerUser(u)}>流水</button>
-                </td>
-              </tr>
-            ))}
-            {users.length === 0 && <tr><td colSpan={7} className="admin-empty">没有匹配的用户</td></tr>}
-          </tbody>
-        </table>
-      </div>
-
-      <Pager total={total} page={page} pageSize={pageSize}
-        onPage={(p) => setPage(p)}
-        onPageSize={(n) => { setPageSize(n); setPage(1); }}
-      />
-
-      {rechargeUser && (
-        <RechargeModal
-          user={rechargeUser}
-          onClose={() => setRechargeUser(null)}
-          onDone={async (msg) => {
-            setNotice(msg);
-            setRechargeUser(null);
-            await load(q, page, pageSize);
-            setTimeout(() => setNotice(''), 4000);
-          }}
-          onError={setError}
-        />
+    <AdminListPage
+      filters={(
+        <>
+          <Input
+            allowClear
+            placeholder="用户名 / 工号"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            style={{ width: 240 }}
+          />
+          <Select
+            style={{ width: 170 }}
+            value={role}
+            options={ROLE_OPTIONS}
+            onChange={(v) => { setRole(v); setPage(1); }}
+          />
+          <Button type="link" className="admin-filter-link" onClick={reset}>清空筛选</Button>
+          <Button type="link" className="admin-filter-link" onClick={() => void load()}>刷新</Button>
+        </>
       )}
-      {ledgerUser && <LedgerDrawer user={ledgerUser} onClose={() => setLedgerUser(null)} />}
-    </div>
+      extra={(
+        <>
+          {error && <Alert type="error" showIcon message={error} />}
+          {notice && <Alert type="success" showIcon message={notice} style={{ marginTop: error ? 8 : 0 }} />}
+        </>
+      )}
+      footer={<AdminPager total={total} page={page} onChange={setPage} unit="人" />}
+    >
+      <Table<AdminUser>
+        rowKey="id"
+        loading={loading}
+        dataSource={users}
+        pagination={false}
+        tableLayout="fixed"
+        rowClassName={(u) => (u.id === focusId ? 'admin-row-active' : '')}
+        onRow={(u) => ({
+          onClick: (e) => {
+            const target = e.target as HTMLElement;
+            if (target.closest('button, .ant-select, .ant-switch, a, input')) return;
+            setLedgerUser(u);
+          },
+        })}
+        locale={{ emptyText: <Empty description="没有匹配的用户" /> }}
+        columns={[
+          {
+            title: '工号',
+            dataIndex: 'employee_id',
+            width: '14%',
+            ellipsis: { showTitle: false },
+            render: (v) => <Ellipsis>{v}</Ellipsis>,
+          },
+          {
+            title: '用户名',
+            dataIndex: 'username',
+            width: '16%',
+            ellipsis: { showTitle: false },
+            render: (v) => <Ellipsis>{v}</Ellipsis>,
+          },
+          {
+            title: '角色',
+            dataIndex: 'role',
+            width: '14%',
+            render: (r: string) => (
+              <Tag color={r === 'admin' || r === 'superadmin' ? 'blue' : 'default'}>{roleLabel(r)}</Tag>
+            ),
+          },
+          {
+            title: '池',
+            dataIndex: 'model_pool_id',
+            width: '16%',
+            render: (id: number | null | undefined, u) => (
+              <Select
+                style={{ width: '100%' }}
+                popupMatchSelectWidth={false}
+                value={id ? String(id) : ''}
+                onChange={(v) => void changePool(u, v ? Number(v) : null)}
+                options={[
+                  { value: '', label: '不限制' },
+                  ...pools.map((p) => ({ value: String(p.id), label: `${p.name}（${p.user_count} 人）` })),
+                ]}
+              />
+            ),
+          },
+          {
+            title: '余额（token）',
+            dataIndex: 'balance',
+            width: '14%',
+            align: 'right',
+            render: (n: number) => n.toLocaleString(),
+          },
+          {
+            title: '总使用量',
+            dataIndex: 'total_used',
+            width: '12%',
+            align: 'right',
+            render: (n?: number) => fmtTokens(n ?? 0),
+          },
+          {
+            title: '操作',
+            width: '14%',
+            render: (_, u) => (
+              <Space>
+                <Button type="primary" onClick={() => setRechargeUser(u)}>充值</Button>
+                <Button onClick={() => setLedgerUser(u)}>流水</Button>
+              </Space>
+            ),
+          },
+        ]}
+      />
+      <RechargeModal
+        user={rechargeUser}
+        onClose={() => setRechargeUser(null)}
+        onDone={async (msg) => {
+          setNotice(msg);
+          setRechargeUser(null);
+          await load();
+          setTimeout(() => setNotice(''), 4000);
+        }}
+        onError={setError}
+      />
+      <LedgerDrawer user={ledgerUser} onClose={() => setLedgerUser(null)} />
+    </AdminListPage>
   );
 }
 
@@ -182,126 +224,131 @@ function RechargeModal({
   onDone,
   onError,
 }: {
-  user: AdminUser;
+  user: AdminUser | null;
   onClose: () => void;
   onDone: (msg: string) => Promise<void>;
   onError: (msg: string) => void;
 }) {
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState<number | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
-    const value = Number(amount.trim());
+    if (!user) return;
+    const value = Number(amount);
     if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) {
       onError('充值数量必须是正整数');
       return;
     }
     setBusy(true);
     try {
-      const balance = await adminRecharge(user.id, value, note);
-      await onDone(`已为 ${user.username} 充值 ${value.toLocaleString()}，当前余额 ${balance.toLocaleString()}`);
+      const next = await adminRecharge(user.id, value, note);
+      await onDone(`已为 ${user.username} 充值 ${value.toLocaleString()}，当前余额 ${next.toLocaleString()}`);
+      setAmount(null);
+      setNote('');
     } catch (e) {
-      onError(`充值失败：${(e as Error).message}`);
+      onError(humanizeAdminError(e, '充值失败，请稍后重试'));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="ui-confirm-mask" onClick={onClose}>
-      <div className="ui-confirm" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <h3>给 {user.username} 充值</h3>
-        <p className="admin-sub">工号 {user.employee_id} · 当前余额 {user.balance.toLocaleString()}</p>
-        <label className="admin-field">
-          充值数量
-          <input className="admin-amount" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ''))} placeholder="如 50000" />
-        </label>
-        <label className="admin-field">
-          备注
-          <input className="admin-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="可选" />
-        </label>
-        <div className="ui-confirm-actions">
-          <button type="button" className="admin-btn ghost" onClick={onClose}>取消</button>
-          <button type="button" className="admin-btn" disabled={busy} onClick={() => void submit()}>{busy ? '充值中…' : '确认充值'}</button>
-        </div>
-      </div>
-    </div>
+    <Modal
+      open={!!user}
+      title={user ? `给 ${user.username} 充值` : '充值'}
+      rootClassName="admin-dialog"
+      onCancel={onClose}
+      onOk={() => void submit()}
+      confirmLoading={busy}
+      okText={busy ? '充值中…' : '确认充值'}
+      destroyOnHidden
+    >
+      {user && (
+        <Space direction="vertical" style={{ width: '100%' }} size={20}>
+          <span>工号 {user.employee_id} · 当前余额 {user.balance.toLocaleString()}</span>
+          <InputNumber
+            style={{ width: '100%' }}
+            min={1}
+            placeholder="如 50000"
+            value={amount}
+            onChange={(v) => setAmount(typeof v === 'number' ? v : null)}
+          />
+          <Input placeholder="备注（可选）" value={note} onChange={(e) => setNote(e.target.value)} />
+        </Space>
+      )}
+    </Modal>
   );
 }
 
-function LedgerDrawer({ user, onClose }: { user: AdminUser; onClose: () => void }) {
+function LedgerDrawer({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
   const [rows, setRows] = useState<LedgerEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
 
   useEffect(() => {
-    adminUserLedger(user.id, page, pageSize).then((data) => {
+    setPage(1);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user) return;
+    adminUserLedger(user.id, page, PAGE_SIZE).then((data) => {
       setRows(data.ledger);
       setTotal(data.total);
     }).catch(() => {
       setRows([]);
       setTotal(0);
     });
-  }, [user.id, page, pageSize]);
+  }, [user, page]);
 
   const showReserve = rows.some((row) => row.kind === 'reserve' || (row.reserve && !row.settle && !row.amount));
 
   return (
-    <div className="admin-drawer-mask" onClick={onClose}>
-      <aside className="admin-drawer" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <header className="admin-drawer-head">
-          <div>
-            <h3>{user.username} 的流水</h3>
-            <p className="admin-sub">工号 {user.employee_id}</p>
-          </div>
-          <button type="button" className="admin-btn ghost" onClick={onClose}>关闭</button>
-        </header>
-        <div className="admin-drawer-body">
-          <table className="admin-table compact">
-            <thead>
-              <tr>
-                <th>类型</th>
-                <th>充值数量</th>
-                <th>消耗数量</th>
-                {showReserve && <th>预扣</th>}
-                <th>备注</th>
-                <th>时间</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, i) => (
-                <tr key={`${row.task_id ?? i}-${row.created_at ?? i}`}>
-                  <td>{KIND[row.kind ?? 'settle'] ?? row.kind}</td>
-                  <td className="num">{row.kind === 'recharge' ? (row.amount ?? '—') : '—'}</td>
-                  <td className="num">{row.settle ?? '—'}</td>
-                  {showReserve && <td className="num">{row.reserve ?? '—'}</td>}
-                  <td className="admin-muted">{row.note ?? '—'}</td>
-                  <td className="admin-muted nowrap">{fmtShanghai(row.created_at)}</td>
-                  <td>
-                    {row.task_id ? (
-                      <button
-                        type="button"
-                        className="admin-btn ghost"
-                        onClick={() => goAdmin('tasks', { task_id: String(row.task_id), open: '1' })}
-                      >
-                        详情
-                      </button>
-                    ) : '—'}
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && <tr><td colSpan={showReserve ? 7 : 6} className="admin-empty">暂无记录</td></tr>}
-            </tbody>
-          </table>
-          <Pager total={total} page={page} pageSize={pageSize}
-            onPage={setPage}
-            onPageSize={(n) => { setPageSize(n); setPage(1); }}
+    <Drawer
+      open={!!user}
+      title={user ? `${user.username} 的流水` : '流水'}
+      width={DRAWER_WIDTH}
+      rootClassName="admin-dialog"
+      onClose={onClose}
+      destroyOnHidden
+    >
+      {user && (
+        <p className="admin-muted" style={{ marginTop: 0 }}>工号 {user.employee_id}</p>
+      )}
+      <div className="admin-drawer-list">
+        <div className="admin-list-body">
+          <Table<LedgerEntry>
+            rowKey={(row, i) => `${row.task_id ?? i}-${row.created_at ?? i}`}
+            dataSource={rows}
+            pagination={false}
+            tableLayout="fixed"
+            locale={{ emptyText: <Empty description="暂无记录" /> }}
+            columns={[
+              { title: '类型', dataIndex: 'kind', width: showReserve ? '12%' : '14%', render: (k?: string) => KIND[k ?? 'settle'] ?? k },
+              { title: '充值数量', width: showReserve ? '14%' : '16%', render: (_, row) => (row.kind === 'recharge' ? (row.amount ?? '—') : '—') },
+              { title: '消耗数量', dataIndex: 'settle', width: showReserve ? '14%' : '16%', render: (v) => v ?? '—' },
+              ...(showReserve ? [{ title: '预扣', dataIndex: 'reserve' as const, width: '12%', render: (v: number | null) => v ?? '—' }] : []),
+              {
+                title: '备注',
+                dataIndex: 'note',
+                width: showReserve ? '22%' : '26%',
+                ellipsis: { showTitle: false },
+                render: (v?: string | null) => <Ellipsis>{v ?? '—'}</Ellipsis>,
+              },
+              {
+                title: '时间',
+                dataIndex: 'created_at',
+                width: showReserve ? '26%' : '28%',
+                className: 'admin-cell-time',
+                render: (v?: string) => fmtShanghai(v),
+              },
+            ]}
           />
         </div>
-      </aside>
-    </div>
+        <div className="admin-list-pager">
+          <AdminPager total={total} page={page} onChange={setPage} />
+        </div>
+      </div>
+    </Drawer>
   );
 }
