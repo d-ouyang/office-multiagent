@@ -1,7 +1,7 @@
-import { Alert, Button, Form, Input, Modal, Space, Typography } from 'antd';
 import { useState } from 'react';
 
 import { humanizeAdminError } from '../admin/errors';
+import { Alert, Button, Form, Input, Modal, Space, Typography } from '../admin/ui';
 import { adminChangePassword, adminClearToken, adminLogout, type LoginUser } from '../lib/api';
 
 export default function AdminProfilePanel({
@@ -49,7 +49,7 @@ export default function AdminProfilePanel({
       title="账户与退出"
       onCancel={onClose}
       footer={null}
-      destroyOnClose
+      destroyOnHidden
     >
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <div>

@@ -7,10 +7,10 @@ import {
   UserOutlined,
   WalletOutlined,
 } from '@ant-design/icons';
-import { Avatar, Button, Layout, Menu, Spin, Typography } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
 
 import AdminTheme from './admin/theme';
+import { Avatar, Button, Layout, Menu, Spin, Typography } from './admin/ui';
 import './admin/admin.css';
 import AdminLoginPage from './pages/AdminLoginPage';
 import AdminProfilePanel from './components/AdminProfilePanel';
@@ -86,7 +86,7 @@ function AdminShell({ user, onLogout }: { user: LoginUser; onLogout: () => void 
 
   return (
     <Layout className="admin-antd">
-      <Sider width={232} theme="dark" className="admin-antd-sider">
+      <Sider width={268} theme="dark" className="admin-antd-sider">
         <div className="admin-side-brand">
           <img className="admin-logo" src="/gq_logo.jpg" alt="锅圈" />
           <div>

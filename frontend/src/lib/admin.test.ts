@@ -3,8 +3,11 @@ import { readView } from '../App';
 import { fmtTokens, renderDetail } from '../pages/AdminPanels';
 import { ADMIN_TABS, readAdminTab } from '../admin/nav';
 import { fmtDuration, fmtShanghai } from '../admin/format';
+import { PAGE_SIZE } from '../admin/AdminListPage';
 import { humanizeAdminError, isUglyAdminError } from '../admin/errors';
 import { flowPathOf } from '../admin/FlowPathSvg';
+import { useDebouncedValue } from '../admin/useDebouncedValue';
+import { act, renderHook } from '@testing-library/react';
 
 describe('readView（管理端独立路由）', () => {
   afterEach(() => {
@@ -134,5 +137,24 @@ describe('flowPathOf', () => {
   it('优先用后端 flow_path', () => {
     expect(flowPathOf({ nodes: [], path: ['received'], flow_path: ['received', 'tools'] })).toEqual(['received', 'tools']);
     expect(flowPathOf({ nodes: [], path: ['received'] })).toEqual(['received']);
+  });
+});
+
+describe('PAGE_SIZE', () => {
+  it('固定 20，页面不提供每页条数选择', () => {
+    expect(PAGE_SIZE).toBe(20);
+  });
+});
+
+describe('useDebouncedValue', () => {
+  it('300ms 后才更新', () => {
+    vi.useFakeTimers();
+    const { result, rerender } = renderHook(({ v }) => useDebouncedValue(v, 300), { initialProps: { v: 'a' } });
+    expect(result.current).toBe('a');
+    rerender({ v: 'ab' });
+    expect(result.current).toBe('a');
+    act(() => { vi.advanceTimersByTime(300); });
+    expect(result.current).toBe('ab');
+    vi.useRealTimers();
   });
 });

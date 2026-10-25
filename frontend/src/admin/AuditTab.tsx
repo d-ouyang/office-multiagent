@@ -1,30 +1,39 @@
-import { Alert, Button, Empty, Form, Input, Select, Space, Table, Tag } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 
 import { adminAuditLogs, type AuditRow } from '../lib/api';
+import { AdminListPage, AdminPager, PAGE_SIZE } from './AdminListPage';
 import { humanizeAdminError } from './errors';
 import { fmtShanghai, renderDetail, TARGET_LABEL } from './format';
+import { Alert, Button, Empty, Input, Select, Table, Tag } from './ui';
+import { useDebouncedValue } from './useDebouncedValue';
 
 export default function AuditTab() {
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [draftAction, setDraftAction] = useState('');
-  const [draftTarget, setDraftTarget] = useState('');
-  const [draftKeyword, setDraftKeyword] = useState('');
   const [action, setAction] = useState('');
   const [targetType, setTargetType] = useState('');
   const [keyword, setKeyword] = useState('');
+  const debouncedKeyword = useDebouncedValue(keyword, 300);
   const [actions, setActions] = useState<Array<{ value: string; label: string }>>([]);
   const [targetTypes, setTargetTypes] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    setPage(1);
+  }, [action, targetType, debouncedKeyword]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await adminAuditLogs({ action: action || undefined, target_type: targetType || undefined, keyword, page, page_size: pageSize });
+      const data = await adminAuditLogs({
+        action: action || undefined,
+        target_type: targetType || undefined,
+        keyword: debouncedKeyword,
+        page,
+        page_size: PAGE_SIZE,
+      });
       setRows(data.logs);
       setTotal(data.total);
       if (data.actions.length) setActions(data.actions);
@@ -35,21 +44,11 @@ export default function AuditTab() {
     } finally {
       setLoading(false);
     }
-  }, [action, targetType, keyword, page, pageSize]);
+  }, [action, targetType, debouncedKeyword, page]);
 
   useEffect(() => { void load(); }, [load]);
 
-  const search = () => {
-    setAction(draftAction);
-    setTargetType(draftTarget);
-    setKeyword(draftKeyword);
-    setPage(1);
-  };
-
   const reset = () => {
-    setDraftAction('');
-    setDraftTarget('');
-    setDraftKeyword('');
     setAction('');
     setTargetType('');
     setKeyword('');
@@ -57,60 +56,52 @@ export default function AuditTab() {
   };
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Form layout="inline" className="admin-filter-form" onFinish={search}>
-        <Form.Item>
+    <AdminListPage
+      filters={(
+        <>
           <Select
             style={{ width: 180 }}
-            value={draftAction}
+            value={action}
             options={[{ value: '', label: '全部动作' }, ...actions]}
-            onChange={setDraftAction}
+            onChange={setAction}
           />
-        </Form.Item>
-        <Form.Item>
           <Select
-            style={{ width: 150 }}
-            value={draftTarget}
+            style={{ width: 160 }}
+            value={targetType}
             options={[
               { value: '', label: '全部对象' },
               ...targetTypes.map((t) => ({ value: t, label: TARGET_LABEL[t] ?? t })),
             ]}
-            onChange={setDraftTarget}
+            onChange={setTargetType}
           />
-        </Form.Item>
-        <Form.Item>
           <Input
             allowClear
             placeholder="操作人 / 对象 / 关键词"
-            value={draftKeyword}
-            onChange={(e) => setDraftKeyword(e.target.value)}
-            style={{ width: 220 }}
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            style={{ width: 240 }}
           />
-        </Form.Item>
-        <Form.Item>
-          <Space>
-            <Button type="primary" htmlType="submit">搜索</Button>
-            <Button onClick={reset}>重置</Button>
-          </Space>
-        </Form.Item>
-      </Form>
-      <Alert type="info" showIcon message="审计日志只读。敏感内容（密码/token）在写入时就会被拒绝。" />
-      {error && <Alert type="error" showIcon message={error} />}
+          <Button type="link" className="admin-filter-link" onClick={reset}>清空筛选</Button>
+          <Button type="link" className="admin-filter-link" onClick={() => void load()}>刷新</Button>
+        </>
+      )}
+      extra={(
+        <>
+          <Alert type="info" showIcon message="审计日志只读。敏感内容（密码/token）在写入时就会被拒绝。" />
+          {error && <Alert type="error" showIcon message={error} style={{ marginTop: 8 }} />}
+        </>
+      )}
+      footer={<AdminPager total={total} page={page} onChange={setPage} />}
+    >
       <Table<AuditRow>
         rowKey="id"
         loading={loading}
         dataSource={rows}
-        pagination={{
-          current: page,
-          pageSize,
-          total,
-          showSizeChanger: true,
-          showTotal: (n) => `共 ${n} 条`,
-          onChange: (p, s) => { setPage(p); setPageSize(s); },
-        }}
+        pagination={false}
+        tableLayout="auto"
         locale={{ emptyText: <Empty description="暂无审计记录" /> }}
         columns={[
-          { title: '时间', dataIndex: 'created_at', render: (v) => fmtShanghai(v), width: 180 },
+          { title: '时间', dataIndex: 'created_at', render: (v) => fmtShanghai(v) },
           {
             title: '操作人',
             render: (_, r) => (
@@ -137,6 +128,6 @@ export default function AuditTab() {
           { title: 'IP', dataIndex: 'ip', render: (v) => v ?? '—' },
         ]}
       />
-    </Space>
+    </AdminListPage>
   );
 }

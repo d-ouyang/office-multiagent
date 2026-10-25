@@ -1,5 +1,6 @@
-import { Alert, Button, Empty, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+
+import { AdminListPage } from './AdminListPage';
 
 import {
   adminCreateModel,
@@ -14,6 +15,7 @@ import {
 } from '../lib/api';
 import { humanizeAdminError } from './errors';
 import { fmtTokens } from './format';
+import { Alert, Button, Empty, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Typography } from './ui';
 
 const ROLE_HINT: Record<string, string> = {
   default: '默认员工可见',
@@ -119,27 +121,19 @@ export default function PoolsTab() {
   const enabledCount = Object.values(draft).filter(Boolean).length;
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      {error && <Alert type="error" showIcon message={error} />}
-      {notice && <Alert type="success" showIcon message={notice} />}
-      <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
-        按角色决定谁能看见哪些对话模型；可改名称、描述、参数、渠道和启用。关闭后的模型不会出现在客户端下拉。
-      </Typography.Paragraph>
-
-      <Form layout="inline" className="admin-filter-form">
-        <Form.Item label="角色 / 可见范围">
+    <AdminListPage
+      filters={(
+        <>
           <Select
-            style={{ width: 260 }}
+            style={{ minWidth: 260 }}
             value={currentId ?? undefined}
-            placeholder="选择角色池"
+            placeholder="角色 / 可见范围"
             onChange={(id) => setCurrentId(id)}
             options={pools.map((p) => ({
               value: p.id,
               label: `${p.name} · ${ROLE_HINT[p.name] ?? `${p.user_count} 人`}`,
             }))}
           />
-        </Form.Item>
-        <Form.Item>
           <Input
             placeholder="新池名（如 finance）"
             value={newName}
@@ -148,27 +142,31 @@ export default function PoolsTab() {
             onPressEnter={() => void createPool()}
             style={{ width: 200 }}
           />
-        </Form.Item>
-        <Form.Item>
-          <Space>
-            <Button type="primary" disabled={busy || !newName.trim()} onClick={() => void createPool()}>新建池</Button>
-            {current && current.user_count === 0 && !ROLE_HINT[current.name] && (
-              <Button danger disabled={busy} onClick={() => void removePool(current)}>删除该池</Button>
-            )}
-            <Button type="primary" disabled={busy || !current} onClick={() => void savePool()}>
-              {busy ? '保存中…' : '保存可见性'}
-            </Button>
-            <Button onClick={() => setCreating(true)}>新建模型</Button>
-          </Space>
-        </Form.Item>
-      </Form>
-
+          <Button type="primary" disabled={busy || !newName.trim()} onClick={() => void createPool()}>新建池</Button>
+          {current && current.user_count === 0 && !ROLE_HINT[current.name] && (
+            <Button danger disabled={busy} onClick={() => void removePool(current)}>删除该池</Button>
+          )}
+          <Button type="primary" disabled={busy || !current} onClick={() => void savePool()}>
+            {busy ? '保存中…' : '保存可见性'}
+          </Button>
+          <Button onClick={() => setCreating(true)}>新建模型</Button>
+          <Button type="link" className="admin-filter-link" onClick={() => void load()}>刷新</Button>
+        </>
+      )}
+      extra={(
+        <>
+          {error && <Alert type="error" showIcon message={error} />}
+          {notice && <Alert type="success" showIcon message={notice} style={{ marginTop: error ? 8 : 0 }} />}
+        </>
+      )}
+    >
       {!current && <Empty description="先选择一个角色池。" />}
       {current && (
         <Table<AdminModel>
           rowKey="id"
           dataSource={dialogue}
           pagination={false}
+          tableLayout="auto"
           rowClassName={(m) => (m.enabled === false ? 'admin-row-dim' : '')}
           locale={{ emptyText: <Empty description="没有对话模型" /> }}
           title={() => `「${current.name}」可见模型（${enabledCount}）`}
@@ -237,7 +235,7 @@ export default function PoolsTab() {
         }}
         onError={setError}
       />
-    </Space>
+    </AdminListPage>
   );
 }
 

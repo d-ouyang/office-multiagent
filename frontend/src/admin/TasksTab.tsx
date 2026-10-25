@@ -1,10 +1,11 @@
-import { Alert, Button, Empty, Form, Select, Space, Table, Tag } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 
 import { adminRun, adminTasks, type AdminRunDetail, type AdminTaskRow } from '../lib/api';
+import { AdminListPage, AdminPager, PAGE_SIZE } from './AdminListPage';
 import { humanizeAdminError } from './errors';
 import { fmtDuration, fmtShanghai, fmtTokens, isIncomplete, REASON, STATUS } from './format';
 import TaskDetailDrawer from './TaskDetailDrawer';
+import { Alert, Button, Empty, Select, Table, Tag } from './ui';
 
 const TASK_STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -40,9 +41,6 @@ export default function TasksTab() {
   const [rows, setRows] = useState<AdminTaskRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [draftStatus, setDraftStatus] = useState(initial.status);
-  const [draftFlag, setDraftFlag] = useState(initial.flag);
   const [filter, setFilter] = useState(initial.status);
   const [flag, setFlag] = useState(initial.flag);
   const [taskId, setTaskId] = useState(initial.task_id);
@@ -50,11 +48,11 @@ export default function TasksTab() {
   const [detail, setDetail] = useState<AdminRunDetail | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async (pg = page, size = pageSize) => {
+  const load = useCallback(async (pg = page) => {
     setLoading(true);
     try {
       const q = readQuery();
-      const data = await adminTasks(filter || undefined, pg, size, flag || undefined, {
+      const data = await adminTasks(filter || undefined, pg, PAGE_SIZE, flag || undefined, {
         task_id: q.task_id || taskId || undefined,
         session_id: q.session_id || undefined,
         user_id: q.user_id ? Number(q.user_id) : undefined,
@@ -69,30 +67,29 @@ export default function TasksTab() {
     } finally {
       setLoading(false);
     }
-  }, [filter, page, pageSize, flag, taskId]);
+  }, [filter, page, flag, taskId]);
 
   useEffect(() => {
     const sync = () => {
       const q = readQuery();
-      setDraftStatus(q.status);
-      setDraftFlag(q.flag);
       setFilter(q.status);
       setFlag(q.flag);
       setTaskId(q.task_id);
+      setPage(1);
     };
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
   }, []);
 
   useEffect(() => {
-    void load(page, pageSize).then((tasks) => {
+    void load(page).then((tasks) => {
       const q = readQuery();
       const want = q.task_id || (q.open ? tasks[0]?.id : '');
       if (want) {
         void adminRun(want).then(setDetail).catch((e) => setError(humanizeAdminError(e, '加载任务详情失败，请稍后重试')));
       }
     });
-  }, [filter, page, pageSize, load]);
+  }, [filter, page, flag, load]);
 
   const openDetail = async (id: string) => {
     try {
@@ -102,65 +99,46 @@ export default function TasksTab() {
     }
   };
 
-  const search = () => {
-    setFilter(draftStatus);
-    setFlag(draftFlag);
-    setPage(1);
-  };
-
   const reset = () => {
-    setDraftStatus('');
-    setDraftFlag('');
     setFilter('');
     setFlag('');
     setPage(1);
   };
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Form layout="inline" className="admin-filter-form" onFinish={search}>
-        <Form.Item>
-          <Select
-            style={{ width: 160 }}
-            value={draftStatus}
-            options={TASK_STATUS_OPTIONS}
-            onChange={setDraftStatus}
-          />
-        </Form.Item>
-        <Form.Item>
+    <AdminListPage
+      filters={(
+        <>
           <Select
             style={{ width: 170 }}
-            value={draftFlag}
-            options={FLAG_OPTIONS}
-            onChange={setDraftFlag}
+            value={filter}
+            options={TASK_STATUS_OPTIONS}
+            onChange={(v) => { setFilter(v); setPage(1); }}
           />
-        </Form.Item>
-        <Form.Item>
-          <Space>
-            <Button type="primary" htmlType="submit">搜索</Button>
-            <Button onClick={reset}>重置</Button>
-          </Space>
-        </Form.Item>
-      </Form>
-      {error && <Alert type="error" showIcon message={error} />}
+          <Select
+            style={{ width: 180 }}
+            value={flag}
+            options={FLAG_OPTIONS}
+            onChange={(v) => { setFlag(v); setPage(1); }}
+          />
+          <Button type="link" className="admin-filter-link" onClick={reset}>清空筛选</Button>
+          <Button type="link" className="admin-filter-link" onClick={() => void load(page)}>刷新</Button>
+        </>
+      )}
+      extra={error ? <Alert type="error" showIcon message={error} /> : null}
+      footer={<AdminPager total={total} page={page} onChange={setPage} />}
+    >
       <Table<AdminTaskRow>
         rowKey="id"
         loading={loading}
         dataSource={rows}
-        scroll={{ x: 1100 }}
-        pagination={{
-          current: page,
-          pageSize,
-          total,
-          showSizeChanger: true,
-          showTotal: (n) => `共 ${n} 条`,
-          onChange: (p, s) => { setPage(p); setPageSize(s); },
-        }}
+        pagination={false}
+        tableLayout="auto"
         locale={{ emptyText: <Empty description="暂无任务" /> }}
         columns={[
           { title: '用户', dataIndex: 'username', render: (v) => v ?? '—' },
-          { title: '时间', dataIndex: 'created_at', render: (v) => fmtShanghai(v), width: 180 },
-          { title: '任务摘要', dataIndex: 'text', ellipsis: true, render: (v) => v || '—' },
+          { title: '时间', dataIndex: 'created_at', render: (v) => fmtShanghai(v) },
+          { title: '任务摘要', dataIndex: 'text', render: (v) => v || '—' },
           { title: '任务耗时', dataIndex: 'duration_ms', render: (v) => fmtDuration(v) },
           {
             title: '状态',
@@ -175,8 +153,8 @@ export default function TasksTab() {
             title: '任务原因',
             render: (_, r) => (isIncomplete(r.status) && r.pause_reason ? REASON[r.pause_reason] ?? r.pause_reason : '—'),
           },
-          { title: '任务id', dataIndex: 'id', render: (id: string) => id.slice(0, 10) },
-          { title: '会话id', dataIndex: 'session_id', render: (id?: string | null) => (id || '—').slice(0, 10) },
+          { title: '任务id', dataIndex: 'id' },
+          { title: '会话id', dataIndex: 'session_id', render: (id?: string | null) => id || '—' },
           { title: '消耗token', dataIndex: 'tokens_used', align: 'right', render: (n: number) => (n ? fmtTokens(n) : '—') },
           {
             title: '',
@@ -185,6 +163,6 @@ export default function TasksTab() {
         ]}
       />
       <TaskDetailDrawer detail={detail} onClose={() => setDetail(null)} />
-    </Space>
+    </AdminListPage>
   );
 }

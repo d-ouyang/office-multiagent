@@ -1,10 +1,10 @@
-import { Alert, Button, Card, Col, Row, Segmented, Space, Statistic, Tag, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 
 import { adminOverview, adminUsage, getHealth, type AdminOverview, type UsagePoint } from '../lib/api';
 import { humanizeAdminError } from './errors';
 import { fmtTokens } from './format';
 import { goAdmin, type AdminTab } from './nav';
+import { Alert, Button, Card, Col, Row, Segmented, Space, Statistic, Tag, Typography } from './ui';
 
 function KpiCard({
   title,
@@ -59,7 +59,7 @@ export default function OverviewTab() {
   const services = health?.services ?? {};
 
   return (
-    <Space direction="vertical" size={20} style={{ width: '100%' }}>
+    <Space direction="vertical" size={20} style={{ width: '100%' }} className="admin-page-pad">
       {error && <Alert type="error" showIcon message={error} />}
       <Typography.Text type="secondary">
         <Tag color={health?.status === 'ok' ? 'success' : health ? 'error' : 'default'}>

@@ -1,7 +1,7 @@
-import { Button, Card, Form, Input, Typography } from 'antd';
 import { useState } from 'react';
 
 import { humanizeAdminError } from '../admin/errors';
+import { Button, Card, Form, Input, Typography } from '../admin/ui';
 import { adminLogin, type LoginUser } from '../lib/api';
 
 function goWorkspace() {

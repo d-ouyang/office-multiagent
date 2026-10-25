@@ -1,8 +1,8 @@
-import { Descriptions, Drawer, Tag, Typography } from 'antd';
-
 import type { AdminRunDetail } from '../lib/api';
+import { DRAWER_WIDTH } from './AdminListPage';
 import { fmtDuration, fmtShanghai, fmtTokens, REASON, STATUS } from './format';
 import FlowPathSvg from './FlowPathSvg';
+import { Descriptions, Drawer, Tag, Typography } from './ui';
 
 export default function TaskDetailDrawer({
   detail,
@@ -20,7 +20,7 @@ export default function TaskDetailDrawer({
     <Drawer
       open
       title="任务详情"
-      width={760}
+      width={DRAWER_WIDTH}
       onClose={onClose}
     >
       <Typography.Paragraph type="secondary">
