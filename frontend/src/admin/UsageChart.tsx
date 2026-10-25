@@ -80,8 +80,12 @@ export default function UsageChart({ models, series }: { models: string[]; serie
         name,
         type: 'bar',
         stack: 'usage',
-        barMaxWidth: 28,
-        itemStyle: { color: COLORS[index % COLORS.length] },
+        barMaxWidth: 12,
+        barCategoryGap: '58%',
+        itemStyle: {
+          color: COLORS[index % COLORS.length],
+          borderRadius: [6, 6, 0, 0],
+        },
         data: series.map((point) => point.by_model?.[name] ?? (names.length === 1 && name === '未记模型' ? point.tokens : 0)),
       })),
     }, true);
