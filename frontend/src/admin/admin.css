@@ -4,9 +4,11 @@
   overflow: hidden;
   font-size: 17px;
 }
-.admin-antd > .ant-layout {
+.admin-antd > .ant-layout,
+.admin-antd > .ant-layout > .ant-layout {
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 .admin-boot {
   min-height: 100vh;
@@ -129,6 +131,8 @@
   padding: 0;
 }
 .admin-list-body .ant-table-wrapper,
+.admin-list-body .ant-spin-nested-loading,
+.admin-list-body .ant-spin-container,
 .admin-list-body .ant-table,
 .admin-list-body .ant-table-container,
 .admin-list-body .ant-table-content,
@@ -137,13 +141,8 @@
 .admin-list-body table {
   width: 100% !important;
   max-width: 100%;
-}
-.admin-list-body .ant-table-container,
-.admin-list-body .ant-table-content,
-.admin-list-body .ant-table-header,
-.admin-list-body .ant-table-body,
-.admin-list-body .ant-table-wrapper {
-  overflow-x: hidden !important;
+  /* 两轴都写死。只藏横向时，纵向 visible 会被浏览器改成 auto，再套出一层滚动条。 */
+  overflow: visible !important;
 }
 .admin-list-body table {
   table-layout: fixed;
@@ -379,13 +378,22 @@
 }
 .admin-flow-legend .lg-off { border-top: 2px dashed #cbd5e1; }
 
+.admin-dialog .ant-drawer-body:has(.admin-drawer-list) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .admin-drawer-list {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 360px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
-.admin-drawer-list .admin-list-body { flex: 1; }
+.admin-drawer-list .admin-list-body {
+  flex: 1;
+  min-height: 0;
+}
 .admin-drawer-list .admin-list-pager {
   padding-left: 0;
   padding-right: 0;
