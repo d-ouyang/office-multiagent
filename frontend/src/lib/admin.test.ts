@@ -4,6 +4,7 @@ import { fmtTokens, renderDetail } from '../pages/AdminPanels';
 import { ADMIN_TABS, readAdminTab } from '../admin/nav';
 import { fmtDuration, fmtShanghai } from '../admin/format';
 import { DRAWER_WIDTH, PAGE_SIZE } from '../admin/AdminListPage';
+import { TASK_COLUMN_TITLES, TASK_COL_WIDTH } from '../admin/TasksTab';
 import { copyAdminText } from '../admin/ellipsis';
 import { humanizeAdminError, isUglyAdminError } from '../admin/errors';
 import { flowPathOf } from '../admin/FlowPathSvg';
@@ -88,9 +89,7 @@ describe('readAdminTab', () => {
 
 describe('上海时间与耗时', () => {
   it('ISO 转 Asia/Shanghai', () => {
-    const text = fmtShanghai('2026-10-25T00:00:00Z');
-    expect(text).toContain('2026');
-    expect(text).toContain('08:00:00');
+    expect(fmtShanghai('2026-10-25T00:00:00Z')).toBe('2026-10-25 08:00:00');
   });
   it('耗时格式', () => {
     expect(fmtDuration(null)).toBe('—');
@@ -150,6 +149,21 @@ describe('PAGE_SIZE', () => {
 describe('DRAWER_WIDTH', () => {
   it('任务详情和流水抽屉保持加宽', () => {
     expect(DRAWER_WIDTH).toContain('1080px');
+  });
+});
+
+describe('任务监控列', () => {
+  it('没有任务原因幽灵列，操作列有标题', () => {
+    expect(TASK_COLUMN_TITLES).toEqual([
+      '用户', '工号', '时间', '任务摘要', '任务耗时', '状态', '任务id', '会话id', '消耗token', '操作',
+    ]);
+    expect(TASK_COLUMN_TITLES).not.toContain('任务原因');
+  });
+  it('摘要封顶，工号/时间/操作够放下完整内容', () => {
+    expect(TASK_COL_WIDTH.summary).toBeLessThan(TASK_COL_WIDTH.time);
+    expect(TASK_COL_WIDTH.employeeId).toBeGreaterThanOrEqual(100);
+    expect(TASK_COL_WIDTH.time).toBeGreaterThanOrEqual(220);
+    expect(TASK_COL_WIDTH.action).toBeGreaterThanOrEqual(110);
   });
 });
 

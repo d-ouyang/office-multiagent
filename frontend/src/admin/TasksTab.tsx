@@ -5,10 +5,26 @@ import { adminRun, adminTasks, type AdminRunDetail, type AdminTaskRow } from '..
 import { AdminListPage, AdminPager, PAGE_SIZE } from './AdminListPage';
 import { CopyCell, Ellipsis } from './ellipsis';
 import { humanizeAdminError } from './errors';
-import { fmtDuration, fmtShanghai, fmtTokens, isIncomplete, REASON, STATUS } from './format';
+import { fmtDuration, fmtShanghai, fmtTokens, STATUS } from './format';
 import TaskDetailDrawer from './TaskDetailDrawer';
 import { Alert, Button, DatePicker, Empty, Input, Select, Table, Tag } from './ui';
 import { useDebouncedValue } from './useDebouncedValue';
+
+/** 固定列用 px；任务id / 会话id 不设宽，平分剩余，避免撑出横滚。 */
+export const TASK_COL_WIDTH = {
+  username: 64,
+  employeeId: 108,
+  time: 236,
+  summary: 120,
+  duration: 76,
+  status: 72,
+  token: 92,
+  action: 118,
+} as const;
+
+export const TASK_COLUMN_TITLES = [
+  '用户', '工号', '时间', '任务摘要', '任务耗时', '状态', '任务id', '会话id', '消耗token', '操作',
+] as const;
 
 const TASK_STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -152,6 +168,7 @@ export default function TasksTab() {
     >
       <Table<AdminTaskRow>
         rowKey="id"
+        className="admin-tasks-table"
         loading={loading}
         dataSource={rows}
         pagination={false}
@@ -161,39 +178,41 @@ export default function TasksTab() {
           {
             title: '用户',
             dataIndex: 'username',
-            width: 78,
+            width: TASK_COL_WIDTH.username,
             ellipsis: { showTitle: false },
             render: (v) => <Ellipsis>{v ?? '—'}</Ellipsis>,
           },
           {
             title: '工号',
             dataIndex: 'employee_id',
-            width: 88,
+            width: TASK_COL_WIDTH.employeeId,
             ellipsis: { showTitle: false },
             render: (v) => <Ellipsis>{v ?? '—'}</Ellipsis>,
           },
           {
             title: '时间',
             dataIndex: 'created_at',
-            width: 220,
+            width: TASK_COL_WIDTH.time,
+            className: 'admin-cell-time',
             render: (v) => fmtShanghai(v),
           },
           {
             title: '任务摘要',
             dataIndex: 'text',
+            width: TASK_COL_WIDTH.summary,
             ellipsis: { showTitle: false },
             render: (v) => <CopyCell text={v || '—'} />,
           },
           {
             title: '任务耗时',
             dataIndex: 'duration_ms',
-            width: 76,
+            width: TASK_COL_WIDTH.duration,
             render: (v) => fmtDuration(v),
           },
           {
             title: '状态',
             dataIndex: 'status',
-            width: 82,
+            width: TASK_COL_WIDTH.status,
             render: (status: string) => (
               <Tag color={status.startsWith('paused') || status === 'failed' ? 'warning' : 'blue'}>
                 {STATUS[status] ?? status}
@@ -201,38 +220,27 @@ export default function TasksTab() {
             ),
           },
           {
-            title: '任务原因',
-            width: 80,
-            ellipsis: { showTitle: false },
-            render: (_, r) => {
-              const text = isIncomplete(r.status) && r.pause_reason ? REASON[r.pause_reason] ?? r.pause_reason : '—';
-              return <Ellipsis>{text}</Ellipsis>;
-            },
-          },
-          {
             title: '任务id',
             dataIndex: 'id',
-            width: 176,
             ellipsis: { showTitle: false },
-            render: (v) => <CopyCell text={v} />,
+            render: (v) => <CopyCell className="admin-mono" text={v} />,
           },
           {
             title: '会话id',
             dataIndex: 'session_id',
-            width: 176,
             ellipsis: { showTitle: false },
-            render: (id?: string | null) => <CopyCell text={id || '—'} />,
+            render: (id?: string | null) => <CopyCell className="admin-mono" text={id || '—'} />,
           },
           {
             title: '消耗token',
             dataIndex: 'tokens_used',
-            width: 88,
+            width: TASK_COL_WIDTH.token,
             align: 'right',
             render: (n: number) => (n ? fmtTokens(n) : '—'),
           },
           {
-            title: '',
-            width: 88,
+            title: '操作',
+            width: TASK_COL_WIDTH.action,
             render: (_, r) => <Button type="link" onClick={() => void openDetail(r.id)}>查看详情</Button>,
           },
         ]}

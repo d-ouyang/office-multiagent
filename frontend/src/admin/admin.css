@@ -136,11 +136,24 @@
 .admin-list-body .ant-table-container,
 .admin-list-body .ant-table-content,
 .admin-list-body .ant-table-header,
-.admin-list-body .ant-table-body {
+.admin-list-body .ant-table-body,
+.admin-list-body .ant-table-wrapper {
   overflow-x: hidden !important;
 }
 .admin-list-body table {
   table-layout: fixed;
+}
+.admin-list-body .ant-table-cell {
+  min-width: 0 !important;
+  overflow: hidden;
+}
+.admin-tasks-table .admin-cell-time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-tasks-table .admin-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
 }
 .admin-list-body .ant-table {
   font-size: 18px;

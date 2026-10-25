@@ -19,7 +19,7 @@ export async function copyAdminText(value: string): Promise<boolean> {
 }
 
 /** 单行省略；点击复制全文，不挂 Tooltip。 */
-export function CopyCell({ text }: { text?: string | null }) {
+export function CopyCell({ text, className }: { text?: string | null; className?: string }) {
   const value = text?.trim() ? text : '—';
   const onCopy = async (e: MouseEvent) => {
     e.stopPropagation();
@@ -31,7 +31,7 @@ export function CopyCell({ text }: { text?: string | null }) {
     }
   };
   return (
-    <span className="admin-ellipsis admin-copy-cell" onClick={(e) => void onCopy(e)}>
+    <span className={`admin-ellipsis admin-copy-cell${className ? ` ${className}` : ''}`} onClick={(e) => void onCopy(e)}>
       {value}
     </span>
   );
