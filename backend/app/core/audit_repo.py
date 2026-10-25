@@ -52,11 +52,12 @@ ACTION_LABELS: Final[dict[str, str]] = {
     "admin.pool.create": "新建模型池",
     "admin.pool.delete": "删除模型池",
     "admin.pool.models.set": "设置池模型成员",
+    "admin.model.update": "更新模型登记",
     # 任务
     "admin.task.resume": "代续跑用户任务",
 }
 
-TARGET_TYPES: Final[tuple[str, ...]] = ("auth", "user", "task", "pool", "admin")
+TARGET_TYPES: Final[tuple[str, ...]] = ("auth", "user", "task", "pool", "model", "admin")
 
 _FORBIDDEN_KEYS: Final[frozenset[str]] = frozenset(
     {

@@ -210,3 +210,54 @@ def test_admin_tasks_global_with_username_and_filter(eng):
 
 def test_admin_tasks_requires_admin(eng):
     assert TestClient(app).get("/api/v1/admin/tasks", headers=_auth("EMP002")).status_code == 403
+
+
+def test_users_exact_search_and_balance_filter(eng):
+    c = TestClient(app)
+    fuzzy = c.get("/api/v1/admin/users", params={"q": "ch"}, headers=_auth()).json()["users"]
+    assert fuzzy == []
+    exact = c.get("/api/v1/admin/users", params={"q": "chen"}, headers=_auth()).json()["users"]
+    assert [u["username"] for u in exact] == ["chen"]
+    low = c.get("/api/v1/admin/users", params={"balance_max": 500}, headers=_auth()).json()["users"]
+    assert {u["username"] for u in low} == {"chen"}
+    high = c.get("/api/v1/admin/users", params={"balance_min": 1000}, headers=_auth()).json()["users"]
+    assert {u["username"] for u in high} == {"dev"}
+
+
+def test_users_total_used_and_ledger_page(eng):
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle) VALUES (2, 't1', 'task', 2000, 800)"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, kind, reserve, settle) VALUES (2, 't2', 'task', 2000, 200)"))
+    c = TestClient(app)
+    users = {u["username"]: u for u in c.get("/api/v1/admin/users", headers=_auth()).json()["users"]}
+    assert users["chen"]["total_used"] == 1000
+    page = c.get("/api/v1/admin/users/2/ledger", params={"page": 1, "page_size": 1}, headers=_auth()).json()
+    assert page["total"] == 2 and len(page["ledger"]) == 1
+
+
+def test_admin_tasks_task_id_and_session(eng):
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO session (id, user_id) VALUES ('s1', 1)"))
+        conn.execute(text("INSERT INTO task (id, session_id, status, text, tokens_used) VALUES ('task-1', 's1', 'done', '很长的摘要用来悬停', 30)"))
+    row = TestClient(app).get("/api/v1/admin/tasks", params={"task_id": "task-1"}, headers=_auth()).json()["tasks"][0]
+    assert row["session_id"] == "s1"
+    assert row["text"] == "很长的摘要用来悬停"
+    assert "duration_ms" in row
+
+
+def test_run_detail_includes_flow(eng):
+    import json
+    events = [
+        {"type": "thinking_delta", "run_id": "run-flow", "ts": 1000, "data": {"delta": "识别意图：查数"}},
+        {"type": "tool_call_start", "run_id": "run-flow", "ts": 1500, "data": {"name": "query_orders"}},
+        {"type": "done", "run_id": "run-flow", "ts": 3000, "data": {"status": "done"}},
+    ]
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO session (id, user_id) VALUES ('s1', 2)"))
+        conn.execute(text("INSERT INTO task (id, session_id, status, text) VALUES ('run-flow', 's1', 'done', '查订单')"))
+        conn.execute(text("CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, trace TEXT)"))
+        conn.execute(text("INSERT INTO message (session_id, role, content, trace) VALUES ('s1', 'assistant', 'ok', :t)"), {"t": json.dumps(events)})
+    detail = TestClient(app).get("/api/v1/admin/runs/run-flow", headers=_auth()).json()
+    assert detail["duration_ms"] == 2000
+    assert detail["flow"]["path"][0] == "received"
+    assert any(n["kind"] == "tool" for n in detail["flow"]["nodes"])

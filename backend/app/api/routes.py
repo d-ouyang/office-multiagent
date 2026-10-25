@@ -1088,28 +1088,39 @@ def _stream_task(
 def admin_users(
     q: str | None = Query(default=None, max_length=64),
     user_id: int | None = Query(default=None),
+    balance_min: int | None = Query(default=None),
+    balance_max: int | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=5, le=100),
     authorization: str | None = Header(default=None),
 ):
-    """用户列表（含余额）：用户名/工号模糊搜索 + 分页（p6.28b）。"""
+    """用户列表：精确搜用户名/工号 + 余额区间 + 总使用量 + 分页。"""
     _require_admin(authorization)
     from sqlalchemy import text as _text
 
     from ..core.db import get_engine
 
     base = (
-        "FROM `user` u LEFT JOIN wallet w ON w.user_id = u.id"
+        "FROM `user` u LEFT JOIN wallet w ON w.user_id = u.id "
+        "LEFT JOIN (SELECT user_id, COALESCE(SUM(settle), 0) AS total_used "
+        "FROM token_ledger WHERE settle IS NOT NULL GROUP BY user_id) usage "
+        "ON usage.user_id = u.id"
     )
     where = ""
     params: dict[str, Any] = {}
     filters = []
     if q and q.strip():
-        filters.append("(u.username LIKE :kw OR u.employee_id LIKE :kw)")
-        params["kw"] = f"%{q.strip()}%"
+        filters.append("(u.username = :kw OR u.employee_id = :kw)")
+        params["kw"] = q.strip()
     if user_id is not None:
         filters.append("u.id = :uid")
         params["uid"] = user_id
+    if balance_min is not None:
+        filters.append("COALESCE(w.balance, 0) >= :bmin")
+        params["bmin"] = balance_min
+    if balance_max is not None:
+        filters.append("COALESCE(w.balance, 0) <= :bmax")
+        params["bmax"] = balance_max
     if filters:
         where = " WHERE " + " AND ".join(filters)
     eng = get_engine()
@@ -1120,7 +1131,8 @@ def admin_users(
         rows = conn.execute(
             _text(
                 "SELECT u.id, u.employee_id, u.username, u.role, u.model_pool_id, "
-                "COALESCE(w.balance, 0) AS balance " + base + where +
+                "COALESCE(w.balance, 0) AS balance, "
+                "COALESCE(usage.total_used, 0) AS total_used " + base + where +
                 " ORDER BY u.id LIMIT :l OFFSET :o"
             ),
             {**params, "l": page_size, "o": (page - 1) * page_size},
@@ -1134,6 +1146,7 @@ def admin_users(
                 "role": r["role"],
                 "model_pool_id": r["model_pool_id"],
                 "balance": int(r["balance"] or 0),
+                "total_used": int(r["total_used"] or 0),
             }
             for r in rows
         ],
@@ -1192,10 +1205,12 @@ def admin_recharge(
 @router.get("/admin/users/{user_id}/ledger")
 def admin_user_ledger(
     user_id: int,
-    limit: int = Query(default=20, ge=1, le=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    limit: int | None = Query(default=None, ge=1, le=100),
     authorization: str | None = Header(default=None),
 ):
-    """某用户的账本流水（任务账 + 充值）。"""
+    """某用户的账本流水（任务账 + 充值），分页。"""
     _require_admin(authorization)
     from sqlalchemy import text as _text
 
@@ -1209,7 +1224,10 @@ def admin_user_ledger(
         ).first()
     if not exists:
         raise HTTPException(404, detail={"code": "USER_NOT_FOUND", "message": "用户不存在"})
-    return {"ledger": TokenPool(eng).recent(user_id, limit=limit)}
+    size = limit if limit is not None else page_size
+    offset = 0 if limit is not None else (page - 1) * size
+    rows, total = TokenPool(eng).ledger_page(user_id, limit=size, offset=offset)
+    return {"ledger": rows, "total": total, "page": page if limit is None else 1, "page_size": size}
 
 
 # --------------------------------------------------------------------------- #
@@ -1400,6 +1418,9 @@ def admin_usage(
 def admin_tasks(
     status: str | None = Query(default=None, max_length=32),
     flag: str | None = Query(default=None, max_length=32),
+    task_id: str | None = Query(default=None, max_length=64),
+    session_id: str | None = Query(default=None, max_length=64),
+    user_id: int | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=5, le=100),
     authorization: str | None = Header(default=None),
@@ -1414,11 +1435,21 @@ def admin_tasks(
         "FROM task t LEFT JOIN session s ON s.id = t.session_id "
         "LEFT JOIN `user` u ON u.id = s.user_id"
     )
-    where = ""
+    filters: list[str] = []
     params: dict[str, Any] = {}
     if status:
-        where = " WHERE t.status = :st"
+        filters.append("t.status = :st")
         params["st"] = status
+    if task_id:
+        filters.append("t.id = :tid")
+        params["tid"] = task_id
+    if session_id:
+        filters.append("t.session_id = :sid")
+        params["sid"] = session_id
+    if user_id is not None:
+        filters.append("s.user_id = :uid")
+        params["uid"] = user_id
+    where = (" WHERE " + " AND ".join(filters)) if filters else ""
     eng = get_engine()
     scan = flag in {"rag", "no_artifact", "validation", "paused"}
     with eng.connect() as conn:
@@ -1471,13 +1502,15 @@ def _task_row(conn, row) -> dict[str, Any]:
     summary = summarize(load_events(conn, str(row["id"])), request=request)
     return {
         "id": row["id"],
+        "session_id": row["session_id"],
         "user_id": row["user_id"],
         "username": row["username"],
         "status": row["status"],
         "pause_reason": row["pause_reason"],
-        "text": (row["text"] or "")[:80],
+        "text": row["text"] or "",
         "tokens_used": int(row["tokens_used"] or 0),
         "created_at": _iso_or_none(row["created_at"]),
+        "duration_ms": summary.get("duration_ms"),
         "tool_summary": summary["tool_summary"],
         "rag_called": summary["rag_called"],
         "has_artifact": summary["has_artifact"],
@@ -1560,7 +1593,7 @@ def admin_run_detail(task_id: str, authorization: str | None = Header(default=No
         except (TypeError, ValueError):
             request = {}
         events = load_events(conn, task_id)
-        summary = summarize(events, request=request)
+        summary = summarize(events, request={**request, "text": row["text"] or ""})
     return {
         "id": row["id"],
         "session_id": row["session_id"],
@@ -1834,6 +1867,22 @@ class SetUserPoolRequest(BaseModel):
     model_pool_id: int | None = None
 
 
+class UpdateModelRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    provider: str | None = None
+    api_model: str | None = None
+    in_dialogue: bool | None = None
+    enabled: bool | None = None
+    context_window: int | None = None
+    max_output: int | None = None
+    cost_per_1k: float | None = None
+    supports_reasoning: bool | None = None
+    multimodal_input: bool | None = None
+    pool_ids: list[str] | None = None
+    reasoning_efforts: list[str] | None = None
+
+
 @router.get("/admin/model-pools")
 def admin_model_pools(authorization: str | None = Header(default=None)):
     """池列表 + 每个池的模型矩阵（enabled=生效成员：DB 显式配置，否则 yaml 默认）。"""
@@ -2040,6 +2089,45 @@ def admin_set_user_pool(
         detail={"model_pool_id": body.model_pool_id},
     )
     return {"ok": True, "user_id": user_id, "model_pool_id": body.model_pool_id}
+
+
+@router.get("/admin/models")
+def admin_models_catalog(authorization: str | None = Header(default=None)):
+    """完整模型登记（含逻辑模型），供管理端按角色看可见性并编辑。"""
+    _require_admin(authorization)
+    from ..core.model_registry import list_catalog, load_registry
+
+    providers = {name: {"base_url": p.base_url} for name, p in load_registry()["providers"].items()}
+    return {"models": list_catalog(), "providers": providers}
+
+
+@router.patch("/admin/models/{model_id}")
+def admin_update_model(
+    model_id: str,
+    body: UpdateModelRequest,
+    authorization: str | None = Header(default=None),
+):
+    """改模型展示名/描述/参数/渠道/启用。写入 overrides，不改手写 yaml。"""
+    admin = _require_admin(authorization)
+    from ..core import audit_repo
+    from ..core.model_registry import update_model
+
+    patch = body.model_dump(exclude_none=True)
+    try:
+        model = update_model(model_id, patch)
+    except KeyError:
+        raise HTTPException(404, detail={"code": "MODEL_NOT_FOUND", "message": "模型不存在"}) from None
+    audit_repo.record_safe(
+        actor_user_id=int(admin["id"]),
+        actor_username=str(admin["username"]),
+        actor_role=str(admin.get("role")),
+        action="admin.model.update",
+        target_type="model",
+        target_id=model_id,
+        target_label=str(model.get("name") or model_id),
+        detail={"fields": sorted(patch.keys())},
+    )
+    return {"ok": True, "model": model}
 
 
 @router.get("/internal/auth/ping", dependencies=[Depends(require_internal)])

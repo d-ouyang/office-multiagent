@@ -303,12 +303,25 @@ const PromptBar: React.FC<PromptBarProps> = ({
   const level = efforts[effortIndex] ?? '';
   const maxed = efforts.length > 1 && effortIndex === efforts.length - 1;
 
-  const focusInput = () => inputRef.current?.focus({ preventScroll: true });
+  const skipCloseOnFocus = useRef(false);
+  const focusInput = () => {
+    // 工具栏按钮会主动把焦点拉回输入框。若此时走 onFocus→closeMenus，
+    // 第一次点击会「打开菜单立刻被关掉」，看起来像要点两次。
+    skipCloseOnFocus.current = true;
+    inputRef.current?.focus({ preventScroll: true });
+  };
   const closeMenus = useCallback(() => {
     setPlusOpen(false);
     setModelOpen(false);
     setEffortOpen(false);
   }, []);
+  const onInputFocus = () => {
+    if (skipCloseOnFocus.current) {
+      skipCloseOnFocus.current = false;
+      return;
+    }
+    closeMenus();
+  };
 
   useEffect(() => {
     if (!incoming || incoming.id === seenIncoming.current) return;
@@ -825,7 +838,7 @@ const PromptBar: React.FC<PromptBarProps> = ({
             closeMenus();
             setActive(0);
           }}
-          onFocus={closeMenus}
+          onFocus={onInputFocus}
           onKeyDown={onKeyDown}
         />
 

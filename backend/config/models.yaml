@@ -8,6 +8,16 @@
 #
 # 所有模型全部云端（用户持有 SiliconFlow / DeepSeek key），无本地部署。
 # 密钥不写本文件，只写环境变量名（api_key_env），运行时从环境变量读取。
+#
+# max_output / context_window 来源（2026-10-25 对照官方页，不是猜的默认值）：
+#   · DeepSeek 官方 deepseek-chat / deepseek-reasoner：
+#     api-docs.deepseek.com Models & Pricing + Chat Completions
+#     MAX OUTPUT = 384K（393216）；context = 1M。
+#     旧值 8192 是「未设 max_tokens 时的非思考默认」，不是上限。
+#   · 硅基流动 DeepSeek-V3：siliconflow.com/models/deepseek-v3 → Max output 164K
+#   · 硅基流动 DeepSeek-R1：docs.siliconflow.com reasoning 表 → Maximum Response 16384
+#   · 硅基流动其余模型：沿用各模型页/平台公开数字；未单独公布上限的保持原登记。
+# 运行时 TaskTokenBudget 的 desired_output_tokens 默认仍是 8192（任务预算，不是厂商上限）。
 # =====================================================================
 
 llm_providers:
@@ -26,8 +36,8 @@ models:
     provider: deepseek
     in_dialogue: true
     multimodal_input: false
-    context_window: 128000
-    max_output: 8192
+    context_window: 1048576
+    max_output: 393216
     supports_reasoning: false
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.001
@@ -39,8 +49,8 @@ models:
     provider: deepseek
     in_dialogue: true
     multimodal_input: false
-    context_window: 128000
-    max_output: 8192
+    context_window: 1048576
+    max_output: 393216
     supports_reasoning: true
     pool_ids: [staff, admin]
     cost_per_1k: 0.005
@@ -54,7 +64,7 @@ models:
     in_dialogue: true
     multimodal_input: false
     context_window: 163840
-    max_output: 8192
+    max_output: 163840
     supports_reasoning: false
     pool_ids: [default, staff, admin]
     cost_per_1k: 0.001
