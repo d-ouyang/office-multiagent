@@ -86,12 +86,7 @@ export default function AuditTab() {
           <Button type="link" className="admin-filter-link" onClick={() => void load()}>刷新</Button>
         </>
       )}
-      extra={(
-        <>
-          <Alert type="info" showIcon message="审计日志只读。敏感内容（密码/token）在写入时就会被拒绝。" />
-          {error && <Alert type="error" showIcon message={error} style={{ marginTop: 8 }} />}
-        </>
-      )}
+      extra={error ? <Alert type="error" showIcon message={error} /> : null}
       footer={<AdminPager total={total} page={page} onChange={setPage} />}
     >
       <Table<AuditRow>

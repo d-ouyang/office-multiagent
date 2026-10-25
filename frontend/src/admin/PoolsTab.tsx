@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { AdminListPage } from './AdminListPage';
+import { AdminListPage, DRAWER_WIDTH } from './AdminListPage';
 
 import {
   adminCreateModel,
@@ -16,7 +16,7 @@ import {
 import { Ellipsis } from './ellipsis';
 import { humanizeAdminError } from './errors';
 import { fmtTokens } from './format';
-import { Alert, Button, Empty, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Typography } from './ui';
+import { Alert, Button, Drawer, Empty, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Typography } from './ui';
 
 const ROLE_HINT: Record<string, string> = {
   default: '默认员工可见',
@@ -63,9 +63,13 @@ export default function PoolsTab() {
     if (!current) return;
     setBusy(true);
     try {
+      const closed = new Set(models.filter((m) => m.enabled === false).map((m) => m.id));
       await adminSavePoolModels(
         current.id,
-        Object.entries(draft).map(([model_name, enabled]) => ({ model_name, enabled })),
+        Object.entries(draft).map(([model_name, enabled]) => ({
+          model_name,
+          enabled: closed.has(model_name) ? false : enabled,
+        })),
       );
       setNotice(`已保存「${current.name}」的可见模型`);
       await load();
@@ -112,7 +116,8 @@ export default function PoolsTab() {
   const toggleEnabled = async (m: AdminModel, enabled: boolean) => {
     try {
       await adminUpdateModel(m.id, { enabled, in_dialogue: m.in_dialogue });
-      setNotice(enabled ? `已启用 ${m.name}` : `已关闭 ${m.name}（不再进入对话下拉）`);
+      if (!enabled) setDraft((prev) => ({ ...prev, [m.id]: false }));
+      setNotice(enabled ? `已启用 ${m.name}` : `已关闭 ${m.name}（不再出现在模型池）`);
       await load();
       setTimeout(() => setNotice(''), 3000);
     } catch (e) {
@@ -120,8 +125,11 @@ export default function PoolsTab() {
     }
   };
 
-  const dialogue = useMemo(() => models.filter((m) => m.in_dialogue || m.role == null), [models]);
-  const enabledCount = Object.values(draft).filter(Boolean).length;
+  const dialogue = useMemo(
+    () => models.filter((m) => (m.in_dialogue || m.role == null) && m.enabled !== false),
+    [models],
+  );
+  const enabledCount = dialogue.filter((m) => draft[m.id]).length;
 
   return (
     <AdminListPage
@@ -162,8 +170,7 @@ export default function PoolsTab() {
           dataSource={dialogue}
           pagination={false}
           tableLayout="fixed"
-          rowClassName={(m) => (m.enabled === false ? 'admin-row-dim' : '')}
-          locale={{ emptyText: <Empty description="没有对话模型" /> }}
+          locale={{ emptyText: <Empty description="没有已开启的模型" /> }}
           title={() => `「${current.name}」可见模型（${enabledCount}）`}
           columns={[
             {
@@ -178,8 +185,14 @@ export default function PoolsTab() {
             },
             {
               title: '名称',
-              ellipsis: { showTitle: false },
-              render: (_, m) => <Ellipsis title={`${m.name}（登记 id：${m.id}）`}>{m.name}</Ellipsis>,
+              ellipsis: true,
+              render: (_, m) => m.name,
+            },
+            {
+              title: '模型id',
+              dataIndex: 'id',
+              width: 240,
+              ellipsis: true,
             },
             {
               title: '实际调用名',
@@ -245,7 +258,7 @@ export default function PoolsTab() {
           </Form.Item>
         </Form>
       </Modal>
-      <ModelFormModal
+      <ModelFormDrawer
         open={!!editing || creating}
         model={editing}
         creating={creating}
@@ -264,7 +277,7 @@ export default function PoolsTab() {
   );
 }
 
-function ModelFormModal({
+function ModelFormDrawer({
   open,
   model,
   creating,
@@ -375,16 +388,21 @@ function ModelFormModal({
   };
 
   return (
-    <Modal
+    <Drawer
       open={open}
       title={creating ? '新建模型' : '编辑模型'}
-      width={720}
+      width={DRAWER_WIDTH}
       rootClassName="admin-dialog"
-      onCancel={onClose}
-      onOk={() => void save()}
-      confirmLoading={busy}
-      okText={busy ? '保存中…' : '保存'}
-      destroyOnClose
+      onClose={onClose}
+      destroyOnHidden
+      footer={(
+        <Space>
+          <Button onClick={onClose}>取消</Button>
+          <Button type="primary" loading={busy} onClick={() => void save()}>
+            {busy ? '保存中…' : '保存'}
+          </Button>
+        </Space>
+      )}
     >
       <Form form={form} layout="vertical" requiredMark={false} className="admin-dialog-form">
         <Form.Item
@@ -427,9 +445,9 @@ function ModelFormModal({
           <Switch checkedChildren="开启" unCheckedChildren="关闭" />
         </Form.Item>
         <Typography.Paragraph type="secondary">
-          关闭后不进对话下拉。登记 id 给系统内部用；实际调用名才是渠道接口收到的名字。
+          关闭后不会出现在模型池，也不会进入对话下拉。模型 id 给系统内部用；实际调用名才是渠道接口收到的名字。
         </Typography.Paragraph>
       </Form>
-    </Modal>
+    </Drawer>
   );
 }

@@ -46,9 +46,14 @@
   padding: 14px 12px 20px;
   border-top: 1px solid #232c40;
 }
+.admin-antd .admin-sider-foot .ant-btn {
+  justify-content: flex-start;
+  text-align: left;
+}
 .admin-user-btn {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 12px;
   height: auto;
   padding: 12px 10px;
@@ -198,8 +203,13 @@
 .admin-copy-cell {
   cursor: pointer;
 }
-.admin-copy-cell:hover {
-  color: #9eb0ff;
+.admin-list-body .ant-table-tbody > tr.ant-table-row:hover > td,
+.admin-list-body .ant-table-tbody > tr > td.ant-table-cell-row-hover {
+  background: #151b2b !important;
+}
+.admin-list-body .ant-table-tbody > tr.admin-row-active > td,
+.admin-list-body .ant-table-tbody > tr.admin-row-active:hover > td {
+  background: #24304a !important;
 }
 .admin-list-pager {
   flex: 0 0 auto;
@@ -396,6 +406,11 @@
 }
 .admin-dialog .ant-drawer-body {
   padding: 24px 28px 32px;
+}
+.admin-dialog .ant-drawer-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 28px 20px;
 }
 .admin-dialog .ant-form-item,
 .admin-dialog-form .ant-form-item {

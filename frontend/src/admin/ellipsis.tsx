@@ -1,14 +1,11 @@
 import type { MouseEvent, ReactNode } from 'react';
 
-import { Tooltip, message } from './ui';
+import { message } from './ui';
 
-/** 单行截断；完整内容悬停看。空值和破折号不挂提示。 */
-export function Ellipsis({ children, title }: { children: ReactNode; title?: ReactNode }) {
+/** 单行截断，不挂悬停提示。 */
+export function Ellipsis({ children }: { children: ReactNode; title?: ReactNode }) {
   const text = children == null || children === '' ? '—' : children;
-  const tip = title ?? (typeof text === 'string' || typeof text === 'number' ? String(text) : '');
-  const node = <span className="admin-ellipsis">{text}</span>;
-  if (!tip || tip === '—') return node;
-  return <Tooltip title={tip}>{node}</Tooltip>;
+  return <span className="admin-ellipsis">{text}</span>;
 }
 
 export async function copyAdminText(value: string): Promise<boolean> {
