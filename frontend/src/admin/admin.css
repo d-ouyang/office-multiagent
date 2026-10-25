@@ -147,13 +147,23 @@
   min-width: 0 !important;
   overflow: hidden;
 }
+.admin-tasks-table .ant-table-thead > tr > th,
+.admin-tasks-table .ant-table-tbody > tr > td {
+  padding-inline: 10px;
+}
+.admin-tasks-table .ant-table-thead > tr > th {
+  overflow: hidden;
+  text-overflow: clip;
+}
 .admin-tasks-table .admin-cell-time {
   font-variant-numeric: tabular-nums;
+  font-size: 15px;
   white-space: nowrap;
+  padding-inline: 8px;
 }
 .admin-tasks-table .admin-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 15px;
+  font-size: 14px;
 }
 .admin-list-body .ant-table {
   font-size: 18px;

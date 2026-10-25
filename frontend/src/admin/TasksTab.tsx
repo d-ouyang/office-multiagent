@@ -10,16 +10,17 @@ import TaskDetailDrawer from './TaskDetailDrawer';
 import { Alert, Button, DatePicker, Empty, Input, Select, Table, Tag } from './ui';
 import { useDebouncedValue } from './useDebouncedValue';
 
-/** 固定列用 px；任务id / 会话id 不设宽，平分剩余，避免撑出横滚。 */
+/** 只有任务摘要不设宽（吃剩余）。任务id / 会话id 必须固定，不能 flex。 */
 export const TASK_COL_WIDTH = {
-  username: 64,
-  employeeId: 108,
-  time: 236,
-  summary: 120,
-  duration: 76,
-  status: 72,
-  token: 92,
-  action: 118,
+  username: 92,
+  employeeId: 110,
+  time: 186,
+  duration: 102,
+  status: 76,
+  taskId: 148,
+  sessionId: 148,
+  token: 110,
+  action: 116,
 } as const;
 
 export const TASK_COLUMN_TITLES = [
@@ -199,7 +200,6 @@ export default function TasksTab() {
           {
             title: '任务摘要',
             dataIndex: 'text',
-            width: TASK_COL_WIDTH.summary,
             ellipsis: { showTitle: false },
             render: (v) => <CopyCell text={v || '—'} />,
           },
@@ -222,12 +222,14 @@ export default function TasksTab() {
           {
             title: '任务id',
             dataIndex: 'id',
+            width: TASK_COL_WIDTH.taskId,
             ellipsis: { showTitle: false },
             render: (v) => <CopyCell className="admin-mono" text={v} />,
           },
           {
             title: '会话id',
             dataIndex: 'session_id',
+            width: TASK_COL_WIDTH.sessionId,
             ellipsis: { showTitle: false },
             render: (id?: string | null) => <CopyCell className="admin-mono" text={id || '—'} />,
           },

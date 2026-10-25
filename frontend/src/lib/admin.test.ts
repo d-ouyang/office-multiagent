@@ -159,10 +159,13 @@ describe('任务监控列', () => {
     ]);
     expect(TASK_COLUMN_TITLES).not.toContain('任务原因');
   });
-  it('摘要封顶，工号/时间/操作够放下完整内容', () => {
-    expect(TASK_COL_WIDTH.summary).toBeLessThan(TASK_COL_WIDTH.time);
-    expect(TASK_COL_WIDTH.employeeId).toBeGreaterThanOrEqual(100);
-    expect(TASK_COL_WIDTH.time).toBeGreaterThanOrEqual(220);
+  it('只有摘要弹性，id 列固定且不夸张', () => {
+    expect('summary' in TASK_COL_WIDTH).toBe(false);
+    expect(TASK_COL_WIDTH.username).toBeGreaterThanOrEqual(88);
+    expect(TASK_COL_WIDTH.duration).toBeGreaterThanOrEqual(96);
+    expect(TASK_COL_WIDTH.token).toBeGreaterThanOrEqual(100);
+    expect(TASK_COL_WIDTH.taskId).toBe(148);
+    expect(TASK_COL_WIDTH.sessionId).toBe(148);
     expect(TASK_COL_WIDTH.action).toBeGreaterThanOrEqual(110);
   });
 });
