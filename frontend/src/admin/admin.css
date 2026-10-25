@@ -157,13 +157,14 @@
 }
 .admin-tasks-table .admin-cell-time {
   font-variant-numeric: tabular-nums;
-  font-size: 15px;
   white-space: nowrap;
-  padding-inline: 8px;
 }
 .admin-tasks-table .admin-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 14px;
+}
+.admin-tasks-table .admin-ellipsis,
+.admin-tasks-table .admin-copy-cell {
+  font-size: inherit;
 }
 .admin-list-body .ant-table {
   font-size: 18px;

@@ -3,22 +3,26 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { adminRun, adminTasks, type AdminRunDetail, type AdminTaskRow } from '../lib/api';
 import { AdminListPage, AdminPager, PAGE_SIZE } from './AdminListPage';
-import { CopyCell, Ellipsis } from './ellipsis';
+import { CopyCell } from './ellipsis';
 import { humanizeAdminError } from './errors';
 import { fmtDuration, fmtShanghai, fmtTokens, STATUS } from './format';
 import TaskDetailDrawer from './TaskDetailDrawer';
 import { Alert, Button, DatePicker, Empty, Input, Select, Table, Tag } from './ui';
 import { useDebouncedValue } from './useDebouncedValue';
 
-/** 只有任务摘要不设宽（吃剩余）。任务id / 会话id 必须固定，不能 flex。 */
+/**
+ * 只有任务摘要不设宽。
+ * 任务 id = uuid4().hex[:16]（16）；会话 id = s- + token_hex(8)（18）。
+ * 列宽按 18px 字号放下完整 id，不再省略。
+ */
 export const TASK_COL_WIDTH = {
   username: 92,
   employeeId: 110,
-  time: 186,
+  time: 204,
   duration: 102,
   status: 76,
-  taskId: 148,
-  sessionId: 148,
+  taskId: 204,
+  sessionId: 224,
   token: 110,
   action: 116,
 } as const;
@@ -181,14 +185,14 @@ export default function TasksTab() {
             dataIndex: 'username',
             width: TASK_COL_WIDTH.username,
             ellipsis: { showTitle: false },
-            render: (v) => <Ellipsis>{v ?? '—'}</Ellipsis>,
+            render: (v) => <CopyCell text={v ?? '—'} />,
           },
           {
             title: '工号',
             dataIndex: 'employee_id',
             width: TASK_COL_WIDTH.employeeId,
             ellipsis: { showTitle: false },
-            render: (v) => <Ellipsis>{v ?? '—'}</Ellipsis>,
+            render: (v) => <CopyCell text={v ?? '—'} />,
           },
           {
             title: '时间',
