@@ -136,7 +136,6 @@ function ChartViewInner({ spec }: { spec: ChartSpec }) {
   const host = useRef<HTMLDivElement>(null);
   const chart = useRef<ECharts | null>(null);
   const signature = JSON.stringify(spec);
-
   useEffect(() => {
     if (!host.current) return;
     if (!chart.current) {
@@ -155,8 +154,21 @@ function ChartViewInner({ spec }: { spec: ChartSpec }) {
     };
   }, []);
 
+  // p6.48：导出图表为 PNG（白底 2x，与卡片浅色风格一致）
+  const downloadPng = () => {
+    const url = chart.current?.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' });
+    if (!url) return;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${(spec.title || '图表').replace(/[\\/:*?"<>|]/g, '_')}.png`;
+    link.click();
+  };
+
   return (
     <div className="chart-card">
+      <button type="button" className="chart-download" onClick={downloadPng}>
+        下载 PNG
+      </button>
       <div ref={host} className="chart-host" />
     </div>
   );

@@ -48,6 +48,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
   const { events, status, error, start, stop, reset } = useNdjsonStream('/api/v1/demo/stream');
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [currentId, setCurrentId] = useState<string>('');
+  const [loadingSession, setLoadingSession] = useState(false); // p6.48：切会话拉消息期间不闪空态
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
   const [paused, setPaused] = useState<{ taskId: string; status: string; needed: number; message: string } | null>(null);
@@ -155,6 +156,8 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     reset();
     setCurrentId(sid);
     setMessages([]);
+    // p6.48：加载期间不显示"有什么可以帮你"空态——切换会话不该闪一下欢迎页
+    setLoadingSession(true);
     try {
       const msgs = await getMessages(sid);
       setMessages(
@@ -211,6 +214,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     } catch {
       setPaused(null);
     }
+    setLoadingSession(false);
   }, [status, stop, reset, onLogout]);
 
   useEffect(() => {
@@ -526,7 +530,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
           </div>
         </header>
         <div className="message-scroll" ref={scrollRef}>
-          {liveMessages.length === 0 && (
+          {liveMessages.length === 0 && !loadingSession && (
             <div className="welcome">
               <h3>有什么可以帮你？</h3>
               <div className="welcome-samples">

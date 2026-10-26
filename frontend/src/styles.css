@@ -2164,6 +2164,33 @@ button.ghost {
   border-radius: 14px;
   padding: 12px 12px 4px;
 }
+/* p6.48：图表右上角的导出按钮——echarts canvas 直接取 getDataURL 存 PNG */
+.chart-card {
+  position: relative;
+}
+.chart-download {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  padding: 4px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #374151;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.chart-card:hover .chart-download {
+  opacity: 1;
+}
+.chart-download:hover {
+  border-color: #5B8FF9;
+  color: #2563eb;
+}
 .flow-card figcaption { color: #111827; font-weight: 600; margin: 0 0 4px; }
 .flow-card svg { width: 100%; height: auto; display: block; }
 .flow-edge { stroke: #cbd5e1; stroke-width: 1.5; stroke-dasharray: 5 4; }
