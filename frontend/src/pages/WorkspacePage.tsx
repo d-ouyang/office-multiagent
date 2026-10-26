@@ -529,7 +529,20 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
           {liveMessages.length === 0 && (
             <div className="welcome">
               <h3>有什么可以帮你？</h3>
-              <p>试试：帮我查一下公司的年假制度</p>
+              <div className="welcome-samples">
+                {WELCOME_SUGGESTIONS.map((s) => (
+                  <button
+                    key={s.tag}
+                    type="button"
+                    className="welcome-chip"
+                    disabled={status === 'streaming'}
+                    onClick={() => void dispatchTask(s.text, [], undefined, false, undefined)}
+                  >
+                    <span className="welcome-chip__tag">{s.tag}</span>
+                    <span className="welcome-chip__text">{s.text}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           {liveMessages.map((m, i) => (
@@ -618,5 +631,12 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     </div>
   );
 }
+
+// 新会话示例：覆盖订单分析 / 报告产出 / 明细导出三类核心能力，点击直接发起任务
+const WELCOME_SUGGESTIONS = [
+  { tag: '数据', text: '帮我看看 2026 年 10 月卖得最好的前 5 个城市，画张柱状图' },
+  { tag: '报告', text: '把 9 月和 10 月的销售额对比整理成一份 PDF 报告' },
+  { tag: '导出', text: '帮我导出 10 月的全国订单明细表（Excel）' },
+];
 
 export default WorkspacePage;
