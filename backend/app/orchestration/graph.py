@@ -59,6 +59,7 @@ class TaskState(TypedDict, total=False):
     validation: dict[str, Any] | None  # p6.29：终答数字对账结果（None=未校验/跳过）
     route_text: str
     planning_tokens: int
+    usage_steps: list               # p6.45：逐步用量明细（label+tokens），随 DONE/trace 给前端
     intent_source: str
     token_limit_reached: bool
 
