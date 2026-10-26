@@ -1538,6 +1538,11 @@ button.ghost {
   border-top: 1px solid var(--border);
   background: var(--bg);
 }
+/* 主输入条占满整行：PromptBar（bits 组件）默认 --pb-w:400px，那是它当独立
+   小组件用的宽度；进工作台当主 composer 时必须放开，否则输入框只有 400px。 */
+.composer-wrap .prompt-bar {
+  --pb-w: 100%;
+}
 .composer-wrap .prompt-bar__field {
   box-shadow: 0 0 0 1px var(--border);
 }

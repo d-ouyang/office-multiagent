@@ -5,6 +5,22 @@
 
 ---
 
+## v1.0.0-p6.43 — 上线首日 hotfix：DNS 冲突 / init.sql 列漂移 / 输入条宽度（2026-10-26）
+
+**类型**：修复
+
+- **重大**：共享网络 DNS 服务名冲突——office 的 `backend/gateway/frontend` 服务名与 RAG 栈重名，
+  加入共享网络后在 DNS 里轮询，rag-gateway 的上游一半请求打到 office-backend（404），
+  造成 qa.nianan.site 间歇「服务离线」、管理端「认证服务暂时不可用」。office prod 服务名全部
+  加 `office-` 前缀，前端 nginx 上游用独立 `nginx.prod.conf`。修复后 health 10/10 全 200。
+- office 发消息/上传 500：`db/init.sql` 缺 `message.trace` 列（列级漂移）。生产库已补列，
+  init.sql 已修，并**新增列级护栏测试**（REQUIRED_COLUMNS 快照，缺列即红）。
+- 底部输入条只占 400px：PromptBar bits 组件默认宽度，工作台内作用域覆盖为占满整行。
+
+详见 `docs/iterations/v1.0.0-p6.43-hotfix-shared-infra.md`。
+
+---
+
 ## v1.0.0-p6.42 — 生产部署上线 office.nianan.site（2026-10-26）
 
 **类型**：部署

@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS `message` (
   `session_id` VARCHAR(64) NOT NULL,
   `role`       VARCHAR(16) NOT NULL,                    -- user/assistant
   `content`    MEDIUMTEXT  NOT NULL,
+  `trace`      MEDIUMTEXT  NULL,                        -- p6.x 编排轨迹（迁移 0003；漏加会导致历史读取 500）
   `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   KEY `idx_message_session` (`session_id`)

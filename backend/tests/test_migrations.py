@@ -64,3 +64,52 @@ def test_env_wired_to_config_url():
 def test_script_template_exists():
     assert (MIG_DIR / "script.py.mako").exists()
     assert (BACKEND / "alembic.ini").exists()
+
+
+# --------------------------------------------------------------------------- #
+# 列级漂移护栏（p6.43）：p1.2c 只比表名，message.trace 曾因列漂移导致生产 500
+# （历史查询 SELECT ... trace ... 报 1054）。REQUIRED_COLUMNS 是「线上真实 schema」
+# 的列清单快照；init.sql 缺任何一列即失败。
+# 纪律：迁移加了列 → 同步 init.sql → 同步更新本清单。
+# --------------------------------------------------------------------------- #
+REQUIRED_COLUMNS: dict[str, set[str]] = {
+    "agent_run": {"id", "subtask_id", "iterations", "token_used", "duration_ms"},
+    "asset": {"id", "task_id", "user_id", "type", "name", "rel_path", "storage_url", "created_at"},
+    "audit_log": {"id", "actor_user_id", "actor_username", "actor_role", "action", "target_type",
+                  "target_id", "target_label", "detail", "ip", "created_at"},
+    "message": {"id", "session_id", "role", "content", "trace", "created_at"},
+    "model_pool": {"id", "name"},
+    "pool_model": {"pool_id", "model_name", "enabled"},
+    "runtime_setting": {"setting_key", "setting_value", "updated_at"},
+    "session": {"id", "user_id", "model", "title", "pinned", "pinned_at", "created_at"},
+    "subtask": {"id", "task_id", "agent_type", "depends_on", "result_json", "status"},
+    "task": {"id", "session_id", "complexity", "status", "text", "result", "tokens_used",
+             "pause_reason", "pause_payload", "retry_of", "request_json", "created_at"},
+    "task_source": {"id", "task_id", "type", "ref", "title", "url"},
+    "token_ledger": {"id", "user_id", "task_id", "agent_run_id", "model", "input_tokens",
+                     "output_tokens", "cache_read", "reserve", "settle", "kind", "note",
+                     "amount", "created_at"},
+    "tool_call_log": {"id", "agent_run_id", "tool", "params", "error", "success"},
+    "user": {"id", "employee_id", "username", "password_hash", "role", "model_pool_id",
+             "token_version", "created_at"},
+    "user_memory": {"id", "user_id", "section", "content", "source", "created_at"},
+    "wallet": {"user_id", "balance"},
+}
+
+
+def _init_sql_columns() -> dict[str, set[str]]:
+    """从 init.sql 解析每张表的列名（CREATE TABLE 块内以反引号开头的行）。"""
+    sql = INIT_SQL.read_text(encoding="utf-8")
+    cols: dict[str, set[str]] = {}
+    for m in re.finditer(r"CREATE TABLE IF NOT EXISTS `(\w+)` \((.*?)\) ENGINE=InnoDB", sql, re.S):
+        table, body = m.group(1), m.group(2)
+        names = {c.group(1) for c in re.finditer(r"^\s*`(\w+)`", body, re.M)}
+        cols[table] = names
+    return cols
+
+
+def test_init_sql_columns_cover_required():
+    cols = _init_sql_columns()
+    for table, required in REQUIRED_COLUMNS.items():
+        missing = required - cols.get(table, set())
+        assert not missing, f"init.sql 的 `{table}` 缺列（迁移已加、init.sql 没同步）：{sorted(missing)}"

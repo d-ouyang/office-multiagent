@@ -2,27 +2,32 @@
 # office-multiagent · 生产部署文件（服务器 42.192.111.82 · 共享 RAG 中间件形态）
 #
 # 与开发用的 docker-compose.yml 的区别（两份不要混用）：
-#   · 只起 backend / gateway / frontend 三个容器；
+#   · 只起 office-backend / office-gateway / office-frontend 三个容器；
 #     mysql / redis / chroma 复用 RAG 栈的同版本实例（rag-mysql / rag-redis /
 #     rag-chroma，设计文档 §12.3 预留的共享方案），office 用独立数据库 office
 #     + 独立 redis db，数据完全隔离。
+#   · ★ 服务名必须带 office- 前缀：加入共享网络 rag-qa-system_default 后，
+#     compose 会把服务名注册为该网络的 DNS 别名——RAG 栈的服务也叫 backend/
+#     gateway/frontend，重名会导致 rag-gateway 的 `http://backend:8000` 在两个
+#     容器间轮询（实测 404 率 80%，RAG 间歇"服务离线"的根因）。
 #   · 通过外部网络 rag-qa-system_default 按容器名访问 RAG 中间件——
 #     RAG 各端口只绑 127.0.0.1，host.docker.internal 走不通，必须入网。
 #   · 宿主端口只绑 127.0.0.1，由宿主 Caddy（office.nianan.site）统一反代。
-#   · 共享 mysql 已初始化过，init.sql 不会执行：首启用 alembic upgrade head
-#     建表（0001 基线含建表 + 种子用户/模型池）。
+#   · 共享 mysql 已初始化过，init.sql 不会执行：首启用 init.sql 灌库 +
+#     `alembic stamp head`（0001 迁移含多语句 bug，不能直接 upgrade）。
 #
 # 环境变量全部放同目录 .env（键名与 .env.example 一致）。
 #
 # 首次部署顺序：
 #   docker compose -f docker-compose.prod.yml build
-#   docker compose -f docker-compose.prod.yml run --rm backend alembic upgrade head
+#   （建库）init.sql 灌入共享 mysql 的 office 库 → alembic stamp head
 #   docker compose -f docker-compose.prod.yml up -d
 # =====================================================================
 
 services:
-  backend:
+  office-backend:
     build: ./backend
+    container_name: office-backend
     env_file: .env
     volumes:
       - ./backend/data:/app/data        # 文档目录：read_document 只读 + /documents 上传写入
@@ -34,21 +39,25 @@ services:
       retries: 5
     networks: [office-net, rag-net]
 
-  gateway:
+  office-gateway:
     build: ./gateway
+    container_name: office-gateway
     env_file: .env
     ports:
-      - "127.0.0.1:3001:3000"   # 仅供宿主侧调试；浏览器流量走 前端nginx → gateway:3000（office-net 内）
+      - "127.0.0.1:3001:3000"   # 仅供宿主侧调试；浏览器流量走 前端nginx → office-gateway:3000
     depends_on:
-      - backend
+      - office-backend
     networks: [office-net, rag-net]
 
-  frontend:
+  office-frontend:
     build: ./frontend
+    container_name: office-frontend
+    volumes:
+      - ./frontend/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro   # 上游=office-gateway
     ports:
       - "127.0.0.1:8090:80"     # Caddy office.nianan.site 反代到这里；8080 已被 rag-frontend 占用
     depends_on:
-      - gateway
+      - office-gateway
     networks: [office-net]
 
 networks:
