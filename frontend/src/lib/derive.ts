@@ -292,12 +292,14 @@ export interface ReplyMeta {
   model?: string;
   durationMs?: number;
   endedAt?: number;
+  steps?: Array<{ label: string; tokens: number }>;  // p6.45：逐步用量明细（悬浮浮窗）
 }
 
 /** 回复行：done 事件上的用量/模型，以及首尾事件时间差。 */
 export function deriveReplyMeta(events: StreamEvent[]): ReplyMeta {
   let tokens: number | undefined;
   let model: string | undefined;
+  let steps: ReplyMeta['steps'];
   let first = 0;
   let last = 0;
   for (const ev of events) {
@@ -308,10 +310,16 @@ export function deriveReplyMeta(events: StreamEvent[]): ReplyMeta {
     if (ev.type !== 'done') continue;
     if (typeof ev.data.tokens_used === 'number') tokens = ev.data.tokens_used;
     if (ev.data.model) model = String(ev.data.model);
+    if (Array.isArray(ev.data.steps) && ev.data.steps.length > 0) {
+      steps = ev.data.steps
+        .filter((s: { label?: unknown; tokens?: unknown }) => typeof s?.label === 'string' && typeof s?.tokens === 'number')
+        .map((s: { label: string; tokens: number }) => ({ label: s.label, tokens: s.tokens }));
+    }
   }
   return {
     tokens,
     model,
+    steps,
     durationMs: first > 0 && last >= first ? last - first : undefined,
     endedAt: last || undefined,
   };

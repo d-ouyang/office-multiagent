@@ -83,7 +83,8 @@ describe('回复信息行', () => {
         msg={{ role: 'assistant', content: '好', createdAt: clock, model: 'deepseek-chat', tokens: 1200 }}
       />,
     );
-    const row = screen.getByText(/共消耗/).parentElement;
+    // p6.45：「共消耗」外包了一层 .reply-tokens（装逐步用量浮窗），取整行用 closest
+    const row = screen.getByText(/共消耗/).closest('.reply-stats');
     expect(row?.textContent).toContain('共消耗 1,200');
     expect(row?.textContent).toContain('DeepSeek V3');
     expect(row?.textContent?.indexOf('共消耗')).toBeLessThan(row?.textContent?.indexOf('DeepSeek V3') ?? -1);

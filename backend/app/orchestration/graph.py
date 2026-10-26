@@ -311,9 +311,13 @@ def build_graph(
             + int(usage.get("total_tokens", 0))
             + int(getattr(res, "external_tokens", 0) or 0)
         )
+        # p6.45：逐步用量（规划 + ReAct 各步 + 外部用量），随 DONE/trace 给前端浮窗
+        usage_steps = [{"label": "规划与决策", "tokens": int(state.get("planning_tokens", 0))}]
+        usage_steps += list(getattr(res, "steps_usage", []) or [])
         return {
             "result": res.final,
             "tokens_used": billed,
+            "usage_steps": usage_steps,
             "validation": validation,
             "token_limit_reached": token_budget.limit_reached,
         }
@@ -363,6 +367,7 @@ def build_graph(
         ]
         fallback = f"[multi] {summary}"
         final_text = fallback
+        synth_tokens = 0
         try:
             synth = make_brain(
                 ToolRegistry(),
@@ -387,7 +392,8 @@ def build_graph(
             if (step.final or "").strip():
                 final_text = step.final.strip()
             usage = getattr(synth, "usage", None) or {}
-            total_tokens += int(usage.get("total_tokens", 0))
+            synth_tokens = int(usage.get("total_tokens", 0))
+            total_tokens += synth_tokens
         except TokenLimitReached:
             token_budget.limit_reached = True
             emit(
@@ -401,9 +407,17 @@ def build_graph(
         except Exception:  # noqa: BLE001 - 汇总脑失败回落拼接，不阻断
             logger.exception("multi 汇总脑失败（回落拼接）")
         emit(emitter.status("orchestrator", "done"))
+        # p6.45：multi 的逐步用量 = 规划 + 各子任务 + 汇总官
+        usage_steps = [{"label": "规划与决策", "tokens": int(state.get("planning_tokens", 0))}]
+        usage_steps += [
+            {"label": f"子任务·{key}", "tokens": int(getattr(r, "tokens_used", 0) or 0)}
+            for key, r in results.items()
+        ]
+        usage_steps.append({"label": "汇总官整合", "tokens": synth_tokens})
         return {
             "result": final_text,
             "tokens_used": total_tokens,
+            "usage_steps": usage_steps,
             "validation": validations or None,
             "token_limit_reached": token_budget.limit_reached,
         }
@@ -560,6 +574,7 @@ def run_task(
             state.get("route", "single"),
             tokens_used=int(state.get("tokens_used", 0)),
             model=state.get("model") or model_id,
+            steps=state.get("usage_steps") or None,  # p6.45：逐步用量明细
         )
     )
     return (

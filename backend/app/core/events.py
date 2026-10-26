@@ -169,13 +169,16 @@ class RunEventEmitter:
         *,
         tokens_used: int | None = None,
         model: str | None = None,
+        steps: list[dict[str, Any]] | None = None,
     ) -> Event:
-        """收尾。tokens_used / model 可选，供前端回复行展示；不传则不进 data。"""
+        """收尾。tokens_used / model / steps（逐步用量明细）可选，供前端回复行展示；不传则不进 data。"""
         extra: dict[str, Any] = {}
         if tokens_used is not None:
             extra["tokens_used"] = int(tokens_used)
         if model:
             extra["model"] = model
+        if steps:
+            extra["steps"] = steps
         return self.emit(EventType.DONE, status=status, **extra)
 
 

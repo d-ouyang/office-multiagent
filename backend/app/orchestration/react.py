@@ -95,6 +95,7 @@ class AgentResult:
     tokens_used: int = 0       # p4.3c：本次 ReAct 的真实 LLM 用量（brain.usage 汇总；StubBrain 为 0）
     external_tokens: int = 0   # 外部工具（知识库检索）带回的 token，并入办公侧结算
     assets: list[dict[str, str]] = field(default_factory=list)  # p6.30：过程产出的文件/数据资产（file_name 等）
+    steps_usage: list[dict[str, Any]] = field(default_factory=list)  # p6.45：逐步用量（label+tokens），随 DONE/trace 给前端
 
 
 class StubBrain:
@@ -151,10 +152,13 @@ def run_react(
             logger.exception("强制收尾失败（回落原文）reason=%s", reason)
             return fallback
 
+    steps_usage: list[dict[str, Any]] = []  # p6.45：逐步用量（label+tokens），随 DONE/trace 给前端
+
     for i in range(1, max_iterations + 1):
         if should_cancel is not None and should_cancel():
             # p7.1：用户主动暂停——在 LLM 调用之前退出，最多多花一步
             raise RunCancelled("用户暂停")
+        tokens_before = int(getattr(brain, "usage", {}).get("total_tokens", 0) or 0)
         try:
             step = brain.next_step(task, history)
         except TokenLimitReached:
@@ -174,7 +178,16 @@ def run_react(
                 hit_cap=True,
                 assets=assets,
                 external_tokens=external_tokens,
+                steps_usage=steps_usage,
             )
+        # p6.45：逐步用量采样——brain.usage 每次调用后累计，差值即本步 LLM 消耗
+        step_delta = int(getattr(brain, "usage", {}).get("total_tokens", 0) or 0) - tokens_before
+        if step_delta > 0:
+            steps_usage.append({
+                "label": f"第{i}步·{'生成终答' if step.final is not None else f'调用 {step.action}'}",
+                "tokens": step_delta,
+            })
+
         if emitter is not None and step.thought:
             _emit(emitter.thinking_delta(step.thought))
 
@@ -190,7 +203,7 @@ def run_react(
                 elif not step.streamed:
                     _emit(emitter.content_delta(step.final))
             history.append(step)
-            return AgentResult(final=step.final, steps=history, iterations=i, assets=assets, external_tokens=external_tokens)
+            return AgentResult(final=step.final, steps=history, iterations=i, assets=assets, external_tokens=external_tokens, steps_usage=steps_usage)
 
         # Action → 工具调用 → Observation
         name = step.action or ""
@@ -213,7 +226,7 @@ def run_react(
                 cap = _cap_final("模型连续给出无效工具名", cap)
                 if emitter is not None:
                     _emit(emitter.content_delta(cap))
-                return AgentResult(final=cap, steps=history, iterations=i, hit_cap=True, assets=assets, external_tokens=external_tokens)
+                return AgentResult(final=cap, steps=history, iterations=i, hit_cap=True, assets=assets, external_tokens=external_tokens, steps_usage=steps_usage)
             continue
         prior = [s for s in history if _same_call(s, name, step.action_input)]
         if prior:
@@ -228,7 +241,7 @@ def run_react(
                 final = _cap_final("模型对同一工具重复调用相同参数", final)
                 if emitter is not None:
                     _emit(emitter.content_delta(final))
-                return AgentResult(final=final, steps=history, iterations=i, hit_cap=True, assets=assets, external_tokens=external_tokens)
+                return AgentResult(final=final, steps=history, iterations=i, hit_cap=True, assets=assets, external_tokens=external_tokens, steps_usage=steps_usage)
             continue
         if emitter is not None:
             _emit(emitter.tool_call_start(name, name, step.action_input))
@@ -261,6 +274,8 @@ def run_react(
             if isinstance(usage, dict):
                 added = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
                 external_tokens += added
+                if added > 0:
+                    steps_usage.append({"label": f"外部用量·{name}", "tokens": added})
                 if token_budget is not None:
                     token_budget.consume_external(added)
             visual = res.output.get("visual")
@@ -289,5 +304,5 @@ def run_react(
         _emit(emitter.content_delta(cap))
     return AgentResult(
         final=cap, steps=history, iterations=max_iterations, hit_cap=True,
-        assets=assets, external_tokens=external_tokens,
+        assets=assets, external_tokens=external_tokens, steps_usage=steps_usage,
     )

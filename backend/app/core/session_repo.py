@@ -22,9 +22,10 @@ def new_session_id() -> str:
 def _iso_utc(v: Any) -> str:
     """时间字段统一输出带 UTC 标记的 ISO（如 '2026-10-21T13:40:13.380547Z'）。
 
-    库内统一存 UTC（MySQL/SQLite 的 CURRENT_TIMESTAMP 都是 UTC）——p6.12c 修"差 8 小时"：
-    旧实现裸字符串无时区，前端 new Date() 按本地时间解析，UTC 时间被当成本地时间（差 8h）。
-    带上 Z 后前端 Date 自动转本地显示；兼容 datetime（MySQL）与 str（SQLite）两种返回类型。
+    库内统一存 UTC——p6.12c 修"差 8 小时"（带 Z 前端自动转本地）；p6.45 起
+    该假设由 core/db.py 的连接级 `SET time_zone='+00:00'` 保证（共享 MySQL 全局
+    时区是 +08:00，不钉死会话时区的话 CURRENT_TIMESTAMP 会写北京墙钟）。
+    兼容 datetime（MySQL）与 str（SQLite）两种返回类型。
     """
     if isinstance(v, datetime):
         return v.isoformat(sep="T", timespec="microseconds") + "Z"

@@ -290,7 +290,20 @@ export function ChatMessage({
               <ThumbsDown size={15} strokeWidth={1.8} />
             </IconTip>
             <span className="reply-stats">
-              <span>共消耗 {formatTokens(tokens)}</span>
+              <span className="reply-tokens">
+                <span>共消耗 {formatTokens(tokens)}</span>
+                {meta.steps && meta.steps.length > 0 && (
+                  <span className="token-pop" role="tooltip">
+                    <span className="token-pop__head">逐步用量</span>
+                    {meta.steps.map((s, i) => (
+                      <span key={i} className="token-pop__row">
+                        <span className="token-pop__label">{s.label}</span>
+                        <span className="token-pop__num">{formatTokens(s.tokens)}</span>
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </span>
               <span className="reply-model">{modelDisplayName(modelId)}</span>
               {clock && <span>{clock}</span>}
               <span>耗时 {formatDuration(meta.durationMs)}</span>
