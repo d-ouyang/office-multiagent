@@ -1,0 +1,57 @@
+name: deploy-office
+
+on:
+  push:
+    tags: ["v*"]          # 打 tag 即部署（老 tag 永不重打，tag 即版本）
+  workflow_dispatch:       # 也允许手动触发（Actions 页面按钮）
+
+concurrency:
+  group: office-deploy     # 防止两次部署互相踩
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, office-deploy]
+    timeout-minutes: 40
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+        with: { clean: true }
+
+      # .env（密钥）与 backend/data（订单 CSV/上传/种子）只存在于服务器，
+      # rsync 全程排除，--delete 也不会碰它们。
+      - name: 同步代码到部署目录
+        run: |
+          rsync -a --delete \
+            --exclude ".env" --exclude ".env.*" \
+            --exclude "backend/data" \
+            ./ /opt/office/
+
+      - name: 构建镜像
+        working-directory: /opt/office
+        run: docker compose -f docker-compose.prod.yml build
+
+      # 追加迁移直接 upgrade head（0001 的多语句 bug 只影响"全新空库"，
+      # 首次部署已用 init.sql + alembic stamp head 处理过，不会再走）。
+      - name: 数据库迁移
+        working-directory: /opt/office
+        run: docker compose -f docker-compose.prod.yml run --rm office-backend alembic upgrade head
+
+      - name: 上线
+        working-directory: /opt/office
+        run: docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+      - name: 健康检查（2 分钟内不过即失败）
+        run: |
+          for i in $(seq 1 24); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://127.0.0.1:3001/api/v1/health || true)
+            if [ "$code" = "200" ]; then echo "健康检查通过"; exit 0; fi
+            sleep 5
+          done
+          echo "健康检查超时"; exit 1
+
+      - name: 冒烟（首页 200）
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" -m 10 https://office.nianan.site/)
+          [ "$code" = "200" ] || { echo "首页返回 $code"; exit 1; }
+          echo "冒烟通过"
