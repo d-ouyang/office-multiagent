@@ -28,7 +28,8 @@
 ```bash
 ssh ubuntu@42.192.111.82
 # 1) 建目录并下载 runner（版本以 GitHub 页面为准；服务器现有 runner 为 2.337.0，建议同版）
-mkdir -p /opt/actions-runner-office && cd /opt/actions-runner-office
+sudo mkdir -p /opt/actions-runner-office && sudo chown ubuntu:ubuntu /opt/actions-runner-office   # 不 chown 的话 scp/解压会 Permission denied
+cd /opt/actions-runner-office
 curl -o actions-runner-linux-x64-2.337.0.tar.gz -L \
   https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz
 tar xzf ./actions-runner-linux-x64-2.337.0.tar.gz
