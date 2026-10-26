@@ -5,7 +5,10 @@ WORKDIR /app
 # 国内镜像（服务器无 clashx，构建也走国内源）
 # 字体两件套：noto-cjk 给 matplotlib 图表（png 渲染）；wqy-microhei 给 reportlab
 # PDF 内嵌——Noto CJK 是 CFF 轮廓，reportlab TTFont 注册必败，必须 TrueType 轮廓。
-RUN apt-get update \
+# apt 源切到腾讯内网镜像：deb.debian.org 从国内出海极慢/易卡死（实测卡死过一次）
+RUN (sed -i "s|deb.debian.org|mirrors.cloud.tencent.com|g" /etc/apt/sources.list.d/debian.sources 2>/dev/null || true) \
+    && (sed -i "s|deb.debian.org|mirrors.cloud.tencent.com|g" /etc/apt/sources.list 2>/dev/null || true) \
+    && apt-get update \
     && apt-get install -y --no-install-recommends fonts-noto-cjk fonts-wqy-microhei \
     && rm -rf /var/lib/apt/lists/*
 

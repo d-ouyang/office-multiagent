@@ -5,6 +5,21 @@
 
 ---
 
+## v1.0.0-p6.42 — 生产部署上线 office.nianan.site（2026-10-26）
+
+**类型**：部署
+
+- 上线 `https://office.nianan.site`（含 `/admin`），形态为**共享 RAG 中间件**：只起 backend/gateway/frontend 三容器，mysql/redis/chroma 复用 RAG 栈同版本实例（设计 §12.3）；office 用独立 `office` 库 + 专用用户 + redis db 2。
+- 新增 `docker-compose.prod.yml`（与开发 compose 分离；外部网络按容器名访问 RAG；宿主端口只绑 127.0.0.1，前端 8090）。
+- backend/Dockerfile 修 Debian 源卡死（deb.debian.org 出海极慢 → mirrors.cloud.tencent.com，与 1024 的 apk 修复同款）。
+- 建库走既定路径：init.sql 灌库 + `alembic stamp head`（顺带发现 0001 迁移多语句 bug，留待修复）。
+- 冒烟全过：健康检查三件套 ok、首页/`/admin` 200、用户与管理端登录均出 token、到 RAG 检索服务网络连通。
+- ⚠️ dev 种子账号（role=admin）密码哈希在仓库里，上线后应立即改密或停用。
+
+详见 `docs/iterations/v1.0.0-p6.42-prod-deploy.md`。
+
+---
+
 ## v1.0.0-p6.41 — 引入 Skill 能力层 P1（2026-10-26）
 
 **类型**：架构（不改动运行时）

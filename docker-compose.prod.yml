@@ -1,0 +1,59 @@
+# =====================================================================
+# office-multiagent · 生产部署文件（服务器 42.192.111.82 · 共享 RAG 中间件形态）
+#
+# 与开发用的 docker-compose.yml 的区别（两份不要混用）：
+#   · 只起 backend / gateway / frontend 三个容器；
+#     mysql / redis / chroma 复用 RAG 栈的同版本实例（rag-mysql / rag-redis /
+#     rag-chroma，设计文档 §12.3 预留的共享方案），office 用独立数据库 office
+#     + 独立 redis db，数据完全隔离。
+#   · 通过外部网络 rag-qa-system_default 按容器名访问 RAG 中间件——
+#     RAG 各端口只绑 127.0.0.1，host.docker.internal 走不通，必须入网。
+#   · 宿主端口只绑 127.0.0.1，由宿主 Caddy（office.nianan.site）统一反代。
+#   · 共享 mysql 已初始化过，init.sql 不会执行：首启用 alembic upgrade head
+#     建表（0001 基线含建表 + 种子用户/模型池）。
+#
+# 环境变量全部放同目录 .env（键名与 .env.example 一致）。
+#
+# 首次部署顺序：
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml run --rm backend alembic upgrade head
+#   docker compose -f docker-compose.prod.yml up -d
+# =====================================================================
+
+services:
+  backend:
+    build: ./backend
+    env_file: .env
+    volumes:
+      - ./backend/data:/app/data        # 文档目录：read_document 只读 + /documents 上传写入
+      - ./backend/config:/app/config    # 管理端写 models.overrides.yaml；yaml 改完 recreate 生效
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [office-net, rag-net]
+
+  gateway:
+    build: ./gateway
+    env_file: .env
+    ports:
+      - "127.0.0.1:3001:3000"   # 仅供宿主侧调试；浏览器流量走 前端nginx → gateway:3000（office-net 内）
+    depends_on:
+      - backend
+    networks: [office-net, rag-net]
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:8090:80"     # Caddy office.nianan.site 反代到这里；8080 已被 rag-frontend 占用
+    depends_on:
+      - gateway
+    networks: [office-net]
+
+networks:
+  office-net:
+    driver: bridge
+  rag-net:
+    name: rag-qa-system_default
+    external: true
