@@ -27,10 +27,22 @@
 
 ```bash
 ssh ubuntu@42.192.111.82
-# 1) 建目录并下载 runner（版本号以 GitHub 页面为准）
+# 1) 建目录并下载 runner（版本以 GitHub 页面为准；服务器现有 runner 为 2.337.0，建议同版）
 mkdir -p /opt/actions-runner-office && cd /opt/actions-runner-office
-curl -o actions-runner-linux-x64-2.xxx.tar.gz -L https://github.com/actions/runner/releases/download/v2.xxx/actions-runner-linux-x64-2.xxx.tar.gz
-tar xzf ./actions-runner-linux-x64-2.xxx.tar.gz
+curl -o actions-runner-linux-x64-2.337.0.tar.gz -L \
+  https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz
+tar xzf ./actions-runner-linux-x64-2.337.0.tar.gz
+```
+
+> **国内下载不动？**（deb.debian.org 同款问题）在本地开代理下载后再传上去：
+> ```bash
+> # 本地 Mac（proxy_on 之后）：
+> curl -o actions-runner-linux-x64-2.337.0.tar.gz -L \
+>   https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz
+> shasum -a 256 actions-runner-linux-x64-2.337.0.tar.gz   # 与 GitHub 页面的校验值比对
+> scp actions-runner-linux-x64-2.337.0.tar.gz ubuntu@42.192.111.82:/opt/actions-runner-office/
+> # 然后到服务器上从 `tar xzf ...` 那步继续，跳过 curl。
+> ```
 
 # 2) 注册（--url 和 token 从 GitHub 页面复制；labels 填 office-deploy）
 ./config.sh --url https://github.com/d-ouyang/office-multiagent \

@@ -18,7 +18,7 @@ from .tools_doc import check_inside_base, load_table_grid, normalize_doc_name
 _CLEAN_ID = re.compile(r"^c-[0-9a-f]{16}$")
 _NULL_TOKENS = {"null", "none", "n/a", "na", "nan", "-", "—", "无", "空", "nil"}
 _AGGS = {"count", "sum", "mean", "min", "max", "count_distinct"}
-_OPS = {"eq", "ne", "contains", "gt", "gte", "lt", "lte"}
+_OPS = {"eq", "ne", "contains", "gt", "gte", "lt", "lte", "in", "not_in"}
 _PREVIEW = 5
 _MAX_GROUPS = 100
 
@@ -218,6 +218,15 @@ def _match_filter(row: dict[str, str], item: dict[str, Any]) -> bool:
         return actual != expected
     if op == "contains":
         return expected in actual
+    if op in ("in", "not_in"):
+        # p6.47：集合过滤——value 接受列表或逗号/顿号分隔的字符串。
+        # 典型用途：分组统计（grp=月份/城市）里只挑若干个值（如 9 月 vs 10 月对比）。
+        raw = item.get("value")
+        if isinstance(raw, (list, tuple)):
+            wanted = [str(v).strip() for v in raw if str(v).strip()]
+        else:
+            wanted = [v.strip() for v in re.split(r"[、,，]", str(raw or "")) if v.strip()]
+        return actual in wanted if op == "in" else actual not in wanted
     left = _parse_number(actual)
     right = _parse_number(expected)
     if left is None or right is None:

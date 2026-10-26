@@ -172,7 +172,8 @@ def build_default_registry(
         description=(
             "只分析 clean_table 返回的表。参数 clean_id 必填，不能传原始文件名。"
             "group_by：分组列，可空。metrics：[{column, agg}]，agg 取 count、sum、mean、min、max、count_distinct；"
-            "不传 metrics 时只计数。filters：[{column, op, value}]，op 取 eq、ne、contains、gt、gte、lt、lte。"
+            "不传 metrics 时只计数。filters：[{column, op, value}]，op 取 eq、ne、contains、gt、gte、lt、lte、in、not_in"
+            "（in/not_in 的 value 可传列表，用于从分组结果里挑特定值，如只取 9 月和 10 月）。"
             "sum/mean/min/max 遇到不能转成数字的格子会跳过并计数，不会当成 0。"
         ),
     )
