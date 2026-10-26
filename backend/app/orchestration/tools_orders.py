@@ -3,12 +3,16 @@
 筛选取订单表里真实存在的列（值做参数绑定，列名必须落在表结构里）。
 城市不是单独的列，按门店地址包含匹配，不维护城市名单。
 状态、渠道等不再用写死的可选值挡在查询前面：表里有什么值就能查什么值。
+p6.46：分组统计会同步存一份可分析副本（clean_id），render_chart/analyze_table
+可以直接接——"对库内业务数据聚合并可视化"这类问题不再需要文件作跳板。
 """
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
@@ -16,6 +20,8 @@ from sqlalchemy.engine import Engine
 
 from .orders_seed import COLUMNS, ensure_orders_loaded
 from .tools_db import _jsonable
+
+logger = logging.getLogger(__name__)
 
 _MAX_ROWS = 50
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -307,7 +313,9 @@ def compile_order_filters(raw: dict[str, Any], *, require_dates: bool = False) -
     return {"clauses": clauses, "params": binder.params, "applied": applied}
 
 
-def make_query_orders_tool(engine: Engine | None, *, max_rows: int = _MAX_ROWS) -> Callable[..., Any]:
+def make_query_orders_tool(
+    engine: Engine | None, *, max_rows: int = _MAX_ROWS, base_dir: str | None = None
+) -> Callable[..., Any]:
     def query_orders(**raw: Any) -> dict[str, Any]:
         if engine is None:
             return {"error": "数据库不可用：未配置数据库连接"}
@@ -362,6 +370,28 @@ def make_query_orders_tool(engine: Engine | None, *, max_rows: int = _MAX_ROWS) 
                     f"FROM guoquan_orders{where}"
                 )
             rows = _run(engine, sql, params)
+            # p6.46：分组结果存一份可分析副本（clean_id）——"按 X 统计再画图/再分析"这类
+            # 问题不再需要先有文件；render_chart / analyze_table 直接吃这个 clean_id。
+            chart_id = None
+            if group_by and rows and base_dir:
+                try:
+                    from .tools_table import _write_clean
+
+                    cols = ["grp", "order_count", "metric_value"]
+                    chart_id = _write_clean(
+                        Path(base_dir),
+                        cols,
+                        [[str(r.get(c, "")) for c in cols] for r in rows],
+                        {
+                            "source": "query_orders",
+                            "group_by": group_by,
+                            "metric": metric or "count",
+                            "filters": applied,
+                            "rows": len(rows),
+                        },
+                    )
+                except Exception:  # noqa: BLE001 - 存副本失败不影响查询本身
+                    logger.exception("query_orders 分组结果存副本失败")
             return {
                 "filters": applied,
                 "group_by": group_by or None,
@@ -370,6 +400,12 @@ def make_query_orders_tool(engine: Engine | None, *, max_rows: int = _MAX_ROWS) 
                 "truncated": bool(group_by) and len(rows) >= limit,
                 "row_count": len(rows),
                 "rows": rows,
+                "clean_id": chart_id,
+                "chart_hint": (
+                    f"要画图或再分析：把 clean_id 交给 render_chart（x=grp，y=metric_value 或 order_count）/ analyze_table"
+                    if chart_id
+                    else None
+                ),
             }
 
         requested = _as_list(raw.get("columns"))

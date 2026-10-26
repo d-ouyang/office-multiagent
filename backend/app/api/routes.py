@@ -1029,6 +1029,27 @@ def _stream_task(
                     )
                     repo.append_message(session_id, "user", text, trace=user_trace)
                     repo.append_message(session_id, "assistant", result.get("result", ""), trace=trace)
+                elif status == "paused_user":
+                    # p6.46：手动停止也落库——流式内容用户已经看到，刷新后不能凭空消失。
+                    # 正文取流里实际推过的内容（含"已暂停"收尾提示），而不是占位结果。
+                    # （quota/error 暂停仍不落：续跑是整轮重跑，落了会造成重复对话。）
+                    streamed = "".join(
+                        str(e.data.get("delta") or "")
+                        for e in events
+                        if e.type == EventType.CONTENT_DELTA
+                    ).strip()
+                    body = (
+                        streamed
+                        or str(result.get("result", "")).strip()
+                        or "（任务已手动停止，未产生结果；可在管理端任务监控中续跑）"
+                    )
+                    user_trace = (
+                        _json.dumps({"attachments": attachments}, ensure_ascii=False)
+                        if attachments
+                        else None
+                    )
+                    repo.append_message(session_id, "user", text, trace=user_trace)
+                    repo.append_message(session_id, "assistant", body, trace=trace)
                 payload = None
                 if status == "paused_insufficient_quota":
                     ev = next((e for e in events if e.type == EventType.QUOTA_PAUSED), None)

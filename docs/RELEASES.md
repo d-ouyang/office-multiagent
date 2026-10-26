@@ -5,6 +5,22 @@
 
 ---
 
+## v1.0.0-p6.46 — 手动停止落库 + 数据库聚合直通画图 + 模型池下线 Qwen（2026-10-26）
+
+**类型**：修复 + 功能
+
+- **手动停止的任务现在落库**：此前只有 `done` 才写会话消息，手动停止刷新后这轮对话凭空消失。
+  现在 `paused_user` 会落用户消息 + 流式里实际推过的正文（quota/error 暂停仍不落——续跑是整轮重跑，落了会重复）。
+- **"对数据库数据统计并画图"一类问题直通**：根因是 planner 把它路由给可视化 Agent，而该 Agent
+  没有 query_orders，只能对空文件名调 clean_table 然后草草收场。修法是打通一类问题而非补单点：
+  ① `query_orders` 分组统计自动存可分析副本并返回 `clean_id`（render_chart/analyze_table 直接消费）；
+  ② 可视化 Agent 补上 query_orders，提示词写明两条数据路径；general/data_analysis/report_generation 同步加提示。
+  实测三条快捷示例全部打通：统计+柱状图（query_orders→render_chart→svg）、9/10 月对比 PDF 报告、导出全国明细 xlsx。
+- **模型池下线 Qwen 对话模型**（qwen3.5-9b / qwen3.8-27b，思考太慢）：对话模型剩 10 个；
+  决策小模型 decision-llm（Qwen2.5-7B）保留——它不进对话列表且是路由必需。
+
+---
+
 ## v1.0.0-p6.45 — 时间时区修复 + 逐步 token 用量浮窗（2026-10-26）
 
 **类型**：修复 + 功能

@@ -55,6 +55,9 @@ def build_default_registry(
     task_id: str | None = None,
 ) -> ToolRegistry:
     reg = ToolRegistry()
+    # p6.46：doc_base 提前计算——query_orders 的分组副本要存进同一个 _clean 目录
+    owner = (username or "").strip().strip("/") or None
+    doc_base = str(Path(settings.documents_dir) / owner) if owner else settings.documents_dir
     reg.register(
         "db_query",
         make_db_query_tool(engine, max_rows=settings.db_query_max_rows),
@@ -66,7 +69,7 @@ def build_default_registry(
     )
     reg.register(
         "query_orders",
-        make_query_orders_tool(engine, max_rows=settings.db_query_max_rows),
+        make_query_orders_tool(engine, max_rows=settings.db_query_max_rows, base_dir=str(doc_base)),
         description=(
             "查询已入库的锅圈食汇订单。不要写 SQL，也不要读订单 CSV。"
             "至少要带一个条件：date_from、date_to（YYYY-MM-DD，按下单时间）、"
@@ -89,6 +92,9 @@ def build_default_registry(
             "同比、环比、占比不要自己算，改用 compare_orders。"
             "销售报表不要用本工具拼结论，改用 sales_report。"
             "【要订单明细表格/导出文件时不要用本工具，改用 export_orders】。"
+            "分组统计会同时返回 clean_id（可分析副本）：要画图或再分析时直接把它交给 "
+            "render_chart（x=grp，y=metric_value 或 order_count）/ analyze_table，"
+            "绝不调用 clean_table 去读一个不存在的文件。"
         ),
     )
     reg.register(

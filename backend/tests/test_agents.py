@@ -40,8 +40,10 @@ def test_spec_tools_whitelist():
 
 
 def test_no_tool_agents_declare_empty():
-    # visualization / image_restore：工具池暂无对应工具——留空，由 Brain 如实告知能力暂缺
-    assert get_agent_spec("visualization").tools == ["clean_table", "render_chart"]
+    # visualization（p6.46）：补上 query_orders——"按数据库订单统计并画图"走
+    # query_orders(group_by)→clean_id→render_chart，不再依赖上传文件作跳板。
+    assert get_agent_spec("visualization").tools == ["query_orders", "clean_table", "render_chart"]
+    # image_restore：工具池暂无对应工具——留空，由 Brain 如实告知能力暂缺
     assert get_agent_spec("image_restore").tools == []
 
 
