@@ -5,6 +5,19 @@
 
 ---
 
+## v2.0.0-p1.2 — llm.py 原生 tool_calls 协议面（2026-10-27）
+
+**类型**：2.0.0 改造（协议面）
+
+- `chat` / `chat_stream` 支持 `tools` / `tool_choice` 入参（缺省 auto，不带 tools 时请求体与改造前完全一致）。
+- 新增 `ToolCall` 归一化结构：非流式解析 `message.tool_calls`；流式按 index 增量累积，流结束后一次性回调 `on_tool_call`，正文/思考流与工具增量分通道。
+- 错误口径：缺 id/name 抛 LlmError；arguments 解析失败落 `parse_error` 不抛崩（由上层回填工具错误）。
+- 全量回归 pytest 411 passed / 3 skipped。
+
+详见 `docs/iterations/v2.0.0-p1.2-llm-tool-calls.md`。
+
+---
+
 ## v2.0.0-p1.1 — 工具参数 Schema 与 OpenAI tools 导出（2026-10-27）
 
 **类型**：2.0.0 改造准备

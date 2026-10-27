@@ -6,6 +6,130 @@ from app.core.config import settings
 from app.core.llm import LlmError, LlmNotConfigured, chat, chat_stream, resolve_model
 
 
+_TOOLS = [{
+    "type": "function",
+    "function": {"name": "query_orders", "description": "查订单", "parameters": {"type": "object", "properties": {}}},
+}]
+
+
+def test_chat_passes_tools_and_defaults_auto_choice(monkeypatch):
+    import json
+
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_OK_BODY)
+
+    chat("deepseek-chat", [{"role": "user", "content": "hi"}], tools=_TOOLS, transport=httpx.MockTransport(handler))
+    assert seen["body"]["tools"] == _TOOLS
+    assert seen["body"]["tool_choice"] == "auto"
+
+    chat("deepseek-chat", [{"role": "user", "content": "hi"}], transport=httpx.MockTransport(handler))
+    assert "tools" not in seen["body"] and "tool_choice" not in seen["body"]
+
+
+def test_chat_parses_tool_calls(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    body = {
+        "choices": [{
+            "message": {
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "query_orders", "arguments": "{\"city\": \"上海\"}"},
+                }],
+            }
+        }],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+    res = chat("deepseek-chat", [{"role": "user", "content": "hi"}], tools=_TOOLS, transport=httpx.MockTransport(_handler(200, body)))
+    assert res.content == ""
+    assert len(res.tool_calls) == 1
+    call = res.tool_calls[0]
+    assert (call.id, call.name, call.arguments, call.parse_error) == ("call_1", "query_orders", {"city": "上海"}, None)
+
+
+def test_chat_bad_arguments_become_parse_error_not_raise(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    body = {
+        "choices": [{
+            "message": {
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "query_orders", "arguments": "{\"city\": truncated"},
+                }],
+            }
+        }],
+    }
+    res = chat("deepseek-chat", [{"role": "user", "content": "hi"}], tools=_TOOLS, transport=httpx.MockTransport(_handler(200, body)))
+    assert res.tool_calls[0].parse_error and "解析失败" in res.tool_calls[0].parse_error
+    assert res.tool_calls[0].arguments == {}
+
+
+def test_chat_missing_tool_id_or_name_raises(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    body = {"choices": [{"message": {"content": "", "tool_calls": [{"id": "", "function": {"name": "x", "arguments": "{}"}}]}}]}
+    with pytest.raises(LlmError, match="畸形"):
+        chat("deepseek-chat", [{"role": "user", "content": "hi"}], tools=_TOOLS, transport=httpx.MockTransport(_handler(200, body)))
+
+
+def test_chat_stream_accumulates_tool_call_fragments(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    finished: list = []
+    res = chat_stream(
+        "deepseek-chat",
+        [{"role": "user", "content": "hi"}],
+        on_tool_call=finished.append,
+        transport=httpx.MockTransport(
+            lambda req: _sse([
+                '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"query_orders","arguments":"{\\"city\\": "}}]}}]}',
+                '{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"上海\\"}"}}]}}]}',
+                '{"choices":[{"delta":{"content":"正在查询…"}}]}',
+                "[DONE]",
+            ])
+        ),
+    )
+    assert res.content == "正在查询…"
+    assert len(res.tool_calls) == 1
+    call = res.tool_calls[0]
+    assert call.id == "call_1" and call.name == "query_orders"
+    assert call.arguments == {"city": "上海"} and call.parse_error is None
+    assert finished == res.tool_calls
+
+
+def test_chat_stream_multiple_tool_calls_keep_index_order(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    res = chat_stream(
+        "deepseek-chat",
+        [{"role": "user", "content": "hi"}],
+        transport=httpx.MockTransport(
+            lambda req: _sse([
+                '{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_2","function":{"name":"render_chart","arguments":"{}"}}]}}]}',
+                '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"query_orders","arguments":"{}"}}]}}]}',
+                "[DONE]",
+            ])
+        ),
+    )
+    assert [c.id for c in res.tool_calls] == ["call_1", "call_2"]  # 按 index 排序
+
+
+def test_chat_stream_no_tools_key_without_tools(monkeypatch):
+    import json
+
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=_IterStream([b"data: [DONE]\n\n"]))
+
+    chat_stream("deepseek-chat", [{"role": "user", "content": "hi"}], transport=httpx.MockTransport(handler))
+    assert "tools" not in seen["body"]
+
+
 def test_resolve_model_ok(monkeypatch):
     monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
     base_url, key, api_model = resolve_model("deepseek-chat")
