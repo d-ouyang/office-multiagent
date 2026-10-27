@@ -1817,6 +1817,107 @@ def _client_ip(request: Request) -> str | None:
     return (str(forwarded).split(",")[0].strip() if forwarded else host) or None
 
 
+@router.get("/admin/feedback")
+def admin_feedback(
+    rating: str = Query(default="", max_length=16),
+    tag: str = Query(default="", max_length=64),
+    q: str = Query(default="", max_length=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str | None = Header(default=None),
+):
+    """v2.0.0-p2.3：管理端「意见反馈」（只读）——统计卡 + 明细分页。
+
+    统计口径不含 rating 筛选（切赞/踩列表时总量口径稳定）；tag 筛选用
+    tags JSON 文本 LIKE（`%"tag"%`），MySQL/SQLite 双兼容。
+    """
+    _require_admin(authorization)
+    import json as _json
+
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+
+    rating = _query_text(rating)
+    tag = _query_text(tag)
+    q = _query_text(q)
+    base = (
+        "FROM message_feedback f LEFT JOIN `user` u ON u.id = f.user_id "
+        "LEFT JOIN message m ON m.id = f.message_id"
+    )
+
+    def _build(include_rating: bool) -> tuple[str, dict[str, Any]]:
+        filters: list[str] = []
+        params: dict[str, Any] = {}
+        if rating in ("like", "dislike") and include_rating:
+            filters.append("f.rating = :rating")
+            params["rating"] = rating
+        if tag:
+            filters.append("f.tags LIKE :tag")
+            params["tag"] = f'%"{tag}"%'
+        if q:
+            filters.append("(f.comment LIKE :kw OR m.content LIKE :kw)")
+            params["kw"] = f"%{q}%"
+        return (" WHERE " + " AND ".join(filters)) if filters else "", params
+
+    where, params = _build(include_rating=True)
+    where_no_rating, params_no_rating = _build(include_rating=False)
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        total = int(conn.execute(_text("SELECT COUNT(*) " + base + where), params).scalar() or 0)
+        rows = conn.execute(
+            _text(
+                "SELECT f.id, f.message_id, f.session_id, f.user_id, f.rating, f.tags, f.comment, "
+                "f.created_at, u.username, u.employee_id, m.content AS message_content "
+                + base + where + " ORDER BY f.id DESC LIMIT :l OFFSET :o"
+            ),
+            {**params, "l": page_size, "o": (page - 1) * page_size},
+        ).mappings().all()
+        # 统计（不含 rating 筛选）
+        s_total = int(conn.execute(_text("SELECT COUNT(*) " + base + where_no_rating), params_no_rating).scalar() or 0)
+        s_like = int(conn.execute(_text("SELECT COUNT(*) " + base + where_no_rating + (" AND" if where_no_rating else " WHERE") + " f.rating='like'"), params_no_rating).scalar() or 0)
+        top: dict[str, int] = {}
+        for r in conn.execute(
+            _text("SELECT f.tags " + base + where_no_rating + " ORDER BY f.id DESC LIMIT 500"),
+            params_no_rating,
+        ).mappings():
+            try:
+                for t in _json.loads(r["tags"] or "[]"):
+                    top[t] = top.get(t, 0) + 1
+            except (TypeError, ValueError):
+                continue
+    items = [
+        {
+            "id": r["id"],
+            "message_id": r["message_id"],
+            "session_id": r["session_id"],
+            "user_id": r["user_id"],
+            "username": r["username"],
+            "employee_id": r["employee_id"],
+            "rating": r["rating"],
+            "tags": _json.loads(r["tags"]) if r["tags"] else [],
+            "comment": r["comment"],
+            "message_snippet": (r["message_content"] or "")[:80],
+            "created_at": _iso_or_none(r["created_at"]),
+        }
+        for r in rows
+    ]
+    return {
+        "stats": {
+            "total": s_total,
+            "like": s_like,
+            "dislike": s_total - s_like,
+            "dislike_rate": round((s_total - s_like) / s_total, 4) if s_total else None,
+            "top_tags": sorted(top.items(), key=lambda kv: kv[1], reverse=True)[:5],
+        },
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
 @router.post("/admin/login")
 def admin_login(body: AdminLoginRequest, request: Request):
     """管理端登录：账密校验 + admin 角色 + 审计（成功/失败都写——失败也是安全事件）。"""

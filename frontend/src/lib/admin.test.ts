@@ -72,8 +72,8 @@ describe('pageWindow（分页页码折叠）', () => {
 });
 
 describe('ADMIN_TABS', () => {
-  it('只有五个一级入口，没有分组页', () => {
-    expect(ADMIN_TABS.map((t) => t.key)).toEqual(['overview', 'tasks', 'users', 'pools', 'audit']);
+  it('一级入口固定六个，没有分组页（p2.3 增加意见反馈）', () => {
+    expect(ADMIN_TABS.map((t) => t.key)).toEqual(['overview', 'tasks', 'users', 'pools', 'audit', 'feedback']);
   });
 });
 

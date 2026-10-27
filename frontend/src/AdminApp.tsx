@@ -2,6 +2,7 @@ import {
   AuditOutlined,
   ClusterOutlined,
   DashboardOutlined,
+  LikeOutlined,
   LogoutOutlined,
   UnorderedListOutlined,
   UserOutlined,
@@ -17,6 +18,7 @@ import AdminProfilePanel from './components/AdminProfilePanel';
 import {
   ADMIN_TABS,
   AuditTab,
+  FeedbackTab,
   ModelPoolsTab,
   OverviewTab,
   TasksTab,
@@ -34,6 +36,7 @@ const TAB_ICON: Record<AdminTab, ReactNode> = {
   users: <WalletOutlined />,
   pools: <ClusterOutlined />,
   audit: <AuditOutlined />,
+  feedback: <LikeOutlined />,
 };
 
 export default function AdminApp() {
@@ -135,6 +138,7 @@ function AdminShell({ user, onLogout }: { user: LoginUser; onLogout: () => void 
           {tab === 'tasks' && <TasksTab />}
           {tab === 'pools' && <ModelPoolsTab />}
           {tab === 'audit' && <AuditTab />}
+          {tab === 'feedback' && <FeedbackTab />}
         </Content>
       </Layout>
       <AdminProfilePanel

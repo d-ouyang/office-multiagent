@@ -1,4 +1,4 @@
-export type AdminTab = 'overview' | 'tasks' | 'users' | 'pools' | 'audit';
+export type AdminTab = 'overview' | 'tasks' | 'users' | 'pools' | 'audit' | 'feedback';
 
 export const ADMIN_TABS: Array<{ key: AdminTab; label: string; hint: string; icon: string }> = [
   { key: 'overview', label: '概览', hint: '指标、系统状态和用量', icon: '▣' },
@@ -6,6 +6,7 @@ export const ADMIN_TABS: Array<{ key: AdminTab; label: string; hint: string; ico
   { key: 'users', label: '用户额度', hint: '员工余额、充值与流水', icon: '◈' },
   { key: 'pools', label: '模型池', hint: '角色可见模型与参数', icon: '⬡' },
   { key: 'audit', label: '审计日志', hint: '谁在什么时候做了什么', icon: '▤' },
+  { key: 'feedback', label: '意见反馈', hint: '回答的点赞点踩与原因', icon: '♡' },
 ];
 
 const LEGACY: Record<string, AdminTab> = {

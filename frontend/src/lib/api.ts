@@ -801,6 +801,51 @@ export async function getHealth(): Promise<{
 }
 
 // --------------------------------------------------------------------------- //
+// v2.0.0-p2.3：管理端「意见反馈」（只读）
+// --------------------------------------------------------------------------- //
+
+export interface AdminFeedbackItem {
+  id: number;
+  message_id: number;
+  session_id: string;
+  user_id: number;
+  username: string | null;
+  employee_id: string | null;
+  rating: FeedbackRating;
+  tags: string[];
+  comment: string | null;
+  message_snippet: string;
+  created_at: string | null;
+}
+
+export interface AdminFeedbackStats {
+  total: number;
+  like: number;
+  dislike: number;
+  dislike_rate: number | null;
+  top_tags: Array<[string, number]>;
+}
+
+export async function adminFeedback(
+  params: { rating?: string; tag?: string; q?: string; page?: number; pageSize?: number } = {},
+): Promise<{ stats: AdminFeedbackStats; items: AdminFeedbackItem[]; total: number; page: number; page_size: number }> {
+  const qs = new URLSearchParams({ page: String(params.page ?? 1), page_size: String(params.pageSize ?? 20) });
+  if (params.rating) qs.set('rating', params.rating);
+  if (params.tag) qs.set('tag', params.tag);
+  if (params.q?.trim()) qs.set('q', params.q.trim());
+  const data = await adminGet<{ stats: AdminFeedbackStats; items?: AdminFeedbackItem[]; total?: number; page?: number; page_size?: number }>(
+    `/api/v1/admin/feedback?${qs.toString()}`,
+  );
+  return {
+    stats: data.stats ?? { total: 0, like: 0, dislike: 0, dislike_rate: null, top_tags: [] },
+    items: data.items ?? [],
+    total: data.total ?? 0,
+    page: data.page ?? params.page ?? 1,
+    page_size: data.page_size ?? params.pageSize ?? 20,
+  };
+}
+
+// --------------------------------------------------------------------------- //
 // p6.27c：模型池（池定义 / 模型归属 / 用户分配）
 // --------------------------------------------------------------------------- //
 
