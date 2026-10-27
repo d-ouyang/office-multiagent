@@ -67,9 +67,30 @@ CREATE TABLE IF NOT EXISTS `message` (
   `role`       VARCHAR(16) NOT NULL,                    -- user/assistant
   `content`    MEDIUMTEXT  NOT NULL,
   `trace`      MEDIUMTEXT  NULL,                        -- p6.x 编排轨迹（迁移 0003；漏加会导致历史读取 500）
+  `feedback`         VARCHAR(16)  NULL,                  -- v2.0.0-p2.1 当前态 like/dislike（迁移 0013）
+  `feedback_tags`    LONGTEXT     NULL,                  -- 原因 tag 数组 JSON
+  `feedback_comment` VARCHAR(200) NULL,                  -- 其他原因文字
+  `feedback_at`      DATETIME(6)  NULL,
   `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   KEY `idx_message_session` (`session_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- v2.0.0-p2.1：消息反馈流水（append-only——二次提交覆盖 message 当前态、
+-- 旧行保留；取消只清当前态不删流水）。迁移 0013。
+CREATE TABLE IF NOT EXISTS `message_feedback` (
+  `id`         BIGINT       NOT NULL AUTO_INCREMENT,
+  `message_id` BIGINT       NOT NULL,
+  `session_id` VARCHAR(64)  NOT NULL,
+  `user_id`    BIGINT       NOT NULL,
+  `rating`     VARCHAR(16)  NOT NULL,                   -- like / dislike
+  `tags`       LONGTEXT     NULL,                       -- 原因 tag 数组 JSON
+  `comment`    VARCHAR(200) NULL,
+  `created_at` DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  KEY `idx_feedback_message` (`message_id`),
+  KEY `idx_feedback_session` (`session_id`),
+  KEY `idx_feedback_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `subtask` (

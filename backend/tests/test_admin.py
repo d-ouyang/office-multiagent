@@ -140,7 +140,7 @@ def test_run_trace_summary_and_overview_fields(eng):
             "INSERT INTO task (id, session_id, status, text, pause_reason, request_json) "
             "VALUES ('run-1', 's1', 'done', '看看上海', NULL, :r)"
         ), {"r": json.dumps({"model": "deepseek-chat"})})
-        conn.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, trace TEXT)"))
+        conn.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, trace TEXT, feedback TEXT, feedback_tags TEXT, feedback_comment TEXT, feedback_at TEXT)"))
         conn.execute(text("INSERT INTO message (session_id, role, content, trace) VALUES ('s1', 'assistant', 'ok', :t)"), {"t": json.dumps(events)})
     client = TestClient(app)
     listed = client.get("/api/v1/admin/runs", params={"flag": "rag"}, headers=_auth())
@@ -296,7 +296,7 @@ def test_run_detail_includes_flow(eng):
     with eng.begin() as conn:
         conn.execute(text("INSERT INTO session (id, user_id) VALUES ('s1', 2)"))
         conn.execute(text("INSERT INTO task (id, session_id, status, text) VALUES ('run-flow', 's1', 'done', '查订单')"))
-        conn.execute(text("CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, trace TEXT)"))
+        conn.execute(text("CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, trace TEXT, feedback TEXT, feedback_tags TEXT, feedback_comment TEXT, feedback_at TEXT)"))
         conn.execute(text("INSERT INTO message (session_id, role, content, trace) VALUES ('s1', 'assistant', 'ok', :t)"), {"t": json.dumps(events)})
     detail = TestClient(app).get("/api/v1/admin/runs/run-flow", headers=_auth()).json()
     assert detail["duration_ms"] == 2000

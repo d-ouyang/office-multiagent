@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import datetime
 from typing import Any
@@ -139,20 +140,31 @@ class SessionRepo:
         with self.engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT role, content, trace, created_at FROM message "
+                    "SELECT id, role, content, trace, feedback, feedback_tags, "
+                    "feedback_comment, feedback_at, created_at FROM message "
                     "WHERE session_id = :s ORDER BY id LIMIT :l"
                 ),
                 {"s": session_id, "l": limit},
             ).mappings().all()
-        out = [
-            {
+        out = []
+        for r in rows:
+            item = {
+                "id": r["id"],
                 "role": r["role"],
                 "content": r["content"],
                 "trace": r["trace"],
                 "created_at": _iso_utc(r["created_at"]),
             }
-            for r in rows
-        ]
+            # v2.0.0-p2.1：assistant 消息带反馈当前态（前端渲染点赞/点踩激活态）
+            if r["role"] == "assistant":
+                tags = r["feedback_tags"]
+                item["feedback"] = {
+                    "rating": r["feedback"],
+                    "tags": json.loads(tags) if tags else [],
+                    "comment": r["feedback_comment"],
+                    "at": _iso_utc(r["feedback_at"]),
+                }
+            out.append(item)
         self._attach_turn_usage(session_id, out)
         return out
 

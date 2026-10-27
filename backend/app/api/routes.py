@@ -142,6 +142,13 @@ class RewindRequest(BaseModel):
     keep: int  # 保留的消息条数（被编辑的用户消息下标；该条及其后全部删除）
 
 
+class FeedbackRequest(BaseModel):
+    """v2.0.0-p2.1：消息反馈。dislike 必须带原因（tag 或 comment）；like 可裸提交。"""
+    rating: str            # like / dislike
+    tags: list[str] = []
+    comment: str = ""
+
+
 _EFFORTS = {"low", "medium", "high", "max"}
 
 
@@ -350,6 +357,44 @@ def rewind_session(session_id: str, body: RewindRequest, authorization: str | No
         raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"})
     deleted = repo.trim_messages_after(session_id, body.keep)
     return {"deleted": deleted}
+
+
+@router.post("/sessions/{session_id}/messages/{message_id}/feedback")
+def submit_message_feedback(
+    session_id: str, message_id: int, body: FeedbackRequest, authorization: str | None = Header(default=None)
+):
+    """v2.0.0-p2.1：对 assistant 消息提交/覆盖反馈（点赞/点踩闭环）。
+
+    越权（他人消息）与非 assistant 消息一律 404 同形（沿用 memory 惯例）。
+    """
+    user = _current_user(authorization)
+    from ..core.db import get_engine
+    from ..core.feedback_repo import FeedbackRepo, FeedbackValidationError
+
+    repo = FeedbackRepo(get_engine())
+    if repo.get_message_for(session_id, message_id, user["id"]) is None:
+        raise HTTPException(404, detail={"code": "MESSAGE_NOT_FOUND", "message": "消息不存在"})
+    try:
+        state = repo.submit(session_id, message_id, user["id"], body.rating, body.tags, body.comment)
+    except FeedbackValidationError as e:
+        raise HTTPException(400, detail={"code": "BAD_FEEDBACK", "message": str(e)}) from e
+    return {"ok": True, "feedback": state}
+
+
+@router.delete("/sessions/{session_id}/messages/{message_id}/feedback")
+def cancel_message_feedback(
+    session_id: str, message_id: int, authorization: str | None = Header(default=None)
+):
+    """v2.0.0-p2.1：取消当前反馈（清当前态；流水行保留）。"""
+    user = _current_user(authorization)
+    from ..core.db import get_engine
+    from ..core.feedback_repo import FeedbackRepo
+
+    repo = FeedbackRepo(get_engine())
+    if repo.get_message_for(session_id, message_id, user["id"]) is None:
+        raise HTTPException(404, detail={"code": "MESSAGE_NOT_FOUND", "message": "消息不存在"})
+    had = repo.cancel(session_id, message_id, user["id"])
+    return {"ok": True, "cancelled": had}
 
 
 @router.get("/quota")
