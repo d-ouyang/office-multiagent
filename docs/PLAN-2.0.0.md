@@ -31,7 +31,7 @@
 | 步 | 内容 | 状态 | Tag |
 | --- | --- | --- | --- |
 | p1.0 | 能力表 + golden 用例冻结 | 已完成（2026-10-27） | `v2.0.0-p1.0` |
-| p1.1 | Registry Schema 与 OpenAI tools 导出 | 待开工 | — |
+| p1.1 | Registry Schema 与 OpenAI tools 导出 | 已完成（2026-10-27） | `v2.0.0-p1.1` |
 | p1.2 | llm.py 协议面（tools / tool_calls / 流式） | 待开工 | — |
 | p1.3 | brain 双协议 + 历史消息形态 | 待开工 | — |
 | p1.4 | react 执行环（多 call 串行 + 事件映射） | 待开工 | — |

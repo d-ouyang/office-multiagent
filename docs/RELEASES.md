@@ -5,6 +5,18 @@
 
 ---
 
+## v2.0.0-p1.1 — 工具参数 Schema 与 OpenAI tools 导出（2026-10-27）
+
+**类型**：2.0.0 改造准备
+
+- `ToolRegistry` 支持注册参数 JSON Schema，新增 `describe_openai()` 导出 OpenAI 兼容 `tools[]`；缺 Schema 的工具被排除并有护栏测试。
+- 全部 13 个工具补齐 Schema（与函数 kwargs 一一核对），白名单裁剪时 Schema 随行。
+- 现有文本 ReAct 路径（`describe()`）不变，json 协议零影响。
+
+详见 `docs/iterations/v2.0.0-p1.1-registry-schema.md`。
+
+---
+
 ## v2.0.0-p3.1 / p4.1 — 侧边栏标题渐隐 + 对话区 1200px 居中（2026-10-27）
 
 **类型**：前端体验

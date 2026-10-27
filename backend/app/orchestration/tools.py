@@ -23,8 +23,27 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Callable[..., Any]] = {}
         self._descriptions: dict[str, str] = {}
+        # v2.0.0-p1.1：OpenAI function calling 参数 Schema。None = schema_incomplete，
+        # 不进 tools[] 导出（避免无 Schema 工具在 tool_calls 模式下收到乱参）。
+        self._schemas: dict[str, dict[str, Any] | None] = {}
 
-    def register(self, name: str, fn: Callable[..., Any], description: str = "") -> None:
+    def register(
+        self,
+        name: str,
+        fn: Callable[..., Any],
+        description: str = "",
+        parameters: dict[str, Any] | None = None,
+    ) -> None:
+        if parameters is not None:
+            if not isinstance(parameters, dict):
+                raise ValueError(f"工具 {name} 的 parameters 必须是 JSON Schema dict")
+            schema = dict(parameters)
+            schema.setdefault("type", "object")
+            schema.setdefault("properties", {})
+            schema.setdefault("additionalProperties", False)
+            self._schemas[name] = schema
+        else:
+            self._schemas[name] = None
         self._tools[name] = fn
         self._descriptions[name] = description
 
@@ -34,12 +53,47 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return sorted(self._tools)
 
+    def schema_of(self, name: str) -> dict[str, Any] | None:
+        return self._schemas.get(name)
+
+    def schema_incomplete(self) -> list[str]:
+        """缺参数 Schema 的工具名（tool_calls 模式须从 tools[] 排除）。"""
+        return sorted(n for n, s in self._schemas.items() if s is None)
+
     def describe(self) -> list[dict[str, str]]:
         """工具清单（给 LLM Brain 的提示词用）：name + description。"""
         return [
             {"name": n, "description": self._descriptions.get(n, "")}
             for n in sorted(self._tools)
         ]
+
+    def describe_openai(self) -> list[dict[str, Any]]:
+        """OpenAI 兼容 tools[]（v2.0.0-p1.1）：只导出有 Schema 的工具，名称稳定排序。"""
+        out: list[dict[str, Any]] = []
+        for name in sorted(self._tools):
+            schema = self._schemas.get(name)
+            if schema is None:
+                continue
+            out.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": self._descriptions.get(name, ""),
+                        "parameters": schema,
+                    },
+                }
+            )
+        return out
+
+    def copy_into(self, other: "ToolRegistry", name: str) -> None:
+        """白名单裁剪时连同 Schema 一起搬运（build_registry_for_spec 用）。"""
+        other.register(
+            name,
+            self._tools[name],
+            self._descriptions.get(name, ""),
+            self._schemas.get(name),
+        )
 
     def call(
         self,

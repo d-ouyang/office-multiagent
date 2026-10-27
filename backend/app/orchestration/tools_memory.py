@@ -62,6 +62,14 @@ def register_memory_tools(registry: Any, repo: UserMemoryRepo, user_id: int) -> 
             "【只有用户明确要求记住时才调用】；用户没让记就不要用。"
             "临时数据、本次任务的中间结果不属于长期记忆。"
         ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "一句话事实，最多 " + f"{settings.user_memory_content_chars} 字"}
+            },
+            "required": ["content"],
+            "additionalProperties": False,
+        },
     )
     registry.register(
         "recall",
@@ -70,4 +78,9 @@ def register_memory_tools(registry: Any, repo: UserMemoryRepo, user_id: int) -> 
             "查询当前用户的长期记忆列表。参数 keyword：可选关键词过滤；不传返回最近的记忆。"
             "用户提到「我之前说过 / 上次 / 记得吗」时用它核对，不要凭对话历史瞎猜。"
         ),
+        parameters={
+            "type": "object",
+            "properties": {"keyword": {"type": "string", "description": "可选关键词过滤"}},
+            "additionalProperties": False,
+        },
     )

@@ -1,5 +1,6 @@
 """业务 Agent 注册表测试（p5.1b）——配置驱动加载 / 回落 / 工具白名单。"""
 from app.orchestration.agents import (
+    build_default_registry,
     build_registry_for_spec,
     get_agent_spec,
     load_agent_specs,
@@ -73,3 +74,48 @@ def test_build_registry_skips_unknown_and_empty():
     assert build_registry_for_spec(get_agent_spec("data_analysis"), base).names() == ["db_query"]
     # visualization tools=[] → 空注册表 → Brain 对其如实告知"无工具"
     assert build_registry_for_spec(get_agent_spec("visualization"), base).names() == []
+
+
+# ---------- v2.0.0-p1.1：OpenAI tools 导出与 Schema 完整性 ----------
+
+def test_register_schema_normalizes_object():
+    reg = ToolRegistry()
+    reg.register("t", lambda **kw: kw, description="d", parameters={"properties": {"a": {"type": "string"}}})
+    schema = reg.schema_of("t")
+    assert schema is not None
+    assert schema["type"] == "object" and schema["additionalProperties"] is False
+
+
+def test_register_rejects_non_dict_schema():
+    import pytest
+    reg = ToolRegistry()
+    with pytest.raises(ValueError):
+        reg.register("t", lambda **kw: kw, parameters=["bad"])  # type: ignore[arg-type]
+
+
+def test_describe_openai_excludes_schema_incomplete():
+    reg = ToolRegistry()
+    reg.register("ready", lambda **kw: kw, description="完整", parameters={"properties": {"q": {"type": "string"}}})
+    reg.register("raw", lambda **kw: kw, description="缺 Schema")
+    openai_tools = reg.describe_openai()
+    assert [t["function"]["name"] for t in openai_tools] == ["ready"]
+    fn = openai_tools[0]["function"]
+    assert fn["parameters"]["properties"] == {"q": {"type": "string"}}
+    assert reg.schema_incomplete() == ["raw"]
+
+
+def test_build_registry_for_spec_carries_schema():
+    base = ToolRegistry()
+    base.register("db_query", lambda **kw: kw, description="查库", parameters={"properties": {"sql": {"type": "string"}}})
+    reg = build_registry_for_spec(get_agent_spec("data_cleaning"), base)
+    assert reg.schema_of("db_query") is not None
+    assert [t["function"]["name"] for t in reg.describe_openai()] == ["db_query"]
+
+
+def test_default_registry_tools_all_have_schema():
+    reg = build_default_registry(engine=None)
+    assert reg.names()
+    assert reg.schema_incomplete() == [], f"缺 Schema 的工具：{reg.schema_incomplete()}"
+    for tool in reg.describe_openai():
+        fn = tool["function"]
+        assert tool["type"] == "function" and fn["parameters"]["type"] == "object"

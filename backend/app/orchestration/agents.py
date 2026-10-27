@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 from sqlalchemy.engine import Engine
@@ -35,6 +36,45 @@ from .tools_write import make_write_document_tool
 logger = logging.getLogger(__name__)
 
 FALLBACK_AGENT = "general"
+
+# v2.0.0-p1.1：OpenAI function calling 参数 Schema（与工具实现 kwargs 一一对应）。
+# 白名单/描述仍以 agents.yaml 为准，这里只补 tool_calls 模式所需的 JSON Schema。
+_ORDER_FILTER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "column": {"type": "string", "description": "订单表列名"},
+        "op": {"type": "string", "enum": ["eq", "ne", "contains", "gt", "gte", "lt", "lte", "in", "not_in"]},
+        "value": {},
+    },
+    "required": ["column", "op", "value"],
+    "additionalProperties": False,
+}
+_ORDER_OPTIONAL = {
+    "date_from": {"type": "string", "description": "起始日期 YYYY-MM-DD，按下单时间"},
+    "date_to": {"type": "string", "description": "结束日期 YYYY-MM-DD"},
+    "store_name": {"type": "string", "description": "门店名，包含匹配"},
+    "city": {"type": "string", "description": "城市，按门店地址包含匹配"},
+    "order_status": {"type": ["string", "array"], "items": {"type": "string"}, "description": "订单状态，可单个或列表"},
+    "exclude_status": {"type": ["string", "array"], "items": {"type": "string"}, "description": "要排除的订单状态"},
+    "order_channel": {"type": ["string", "array"], "items": {"type": "string"}},
+    "order_type": {"type": ["string", "array"], "items": {"type": "string"}},
+    "fulfillment_type": {"type": ["string", "array"], "items": {"type": "string"}},
+    "member_level": {"type": ["string", "array"], "items": {"type": "string"}},
+    "filters": {"type": "array", "items": _ORDER_FILTER_SCHEMA},
+}
+_METRIC_ENUM = [
+    "count", "sum_pay", "sum_total", "sum_discount", "sum_refund", "avg_pay",
+    "sum_goods", "sum_goods_amount", "sum_delivery_fee", "sum_packing_fee",
+    "sum_coupon", "sum_points",
+]
+_ORDER_METRIC = {
+    "metric": {"type": "string", "enum": _METRIC_ENUM, "description": "聚合指标"},
+    "group_by": {"type": "string", "description": "month、city 或订单表字段"},
+}
+
+
+def _params(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
+    return {"type": "object", "properties": properties, "required": required or [], "additionalProperties": False}
 
 
 @dataclass(frozen=True)
@@ -66,6 +106,10 @@ def build_default_registry(
             "没有专用查询工具时才用。参数 sql：单条 SELECT。必须带 WHERE、GROUP BY 或聚合；"
             "最多返回 50 行，执行超过 3 秒会被数据库打断。禁止写操作。上传的表先 clean_table。"
         ),
+        parameters=_params(
+            {"sql": {"type": "string", "description": "单条只读 SELECT，必须带 WHERE、GROUP BY 或聚合"}},
+            ["sql"],
+        ),
     )
     reg.register(
         "query_orders",
@@ -96,6 +140,15 @@ def build_default_registry(
             "render_chart（x=grp，y=metric_value 或 order_count）/ analyze_table，"
             "绝不调用 clean_table 去读一个不存在的文件。"
         ),
+        parameters=_params(
+            {
+                "order_no": {"type": "string", "description": "按订单号精确查"},
+                **_ORDER_OPTIONAL,
+                **_ORDER_METRIC,
+                "columns": {"type": "array", "items": {"type": "string"}, "description": "可选返回列"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        ),
     )
     reg.register(
         "sales_report",
@@ -110,6 +163,15 @@ def build_default_registry(
             "时间范围、指标、口径、数据来源缺任何一项时 complete 为 false，这时不能说报表已完成。"
             "complete 为 true 时，report 就是报表正文。下一步直接分析并给销售建议，不要再次调用本工具，也不要再读文件。"
             "同比、环比、占比用 compare_orders，不要拿报表数字自己除。"
+        ),
+        parameters=_params(
+            {
+                "date_from": _ORDER_OPTIONAL["date_from"],
+                "date_to": _ORDER_OPTIONAL["date_to"],
+                "metric": _ORDER_METRIC["metric"],
+                **{k: v for k, v in _ORDER_OPTIONAL.items() if k not in ("date_from", "date_to")},
+            },
+            ["date_from", "date_to", "metric"],
         ),
     )
     reg.register(
@@ -127,6 +189,7 @@ def build_default_registry(
             "返回 answer、sources（含 rerank_score 重排分）、grounded（依据是否站住）。"
             "回答必须转述这些字段，不要编造出处。usage 已计入本轮消耗。"
         ),
+        parameters=_params({"query": {"type": "string", "description": "检索问题"}}, ["query"]),
     )
     owner = (username or "").strip().strip("/") or None
     doc_base = str(Path(settings.documents_dir) / owner) if owner else settings.documents_dir
@@ -154,6 +217,10 @@ def build_default_registry(
             base_dir=doc_base, max_chars=settings.doc_read_max_chars, owner=owner
         ),
         description=read_desc,
+        parameters=_params(
+            {"file_name": {"type": "string", "description": "上传目录内的文件名（或 用户名/文件名）"}},
+            ["file_name"],
+        ),
     )
     reg.register(
         "clean_table",
@@ -165,6 +232,14 @@ def build_default_registry(
             "参数 file_name：文件名。key_columns：可选，关键列名；这些列为空的行会从结果剔除并单独计数。"
             "sheet：xlsx 工作表名，不填则用第一张。返回 clean_id，接着交给 analyze_table。"
         ),
+        parameters=_params(
+            {
+                "file_name": {"type": "string", "description": "上传目录内的文件名"},
+                "key_columns": {"type": "array", "items": {"type": "string"}, "description": "关键列，这些列为空的行剔除"},
+                "sheet": {"type": "string", "description": "xlsx 工作表名"},
+            },
+            ["file_name"],
+        ),
     )
     reg.register(
         "analyze_table",
@@ -175,6 +250,26 @@ def build_default_registry(
             "不传 metrics 时只计数。filters：[{column, op, value}]，op 取 eq、ne、contains、gt、gte、lt、lte、in、not_in"
             "（in/not_in 的 value 可传列表，用于从分组结果里挑特定值，如只取 9 月和 10 月）。"
             "sum/mean/min/max 遇到不能转成数字的格子会跳过并计数，不会当成 0。"
+        ),
+        parameters=_params(
+            {
+                "clean_id": {"type": "string", "description": "clean_table 返回的 id"},
+                "group_by": {"type": ["string", "array"], "items": {"type": "string"}},
+                "metrics": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "column": {"type": "string"},
+                            "agg": {"type": "string", "enum": ["count", "sum", "mean", "min", "max", "count_distinct"]},
+                        },
+                        "required": ["column", "agg"],
+                        "additionalProperties": False,
+                    },
+                },
+                "filters": {"type": "array", "items": _ORDER_FILTER_SCHEMA},
+            },
+            ["clean_id"],
         ),
     )
     reg.register(
@@ -198,6 +293,24 @@ def build_default_registry(
             "画图（不必再 clean_table），也可作为交付物告知用户预览/下载。"
             "【要画时间趋势图时，fields 必须包含「下单时间」列，否则画不了按月趋势】。"
         ),
+        parameters=_params(
+            {
+                "date_from": _ORDER_OPTIONAL["date_from"],
+                "date_to": _ORDER_OPTIONAL["date_to"],
+                "city": _ORDER_OPTIONAL["city"],
+                "store_name": _ORDER_OPTIONAL["store_name"],
+                "order_status": _ORDER_OPTIONAL["order_status"],
+                "exclude_status": _ORDER_OPTIONAL["exclude_status"],
+                "order_channel": _ORDER_OPTIONAL["order_channel"],
+                "order_type": _ORDER_OPTIONAL["order_type"],
+                "fulfillment_type": _ORDER_OPTIONAL["fulfillment_type"],
+                "member_level": _ORDER_OPTIONAL["member_level"],
+                "filters": _ORDER_OPTIONAL["filters"],
+                "fields": {"type": "array", "items": {"type": "string"}, "description": "导出列（中文列名或订单表列名）"},
+                "format": {"type": "string", "enum": ["csv", "xlsx"]},
+            },
+            ["date_from", "date_to"],
+        ),
     )
     reg.register(
         "write_document",
@@ -211,6 +324,16 @@ def build_default_registry(
             "clean_id：若结论来自清洗后的表，传入它，文末会写上来源和行数。"
             "image_file：要把图表嵌进文档时，传 render_chart 返回的 png_file（文档内会嵌入该图）。"
             "返回 file_name。失败就说明没生成，不要给一个不存在的下载地址。"
+        ),
+        parameters=_params(
+            {
+                "title": {"type": "string", "description": "文档标题"},
+                "content": {"type": "string", "description": "正文，数字必须来自此前工具结果"},
+                "format": {"type": "string", "enum": ["md", "docx", "pdf", "pptx"]},
+                "clean_id": {"type": "string", "description": "结论来自清洗表时传，用于文末标注来源"},
+                "image_file": {"type": "string", "description": "render_chart 返回的 png_file，嵌入文档"},
+            },
+            ["title", "content", "format"],
         ),
     )
     reg.register(
@@ -230,6 +353,21 @@ def build_default_registry(
             "filters 与 analyze_table 相同。饼图超过 8 类会把其余并成「其他」，且不能有负数。"
             "返回 visual（界面用 ECharts 画）以及 svg/png 文件（供下载和嵌进文档）。"
         ),
+        parameters=_params(
+            {
+                "clean_id": {"type": "string", "description": "clean_id（c- 开头）或 export_id（e- 开头）"},
+                "chart": {"type": "string", "enum": ["bar", "barh", "line", "area", "pie", "scatter", "heatmap", "hist"]},
+                "x": {"type": "string", "description": "分类列"},
+                "y": {"type": ["string", "array"], "items": {"type": "string"}, "description": "数值列，可一个或列表"},
+                "series": {"type": "string", "description": "分组列，与多个 y 互斥"},
+                "agg": {"type": "string", "enum": ["sum", "mean", "count", "min", "max"]},
+                "title": {"type": "string"},
+                "filters": {"type": "array", "items": _ORDER_FILTER_SCHEMA},
+                "top_n": {"type": "integer", "minimum": 1},
+                "bins": {"type": "integer", "minimum": 2},
+            },
+            ["clean_id", "chart", "x"],
+        ),
     )
     reg.register(
         "render_flow",
@@ -241,6 +379,35 @@ def build_default_registry(
             "edges：[{from, to, label}]。path：实走节点 id 列表，按顺序。"
             "判断用 diamond，其余用 rect。没走到的分支不要放进 path，只放在 edges 里。"
         ),
+        parameters=_params(
+            {
+                "title": {"type": "string"},
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "label": {"type": "string"},
+                            "kind": {"type": "string", "enum": ["rect", "diamond"]},
+                            "lane": {"type": "string", "enum": ["blue", "purple", "teal", "amber", "green", "red", "gray"]},
+                        },
+                        "required": ["id", "label", "kind", "lane"],
+                        "additionalProperties": False,
+                    },
+                },
+                "edges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "label": {"type": "string"}},
+                        "required": ["from", "to"],
+                        "additionalProperties": False,
+                    },
+                },
+                "path": {"type": "array", "items": {"type": "string"}},
+            },
+        ),
     )
     reg.register(
         "compare_orders",
@@ -251,6 +418,16 @@ def build_default_registry(
             "mode：mom 环比（紧挨着的上一段等长时间）、yoy 同比（去年同期）、share 占比。"
             "share 必须带 group_by。其余筛选参数与 query_orders 相同。"
             "ratio 为空表示上期为 0，不要自己编一个百分比。"
+        ),
+        parameters=_params(
+            {
+                "date_from": _ORDER_OPTIONAL["date_from"],
+                "date_to": _ORDER_OPTIONAL["date_to"],
+                "metric": _ORDER_METRIC["metric"],
+                "mode": {"type": "string", "enum": ["mom", "yoy", "share"]},
+                **{k: v for k, v in _ORDER_OPTIONAL.items() if k not in ("date_from", "date_to")},
+            },
+            ["date_from", "date_to", "metric", "mode"],
         ),
     )
     # p6.29：显式长期记忆（仅登录用户场景挂载；匿名=无记忆能力，工具不可见）
@@ -269,8 +446,7 @@ def build_registry_for_spec(spec: AgentSpec, base: ToolRegistry) -> ToolRegistry
         if not base.has(name):
             logger.warning("Agent %s 声明了未注册工具 %s（跳过=对该 Agent 能力缺失）", spec.agent_type, name)
             continue
-        desc = next((d["description"] for d in base.describe() if d["name"] == name), "")
-        reg.register(name, base._tools[name], desc)  # noqa: SLF001 - 同包内装配
+        base.copy_into(reg, name)
     return reg
 
 
