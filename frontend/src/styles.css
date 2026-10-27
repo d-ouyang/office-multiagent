@@ -215,6 +215,10 @@ body {
   flex: 1;
   min-width: 0;
 }
+.session-title.is-overflow {
+  mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+}
 .session-title-inner {
   display: inline-flex;
   gap: 2em;
@@ -943,6 +947,10 @@ button.account-link:hover {
   flex-direction: column;
   min-width: 0;
 }
+.chat-column {
+  width: min(1200px, 100%);
+  margin-inline: auto;
+}
 .chat-header {
   display: flex;
   align-items: flex-start;
@@ -950,6 +958,11 @@ button.account-link:hover {
   padding: 12px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--card);
+}
+.chat-header-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
 }
 .chat-header h2 {
   margin: 0;
@@ -1026,6 +1039,9 @@ button.account-link:hover {
   flex: 1;
   overflow-y: auto;
   padding: 20px 24px;
+}
+.message-list {
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   gap: 14px;

@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import AppSidebar, { formatSessionTime, type SessionMeta } from './AppSidebar';
+import AppSidebar, { formatSessionTime, shouldFadeSessionTitle, type SessionMeta } from './AppSidebar';
 import { APP_BLURB, APP_VERSION } from '../version';
 import { act } from 'react';
 
@@ -37,6 +37,14 @@ describe('formatSessionTime（p6.12 显示规则）', () => {
   it('非法时间戳返回空串', () => {
     expect(formatSessionTime(NaN, NOW)).toBe('');
     expect(formatSessionTime(0, NOW)).toBe('');
+  });
+});
+
+describe('会话标题渐隐（v2.0.0-p3.1）', () => {
+  it('仅溢出且未滚动时显示右缘蒙层', () => {
+    expect(shouldFadeSessionTitle(true, false)).toBe(true);
+    expect(shouldFadeSessionTitle(false, false)).toBe(false);
+    expect(shouldFadeSessionTitle(true, true)).toBe(false);
   });
 });
 

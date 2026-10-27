@@ -46,6 +46,10 @@ export function formatSessionTime(ts: number, now: number = Date.now()): string 
 
 const PAGE_SIZE = 10; // p6.12c：分页展开——默认 10 条，每次"查看更多"加载下一条
 
+export function shouldFadeSessionTitle(overflow: boolean, scrolling: boolean): boolean {
+  return overflow && !scrolling;
+}
+
 function SessionTitle({ text, scrolling }: { text: string; scrolling: boolean }) {
   const outer = useRef<HTMLSpanElement>(null);
   const inner = useRef<HTMLSpanElement>(null);
@@ -58,7 +62,7 @@ function SessionTitle({ text, scrolling }: { text: string; scrolling: boolean })
   }, [text, scrolling]);
   const run = scrolling && overflow;
   return (
-    <span className="session-title" ref={outer}>
+    <span className={`session-title${shouldFadeSessionTitle(overflow, run) ? ' is-overflow' : ''}`} ref={outer}>
       <span className={`session-title-inner ${run ? 'marquee' : ''}`}>
         <span ref={inner}>{text}</span>
         {run && <span aria-hidden="true">{text}</span>}

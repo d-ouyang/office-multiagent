@@ -519,17 +519,20 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
       />
       <main className="chat-main">
         <header className="chat-header">
-          <h2>{sessions.find((s) => s.id === currentId)?.title ?? '新会话'}</h2>
-          <div className="header-side">
-            {currentAgent && (
-              <span className="agent-now">
-                当前回答：<span className="badge agent">{agentLabel(currentAgent.agent)}</span>
-              </span>
-            )}
-            <ContextRing usage={contextUsage} windowSize={modelWindow} />
+          <div className="chat-column chat-header-content">
+            <h2>{sessions.find((s) => s.id === currentId)?.title ?? '新会话'}</h2>
+            <div className="header-side">
+              {currentAgent && (
+                <span className="agent-now">
+                  当前回答：<span className="badge agent">{agentLabel(currentAgent.agent)}</span>
+                </span>
+              )}
+              <ContextRing usage={contextUsage} windowSize={modelWindow} />
+            </div>
           </div>
         </header>
         <div className="message-scroll" ref={scrollRef}>
+          <div className="chat-column message-list">
           {liveMessages.length === 0 && !loadingSession && (
             <div className="welcome">
               <h3>有什么可以帮你？</h3>
@@ -560,6 +563,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
               onPreview={setPreviewPath}
             />
           ))}
+          </div>
         </div>
         {uploadError && <div className="banner warn">{uploadError}</div>}
         {error && <div className="banner err">{error}</div>}
@@ -591,6 +595,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
             if (e.dataTransfer.files?.length) void onDropFiles(e.dataTransfer.files);
           }}
         >
+          <div className="chat-column composer-inner">
           <PromptBar
             placeholder="输入任务，回车发送…（可拖拽文件上传）"
             sources={SOURCES}
@@ -629,6 +634,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
               fileWait.current?.(file);
             }}
           />
+          </div>
         </div>
         {previewPath && <FilePreview path={previewPath} onClose={() => setPreviewPath(null)} />}
       </main>
