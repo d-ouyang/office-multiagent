@@ -1,0 +1,38 @@
+[
+  {
+    "id": "single_tool",
+    "title": "合法单工具调用",
+    "response": {"tool_calls": [{"id": "call_1", "function": {"name": "query_orders", "arguments": "{\"metric\":\"sum_pay\"}"}}]},
+    "expected_events": ["tool_call_start", "tool_call_end", "observation", "done"]
+  },
+  {
+    "id": "multiple_tools",
+    "title": "一轮多个工具调用",
+    "response": {"tool_calls": [{"id": "call_1", "function": {"name": "query_orders", "arguments": "{}"}}, {"id": "call_2", "function": {"name": "render_chart", "arguments": "{}"}}]},
+    "expected_events": ["tool_call_start", "tool_call_end", "observation", "tool_call_start", "tool_call_end", "observation", "done"]
+  },
+  {
+    "id": "missing_arguments",
+    "title": "缺参数",
+    "response": {"tool_calls": [{"id": "call_1", "function": {"name": "query_orders", "arguments": "{}"}}]},
+    "expected_events": ["tool_call_start", "tool_call_end", "observation", "done"]
+  },
+  {
+    "id": "unknown_tool",
+    "title": "未知工具 CAPABILITY_MISSING",
+    "response": {"tool_calls": [{"id": "call_1", "function": {"name": "not_registered", "arguments": "{}"}}]},
+    "expected_events": ["tool_call_start", "tool_call_end", "observation", "done"]
+  },
+  {
+    "id": "final_only",
+    "title": "纯终答",
+    "response": {"content": "已完成。"},
+    "expected_events": ["content_delta", "done"]
+  },
+  {
+    "id": "stream_final",
+    "title": "流式终答",
+    "response": {"content_chunks": ["已", "完成。"]},
+    "expected_events": ["content_delta", "content_delta", "done"]
+  }
+]

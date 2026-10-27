@@ -28,6 +28,7 @@ _EDITABLE_FIELDS = (
     "context_window",
     "max_output",
     "supports_reasoning",
+    "supports_tools",
     "reasoning_efforts",
     "pool_ids",
     "cost_per_1k",
@@ -46,6 +47,8 @@ class ModelEntry(BaseModel):
     context_window: int = 0
     max_output: int = 0
     supports_reasoning: bool = False
+    # 三态：None=未点测（auto 必须回退 json）；只有逐模型真点测通过才置 True。
+    supports_tools: bool | None = None
     # 该模型真正生效的 reasoning_effort，从低到高。空列表表示不要下发该参数。
     # 界面固定三档 low/high/max，少于三档时由 map_reasoning_effort 把较低档合并。
     reasoning_efforts: list[str] = Field(default_factory=list)
