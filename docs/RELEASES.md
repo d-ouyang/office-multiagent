@@ -5,6 +5,19 @@
 
 ---
 
+## v2.0.0-p1.3 ~ p1.6 — brain 双协议 + react 执行环 + 协议开关 + E2E 对照（2026-10-27）
+
+**类型**：2.0.0 改造（M2 收口）
+
+- **p1.3 brain 双协议**：`tool_calls` 路径——历史改 `assistant(tool_calls) → tool(tool_call_id)`（观察只走 tool 角色，无历史双写），system 移除强迫 JSON 的段落（Prompt 债务红线）；json 路径逐字节不变。
+- **p1.4 react 执行环**：一轮多 tool_calls 串行展开为动作单元，每个 call 独立 start/end/observation（tool_id 用原生 call id）；`parse_error` 不真执行、回工具错误观察；未知工具走 CAPABILITY_MISSING 可收敛；护栏（去重/无效连击/步数/取消）按单元粒度生效。
+- **p1.5 协议开关**：`react_protocol: json | tool_calls | auto`，**缺省 json（上线行为不变）**；不支持模型或 Schema 不齐一律回落 json 并告警，禁止硬开。
+- **p1.6 对照收口**：同任务双协议 E2E 同形事件对照通过；P1 验收 7 条中 6 条落✅、1 条待线上灰度实测。全量 pytest 423 passed / 3 skipped。
+
+详见 `docs/iterations/v2.0.0-p1.3-*.md` ~ `v2.0.0-p1.6-*.md`。
+
+---
+
 ## v2.0.0-p1.2 — llm.py 原生 tool_calls 协议面（2026-10-27）
 
 **类型**：2.0.0 改造（协议面）

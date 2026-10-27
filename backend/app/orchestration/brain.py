@@ -35,6 +35,44 @@ logger = logging.getLogger(__name__)
 def looks_like_json(text: str) -> bool:
     return (text or "").lstrip().startswith("{")
 
+
+def resolve_react_protocol(mode: str | None, model_id: str, tools: ToolRegistry) -> str:
+    """v2.0.0-p1.5：解析 ReAct 协议（json | tool_calls）。
+
+    - json：现状文本协议（fail-closed 缺省）。
+    - tool_calls：强制走原生协议；模型不支持 → 告警回落 json（禁止硬开）。
+    - auto：模型 supports_tools 且本轮工具全有 Schema 且工具非空 → tool_calls，否则 json。
+    """
+    mode = (mode or settings.react_protocol or "json").strip().lower()
+    if mode not in ("json", "tool_calls", "auto"):
+        logger.warning("react_protocol 配置非法：%r，回落 json", mode)
+        return "json"
+    if mode == "json":
+        return "json"
+
+    entry = None
+    try:
+        from ..core.model_registry import load_registry
+
+        entry = next((m for m in load_registry()["models"] if m.id == model_id), None)
+    except Exception:  # noqa: BLE001 - 注册表读不到按不支持处理
+        entry = None
+    supported = bool(entry and entry.supports_tools)
+    schema_ready = bool(tools.names()) and not tools.schema_incomplete()
+    if mode == "tool_calls":
+        if not supported:
+            logger.warning("模型 %s 未点测支持 tools（supports_tools=%s），tool_calls 回落 json", model_id, getattr(entry, "supports_tools", None))
+            return "json"
+        if not schema_ready:
+            # 显式模式同样不开：无 Schema 工具会被 describe_openai 排除，硬开会静默退化
+            logger.warning("工具 Schema 不完整（%s），tool_calls 回落 json", tools.schema_incomplete())
+            return "json"
+        return "tool_calls"
+    # auto
+    if supported and schema_ready:
+        return "tool_calls"
+    return "json"
+
 #: ReAct 输出协议（§四.4）——**统一在这里保证**，不写进各 Agent 的角色提示词（避免漂移）。
 #: p6.3 流式：完成态改为"直接写自然语言终答"（不包 JSON），使 LLM 输出可逐字流式转发。
 #: p6.7：显式禁止 action=none/无效名（真跑见证 LLM 幻觉 "none" 导致空转终止）。
@@ -54,6 +92,17 @@ _PROTOCOL_TMPL = """你的每一步【只能二选一输出】：
   · 数据确实缺失时，说明缺什么并停止。不要自己发明新的取数流程，也不要反复重试同一个工具。
   · 尽快给出最终回答，通常不超过 {max_steps} 步。
   · 绝不允许出现 "action": "none" / "action": null——想结束就按 B 直接写答案。
+"""
+
+#: v2.0.0-p1.3：tool_calls 模式的 system 提示词——**不包含** JSON 输出格式要求
+#:（Prompt 债务红线：双协议并存时强迫 JSON 的段落必须收窄，否则模型双重格式）。
+_TOOLCALLS_TMPL = """你可以通过 function calling 调用上面传入的工具；需要数据时调用工具，任务完成或无法完成时直接写面向用户的最终回答（自然语言，中文）。
+
+纪律：
+  · 工具不存在/调用失败/观察结果为空时，在最终回答里【如实说明】，绝不编造数据或结论。
+  · 观察里已经有报表、数字或正文时，下一步直接写分析和建议，不要用相同参数再调同一个工具。
+  · 数据确实缺失时，说明缺什么并停止。不要自己发明新的取数流程，也不要反复重试同一个工具。
+  · 尽快给出最终回答，通常不超过 {max_steps} 步。
 """
 
 
@@ -132,6 +181,7 @@ class LlmBrain:
         on_thought: Callable[[str], None] | None = None,
         reasoning_effort: str | None = None,
         token_budget: TaskTokenBudget | None = None,
+        protocol: str | None = None,
     ) -> None:
         self.model_id = model_id
         self._tools = tools
@@ -145,6 +195,8 @@ class LlmBrain:
         self._on_thought = on_thought
         self._effort = reasoning_effort or None
         self._token_budget = token_budget
+        # v2.0.0-p1.3：协议解析一次定终身（构造时按 model+工具集判定，运行期不变）。
+        self.protocol = resolve_react_protocol(protocol, model_id, tools)
         self.usage: dict[str, int] = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -185,6 +237,8 @@ class LlmBrain:
         return "\n".join(lines)
 
     def next_step(self, task: str, history: list[Step]) -> Step:  # noqa: D102 - 见类注释
+        if self.protocol == "tool_calls":
+            return self._next_step_tool_calls(task, history)
         messages = [
             {"role": "system", "content": self._system_prompt()},
             {
@@ -288,6 +342,111 @@ class LlmBrain:
             )
         return self._step_from_json(data, thought_streamed=thought_streamed)
 
+    # ------------------------------------------------------------------ #
+    # v2.0.0-p1.3：原生 tool_calls 协议路径
+    # ------------------------------------------------------------------ #
+    def _toolcalls_system_prompt(self) -> str:
+        role = self._custom_system or "你是企业办公助手系统中一个业务 Agent。"
+        return f"{role}\n\n{_TOOLCALLS_TMPL.format(max_steps=self._max_steps_hint)}"
+
+    @staticmethod
+    def _messages_for_tool_calls(task: str, history: list[Step]) -> list[dict[str, Any]]:
+        """历史消息形态：assistant(tool_calls) → tool(tool_call_id)。
+
+        红线（历史双写禁忌）：tool_calls 路径绝不把观察拼进 user 文本——观察只走
+        role=tool 消息；同一轮也不存在两种历史形态。
+        """
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": ""},
+            {"role": "user", "content": f"任务：{task}"},
+        ]
+        for i, st in enumerate(history, 1):
+            if st.action is None or st.observation is None:
+                continue  # 终答步不会出现在续跑历史里；防御性跳过
+            call_id = st.call_id or f"call_{i}"
+            messages.append({
+                "role": "assistant",
+                "content": st.thought or "",
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": st.action,
+                        "arguments": json.dumps(st.action_input, ensure_ascii=False, default=str),
+                    },
+                }],
+            })
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": (st.observation or "")[:24000],
+            })
+        return messages
+
+    def _step_from_tool_calls(self, res: LlmResult, *, streamed: bool) -> Step:
+        calls = [
+            {
+                "id": c.id,
+                "name": c.name,
+                "arguments": c.arguments,
+                "parse_error": c.parse_error,
+            }
+            for c in res.tool_calls
+        ]
+        return Step(thought=res.content or "", calls=calls, streamed=streamed)
+
+    def _next_step_tool_calls(self, task: str, history: list[Step]) -> Step:
+        messages = self._messages_for_tool_calls(task, history)
+        messages[0]["content"] = self._toolcalls_system_prompt()
+        tools_api = self._tools.describe_openai()
+        reservation = (
+            self._token_budget.reserve_call(messages)
+            if self._token_budget is not None
+            else None
+        )
+        try:
+            kwargs: dict[str, Any] = {
+                "timeout": self._timeout,
+                "reasoning_effort": self._effort,
+                "tools": tools_api,
+            }
+            if reservation is not None:
+                kwargs["max_tokens"] = reservation.max_output_tokens
+            if self._stream:
+                thought_parts: list[str] = []
+
+                def _on_chunk(piece: str) -> None:
+                    thought_parts.append(piece)
+                    # tool_calls 路径：正文先按"可能是终答"逐字推（真打字机）。
+                    # 若流末发现模型其实带了 tool_calls，已推片段归为思考（厂商惯例
+                    # 工具轮 content 为空；见迭代文档已知限制）。
+                    if self._on_content is not None:
+                        self._on_content(piece)
+
+                kwargs.update({
+                    "on_chunk": _on_chunk,
+                    "on_thought": self._on_thought,
+                    "on_tool_call": lambda _call: None,
+                })
+                res = self._chat_stream(self.model_id, messages, **kwargs)
+            else:
+                res = self._chat(self.model_id, messages, **kwargs)
+        except Exception as e:
+            if reservation is not None:
+                reservation.cancel()
+            if not isinstance(e, LlmError):
+                raise
+            logger.warning("LLM brain（%s 协议）调用失败，如实给阶段结论 | %s", self.protocol, e)
+            return Step(thought="模型调用失败", final=f"模型暂不可用，无法继续完成该任务：{e}")
+        if reservation is not None:
+            reservation.complete(res.total_tokens)
+        self._accumulate(res)
+
+        if res.tool_calls:
+            return self._step_from_tool_calls(res, streamed=self._stream)
+        # 无 tool_calls = 自然语言终答（流式已逐字推过；非流式整段交 run_react 推）
+        return Step(thought="", final=res.content, streamed=self._stream)
+
     @staticmethod
     def _step_from_json(data: dict[str, Any], *, thought_streamed: bool) -> Step:
         thought = "" if thought_streamed else str(data.get("thought", ""))
@@ -319,8 +478,13 @@ def make_brain(
     on_thought: Callable[[str], None] | None = None,
     reasoning_effort: str | None = None,
     token_budget: TaskTokenBudget | None = None,
+    protocol: str | None = None,
 ) -> Brain:
-    """配置驱动的 Brain 工厂：模型+密钥就绪 → LlmBrain；否则回落 StubBrain（可测基线）。"""
+    """配置驱动的 Brain 工厂：模型+密钥就绪 → LlmBrain；否则回落 StubBrain（可测基线）。
+
+    v2.0.0-p1.5：protocol 缺省读 settings.react_protocol（json | tool_calls | auto）；
+    auto 按 models.yaml supports_tools + 工具 Schema 完整性自动判定。
+    """
     mid = model_id or settings.llm_brain_model
     try:
         resolve_model(mid)
@@ -338,4 +502,5 @@ def make_brain(
         on_thought=on_thought,
         reasoning_effort=reasoning_effort,
         token_budget=token_budget,
+        protocol=protocol,
     )

@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     # Brain 用的对话大模型 id（config/models.yaml 注册表里的 id）
     llm_brain_model: str = "deepseek-chat"
     llm_timeout: float = 120.0
+    # v2.0.0-p1.5：ReAct 协议开关灰度。json=文本协议（现状）；tool_calls=OpenAI 原生
+    # function calling（模型不支持时自动回落 json 并告警，禁止硬开）；auto=按模型
+    # supports_tools + 本轮工具 Schema 完整性自动选。缺省 json=fail-closed。
+    react_protocol: str = "json"
     # RAG 检索工具（外部工具：走 RAG 后端内部接口，带网关证明；rag p4.11 认 office 域密钥）
     rag_base_url: str = "http://127.0.0.1:8000"
     rag_internal_secret: str = ""       # 须与 RAG 后端 OFFICE_GATEWAY_SHARED_SECRET 同值

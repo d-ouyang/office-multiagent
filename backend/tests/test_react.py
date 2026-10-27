@@ -208,3 +208,112 @@ def test_chunked_final_emits_multiple_deltas():
     deltas = [e for e in events if e.type.value == "content_delta"]
     assert len(deltas) == 2  # 10 字按 5 字/块 → 2 块（打字机）
     assert "".join(d.data["delta"] for d in deltas) == "一二三四五六七八九十"
+
+
+# ---------- v2.0.0-p1.4：原生 tool_calls 执行环 ----------
+
+def test_multiple_tool_calls_execute_serially_with_ids():
+    class MultiCallBrain:
+        def __init__(self):
+            self.done = False
+
+        def next_step(self, task, history):
+            if self.done:
+                return Step(final="两个都执行完了")
+            self.done = True
+            return Step(
+                thought="并行查两处",
+                calls=[
+                    {"id": "call_a", "name": "echo", "arguments": {"x": "1"}},
+                    {"id": "call_b", "name": "echo", "arguments": {"x": "2"}},
+                ],
+            )
+
+    reg = ToolRegistry()
+    reg.register("echo", lambda x: f"echo:{x}")
+    em = RunEventEmitter("r", "t")
+    events: list = []
+    res = run_react("任务", MultiCallBrain(), reg, emitter=em, emit=events.append)
+    assert res.final == "两个都执行完了"
+    # 每个 call 独立 start/end/observation，tool_id 用原生 call id
+    starts = [e for e in events if e.type == EventType.TOOL_CALL_START]
+    ends = [e for e in events if e.type == EventType.TOOL_CALL_END]
+    assert [(e.data["tool_id"], e.data["name"]) for e in starts] == [("call_a", "echo"), ("call_b", "echo")]
+    assert [e.data["tool_id"] for e in ends] == ["call_a", "call_b"]
+    # 历史 = 每个 call 一条 Step（供 brain 重建 assistant(tool_calls)→tool 消息）
+    tool_steps = [s for s in res.steps if s.action]
+    assert [s.call_id for s in tool_steps] == ["call_a", "call_b"]
+    assert tool_steps[0].observation == "echo:1" and tool_steps[1].observation == "echo:2"
+
+
+def test_parse_error_call_is_not_executed():
+    executed: list[str] = []
+
+    reg = ToolRegistry()
+    reg.register("db_query", lambda sql: executed.append(sql) or {}, description="查库")
+
+    class BadArgsBrain:
+        def __init__(self):
+            self.done = False
+
+        def next_step(self, task, history):
+            if self.done:
+                return Step(final="如实收尾")
+            self.done = True
+            return Step(calls=[{"id": "c1", "name": "db_query", "arguments": {}, "parse_error": "arguments JSON 解析失败：EOF"}])
+
+    em = RunEventEmitter("r", "t")
+    events: list = []
+    res = run_react("任务", BadArgsBrain(), reg, emitter=em, emit=events.append)
+    assert executed == []  # 坏参数绝不真执行
+    assert res.final == "如实收尾"
+    failed_end = [e for e in events if e.type == EventType.TOOL_CALL_END and not e.data["success"]]
+    assert failed_end and "解析失败" in failed_end[0].data["error"]
+    assert any("解析失败" in (s.observation or "") for s in res.steps)
+
+
+def test_unknown_tool_call_yields_capability_missing_observation():
+    class UnknownBrain:
+        def __init__(self):
+            self.done = False
+
+        def next_step(self, task, history):
+            if self.done:
+                return Step(final="已说明工具缺失")
+            self.done = True
+            return Step(calls=[{"id": "c1", "name": "not_registered", "arguments": {}}])
+
+    res = run_react("任务", UnknownBrain(), ToolRegistry())
+    assert any("CAPABILITY_MISSING" in (s.observation or "") for s in res.steps)
+    assert res.final == "已说明工具缺失"  # 任务不崩、可收敛
+
+
+def test_tool_calls_step_usages_label_counts_calls():
+    class MultiBrain:
+        def __init__(self):
+            self.n = 0
+
+        def next_step(self, task, history):
+            self.n += 1
+            if self.n > 1:
+                return Step(final="done")
+            return Step(calls=[{"id": "a", "name": "echo", "arguments": {}}, {"id": "b", "name": "echo", "arguments": {}}])
+
+    reg = ToolRegistry()
+    reg.register("echo", lambda: "obs")
+
+    class UsageBrain(MultiBrain):
+        pass
+
+    brain = UsageBrain()
+    brain.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
+
+    real_next = brain.next_step
+
+    def counting_next(task, history):
+        brain.usage["total_tokens"] += 7
+        return real_next(task, history)
+
+    brain.next_step = counting_next  # type: ignore[method-assign]
+    res = run_react("t", brain, reg)
+    assert any("调用 2 个工具" in s["label"] for s in res.steps_usage)

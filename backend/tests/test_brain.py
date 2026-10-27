@@ -53,8 +53,10 @@ class FakeChat:
 
 def _registry() -> ToolRegistry:
     reg = ToolRegistry()
-    reg.register("db_query", lambda sql: {}, description="查询业务库")
-    reg.register("rag_retrieve", lambda query: {}, description="检索知识库")
+    reg.register("db_query", lambda sql: {}, description="查询业务库",
+                 parameters={"properties": {"sql": {"type": "string"}}})
+    reg.register("rag_retrieve", lambda query: {}, description="检索知识库",
+                 parameters={"properties": {"query": {"type": "string"}}})
     return reg
 
 
@@ -205,3 +207,119 @@ def test_stream_usage_accumulates():
     brain = _stream_brain(chat)
     brain.next_step("任务", [])
     assert brain.usage["total_tokens"] == 15
+
+
+# ---------- v2.0.0-p1.3：原生 tool_calls 双协议 ----------
+
+from app.core.llm import ToolCall
+
+
+class ToolCallsChat:
+    """tool_calls 协议假 LLM：按脚本返回带/不带 tool_calls 的结果，并记录请求。"""
+
+    def __init__(self, script: list[LlmResult]):
+        self.script = list(script)
+        self.calls: list[dict] = []
+
+    def __call__(self, model_id: str, messages: list[dict], **kw) -> LlmResult:
+        self.calls.append({"messages": messages, "kw": kw})
+        return self.script.pop(0)
+
+    def stream(self, model_id: str, messages: list[dict], **kw) -> LlmResult:  # pragma: no cover
+        return self(model_id, messages, **kw)
+
+
+def _call_result(calls: list[ToolCall], content: str = "") -> LlmResult:
+    return LlmResult(content=content, prompt_tokens=10, completion_tokens=5, total_tokens=15, model="m", tool_calls=calls)
+
+
+def test_tool_calls_brain_returns_structured_calls():
+    chat = ToolCallsChat([
+        _call_result([ToolCall(id="call_1", name="db_query", arguments={"sql": "SELECT 1"})], content="先查库"),
+    ])
+    brain = LlmBrain(model_id="deepseek-chat", tools=_registry(), chat_fn=chat, protocol="tool_calls")
+    step = brain.next_step("任务", [])
+    assert step.calls[0]["name"] == "db_query"
+    assert step.calls[0]["arguments"] == {"sql": "SELECT 1"}
+    assert step.calls[0]["id"] == "call_1"
+    assert step.thought == "先查库"
+    # 请求带 tools（OpenAI 格式），且 system 不再要求输出 JSON（Prompt 债务红线）
+    assert chat.calls[0]["kw"]["tools"][0]["function"]["name"] == "db_query"
+    assert "只能二选一输出" not in chat.calls[0]["messages"][0]["content"]
+
+
+def test_tool_calls_brain_history_uses_tool_role_not_user_text():
+    chat = ToolCallsChat([
+        _call_result([], content="完成"),
+    ])
+    brain = LlmBrain(model_id="deepseek-chat", tools=_registry(), chat_fn=chat, protocol="tool_calls")
+    history = [
+        Step(thought="查库", action="db_query", action_input={"sql": "SELECT 1"},
+             observation="rows=1", call_id="call_9"),
+    ]
+    brain.next_step("任务", history)
+    msgs = chat.calls[0]["messages"]
+    roles = [m["role"] for m in msgs]
+    assert "tool" in roles
+    assistant = next(m for m in msgs if m["role"] == "assistant")
+    tool = next(m for m in msgs if m["role"] == "tool")
+    assert assistant["tool_calls"][0]["id"] == "call_9"
+    assert tool["tool_call_id"] == "call_9"
+    assert tool["content"] == "rows=1"
+    # 历史双写禁忌：观察只走 tool 角色，不拼进 user 文本
+    user = next(m for m in msgs if m["role"] == "user")
+    assert "rows=1" not in user["content"]
+
+
+def test_tool_calls_brain_synthesizes_ids_for_json_history():
+    chat = ToolCallsChat([_call_result([], content="done")])
+    brain = LlmBrain(model_id="deepseek-chat", tools=_registry(), chat_fn=chat, protocol="tool_calls")
+    history = [Step(action="db_query", action_input={"sql": "x"}, observation="ok")]
+    brain.next_step("任务", history)
+    assistant = next(m for m in chat.calls[0]["messages"] if m["role"] == "assistant")
+    tool = next(m for m in chat.calls[0]["messages"] if m["role"] == "tool")
+    assert assistant["tool_calls"][0]["id"] == tool["tool_call_id"] == "call_1"
+
+
+def test_tool_calls_brain_final_when_no_calls():
+    chat = ToolCallsChat([LlmResult(content="答案是 5 天", model="m")])
+    brain = LlmBrain(model_id="deepseek-chat", tools=_registry(), chat_fn=chat, protocol="tool_calls")
+    step = brain.next_step("任务", [])
+    assert step.final == "答案是 5 天"
+    assert step.calls == []
+
+
+def test_tool_calls_brain_bad_arguments_kept_with_parse_error():
+    chat = ToolCallsChat([
+        _call_result([ToolCall(id="c1", name="db_query", arguments={}, parse_error="arguments JSON 解析失败：EOF")]),
+    ])
+    brain = LlmBrain(model_id="deepseek-chat", tools=_registry(), chat_fn=chat, protocol="tool_calls")
+    step = brain.next_step("任务", [])
+    assert step.calls[0]["parse_error"] and "解析失败" in step.calls[0]["parse_error"]
+
+
+def test_resolve_react_protocol_matrix(monkeypatch):
+    from app.orchestration.brain import resolve_react_protocol
+
+    reg_full = _registry()
+    monkeypatch.setattr(settings, "react_protocol", "json")
+    assert resolve_react_protocol(None, "deepseek-chat", reg_full) == "json"
+
+    # auto：已点测支持且 Schema 齐全 → tool_calls
+    monkeypatch.setattr(settings, "react_protocol", "auto")
+    assert resolve_react_protocol(None, "deepseek-chat", reg_full) == "tool_calls"
+    # auto：缺 Schema 工具 → json
+    reg_raw = ToolRegistry()
+    reg_raw.register("raw", lambda **kw: kw)
+    assert resolve_react_protocol(None, "deepseek-chat", reg_raw) == "json"
+    # auto：不支持 tools 的模型 → json
+    assert resolve_react_protocol(None, "decision-llm", reg_full) == "json"
+    # 显式 tool_calls + 不支持模型 → 回落 json（禁止硬开），且 warning 不抛
+    monkeypatch.setattr(settings, "react_protocol", "tool_calls")
+    assert resolve_react_protocol(None, "decision-llm", reg_full) == "json"
+    # 显式 tool_calls + 支持模型 → tool_calls
+    assert resolve_react_protocol(None, "deepseek-chat", reg_full) == "tool_calls"
+    # 显式 tool_calls 但 Schema 不完整 → 回落 json（describe_openai 会排除缺 Schema 工具，硬开=静默退化）
+    assert resolve_react_protocol(None, "deepseek-chat", reg_raw) == "json"
+    # 非法配置回落 json
+    assert resolve_react_protocol("bogus", "deepseek-chat", reg_full) == "json"

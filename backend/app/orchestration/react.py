@@ -39,6 +39,11 @@ class Step:
     streamed: bool = False          # p6.3：终答已由 brain 逐字推过（run_react 不重复整段发）
     invalid_action: bool = False    # p6.7：action 是无效工具名（LLM 幻觉，如 "none"）
     chunked: bool = False           # p6.7：终答需由 run_react 切片推（JSON 包装的 final）
+    # v2.0.0-p1.4：原生 tool_calls 扩展。calls 非空 = 本轮模型要求调用多个工具，
+    # run_react 串行展开成多个"动作单元"逐步执行（与 DAG 线程池并行是两层事）。
+    calls: list[dict[str, Any]] = field(default_factory=list)
+    call_id: str | None = None      # 单个 call 的原生 id（历史回填 tool_call_id 用）
+    parse_error: str | None = None  # p1.2 落下的 arguments 解析错误（该 call 不真执行）
 
 
 def _summarize_observation(obs: Any, *, max_chars: int = 24000) -> str:
@@ -183,10 +188,13 @@ def run_react(
         # p6.45：逐步用量采样——brain.usage 每次调用后累计，差值即本步 LLM 消耗
         step_delta = int(getattr(brain, "usage", {}).get("total_tokens", 0) or 0) - tokens_before
         if step_delta > 0:
-            steps_usage.append({
-                "label": f"第{i}步·{'生成终答' if step.final is not None else f'调用 {step.action}'}",
-                "tokens": step_delta,
-            })
+            if step.final is not None:
+                label = "生成终答"
+            elif getattr(step, "calls", None):
+                label = f"调用 {len(step.calls)} 个工具"
+            else:
+                label = f"调用 {step.action}"
+            steps_usage.append({"label": f"第{i}步·{label}", "tokens": step_delta})
 
         if emitter is not None and step.thought:
             _emit(emitter.thinking_delta(step.thought))
@@ -205,97 +213,129 @@ def run_react(
             history.append(step)
             return AgentResult(final=step.final, steps=history, iterations=i, assets=assets, external_tokens=external_tokens, steps_usage=steps_usage)
 
-        # Action → 工具调用 → Observation
-        name = step.action or ""
-        if getattr(step, "invalid_action", False):
-            # p6.7：LLM 幻觉出无效工具名（如 "none"）——不真调工具，给纠错观察；
-            # 连续 2 次无效 → 强制如实收尾（过程透明，不空转）。
-            invalid_streak += 1
-            hint = f"无效工具名 {name!r}；可用工具：{list(tools.names())}。任务已完成时请直接写自然语言终答。"
+        # v2.0.0-p1.4：tool_calls 多 call → 串行展开为动作单元；json 路径 = 单元即本步。
+        # （先串行执行降风险：与 DAG 线程池并行是两层事，勿混配额/取消语义。）
+        if getattr(step, "calls", None):
+            units: list[Step] = []
+            for idx, call in enumerate(step.calls):
+                units.append(
+                    Step(
+                        thought=step.thought if idx == 0 else "",
+                        action=str(call.get("name") or ""),
+                        action_input=call.get("arguments") or {},
+                        call_id=str(call.get("id") or "") or None,
+                        parse_error=call.get("parse_error"),
+                    )
+                )
+        else:
+            units = [step]
+
+        for unit in units:
+            name = unit.action or ""
+            tool_id = unit.call_id or name  # tool_calls 路径用原生 id；json 路径保持 name
+
+            if unit.parse_error:
+                # p1.2/p1.4 红线：arguments 解析失败不抛崩整图——回工具错误观察，该 call 不真执行
+                obs_text = f"工具参数解析失败：{unit.parse_error}（本次未执行）。请修正参数后重试，或直接写最终回答。"
+                if emitter is not None:
+                    _emit(emitter.tool_call_start(tool_id, name, unit.action_input))
+                    _emit(emitter.observation(tool_id, obs_text))
+                    _emit(emitter.tool_call_end(tool_id, name, success=False, error=unit.parse_error))
+                unit.observation = obs_text[:500]
+                history.append(unit)
+                continue
+
+            if getattr(unit, "invalid_action", False):
+                # p6.7：LLM 幻觉出无效工具名（如 "none"）——不真调工具，给纠错观察；
+                # 连续 2 次无效 → 强制如实收尾（过程透明，不空转）。
+                invalid_streak += 1
+                hint = f"无效工具名 {name!r}；可用工具：{list(tools.names())}。任务已完成时请直接写自然语言终答。"
+                if emitter is not None:
+                    _emit(emitter.observation(name, hint))
+                unit.observation = hint
+                history.append(unit)
+                if invalid_streak >= 2:
+                    done_steps = [s for s in history if s.observation]
+                    cap = (
+                        f"模型连续给出无效工具名，已强制停止。已完成：{len(done_steps)} 步"
+                        f"（如 " + "、".join(s.action or "?" for s in done_steps[-3:]) + "）。"
+                        "请检查可用工具列表后重试，或换一种问法。"
+                    )
+                    cap = _cap_final("模型连续给出无效工具名", cap)
+                    if emitter is not None:
+                        _emit(emitter.content_delta(cap))
+                    return AgentResult(final=cap, steps=history, iterations=i, hit_cap=True, assets=assets, external_tokens=external_tokens, steps_usage=steps_usage)
+                continue
+
+            prior = [s for s in history if _same_call(s, name, unit.action_input)]
+            if prior:
+                previous = prior[-1].observation or ""
+                unit.observation = (
+                    "相同参数已经调用过，请直接基于已有观察写最终回答，不要再次调用。"
+                    f"上次观察：{previous[:4000]}"
+                )
+                history.append(unit)
+                if len(prior) >= 2:
+                    final = "已有工具结果，停止重复调用。请根据下面的观察作答，不要编造。\n" + previous[:4000]
+                    final = _cap_final("模型对同一工具重复调用相同参数", final)
+                    if emitter is not None:
+                        _emit(emitter.content_delta(final))
+                    return AgentResult(final=final, steps=history, iterations=i, hit_cap=True, assets=assets, external_tokens=external_tokens, steps_usage=steps_usage)
+                continue
+
             if emitter is not None:
-                _emit(emitter.observation(name, hint))
-            step.observation = hint
-            history.append(step)
-            if invalid_streak >= 2:
-                done_steps = [s for s in history if s.observation]
-                cap = (
-                    f"模型连续给出无效工具名，已强制停止。已完成：{len(done_steps)} 步"
-                    f"（如 " + "、".join(s.action or "?" for s in done_steps[-3:]) + "）。"
-                    "请检查可用工具列表后重试，或换一种问法。"
+                _emit(emitter.tool_call_start(tool_id, name, unit.action_input))
+            res: ToolResult = tools.call(name, **unit.action_input)
+            obs = res.output if res.ok else (res.error or "工具调用失败")
+            if emitter is not None and res.ok and isinstance(res.output, dict) and res.output.get("file_name"):
+                _emit(
+                    emitter.artifact(
+                        str(res.output.get("doc_id") or res.output.get("export_id") or name),
+                        str(res.output.get("format") or "file"),
+                        str(res.output["file_name"]),
+                        str(res.output.get("display_name") or res.output["file_name"]),
+                    )
                 )
-                cap = _cap_final("模型连续给出无效工具名", cap)
-                if emitter is not None:
-                    _emit(emitter.content_delta(cap))
-                return AgentResult(final=cap, steps=history, iterations=i, hit_cap=True, assets=assets, external_tokens=external_tokens, steps_usage=steps_usage)
-            continue
-        prior = [s for s in history if _same_call(s, name, step.action_input)]
-        if prior:
-            previous = prior[-1].observation or ""
-            step.observation = (
-                "相同参数已经调用过，请直接基于已有观察写最终回答，不要再次调用。"
-                f"上次观察：{previous[:4000]}"
-            )
-            history.append(step)
-            if len(prior) >= 2:
-                final = "已有工具结果，停止重复调用。请根据下面的观察作答，不要编造。\n" + previous[:4000]
-                final = _cap_final("模型对同一工具重复调用相同参数", final)
-                if emitter is not None:
-                    _emit(emitter.content_delta(final))
-                return AgentResult(final=final, steps=history, iterations=i, hit_cap=True, assets=assets, external_tokens=external_tokens, steps_usage=steps_usage)
-            continue
-        if emitter is not None:
-            _emit(emitter.tool_call_start(name, name, step.action_input))
-        res: ToolResult = tools.call(name, **step.action_input)
-        obs = res.output if res.ok else (res.error or "工具调用失败")
-        if emitter is not None and res.ok and isinstance(res.output, dict) and res.output.get("file_name"):
-            _emit(
-                emitter.artifact(
-                    str(res.output.get("doc_id") or res.output.get("export_id") or name),
-                    str(res.output.get("format") or "file"),
-                    str(res.output["file_name"]),
-                    str(res.output.get("display_name") or res.output["file_name"]),
+            # p6.30：把文件产物记进 assets（file_name/export_id/clean_id）——multi 链路上
+            # 下游子任务靠它引用上游文件（画图/嵌图），不再"只有文字没有数据"。
+            if res.ok and isinstance(res.output, dict) and res.output.get("file_name"):
+                asset = {
+                    "tool": name,
+                    "file_name": str(res.output["file_name"]),
+                    "display_name": str(res.output.get("display_name") or res.output["file_name"]),
+                }
+                for key in ("export_id", "clean_id", "doc_id", "png_file"):
+                    if res.output.get(key):
+                        asset[key] = str(res.output[key])
+                if not any(a["file_name"] == asset["file_name"] for a in assets):
+                    assets.append(asset)
+            if res.ok and isinstance(res.output, dict):
+                usage = res.output.get("usage")
+                if isinstance(usage, dict):
+                    added = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+                    external_tokens += added
+                    if added > 0:
+                        steps_usage.append({"label": f"外部用量·{name}", "tokens": added})
+                    if token_budget is not None:
+                        token_budget.consume_external(added)
+                visual = res.output.get("visual")
+                if emitter is not None and isinstance(visual, dict):
+                    _emit(emitter.visual(str(visual.get("kind") or "flow"), _json_safe(visual)))
+            if emitter is not None:
+                panel = obs
+                if isinstance(obs, dict) and "visual" in obs:
+                    panel = {key: value for key, value in obs.items() if key != "visual"}
+                    panel["visual"] = "已交给界面绘制"
+                # 前端步骤面板展示口径（p6.9：500 → 2000，用户能看到更多过程细节）
+                _emit(emitter.observation(tool_id, str(panel)[:2000]))
+                _emit(
+                    emitter.tool_call_end(
+                        tool_id, name, success=res.ok, error=None if res.ok else (res.error or "")
+                    )
                 )
-            )
-        # p6.30：把文件产物记进 assets（file_name/export_id/clean_id）——multi 链路上
-        # 下游子任务靠它引用上游文件（画图/嵌图），不再"只有文字没有数据"。
-        if res.ok and isinstance(res.output, dict) and res.output.get("file_name"):
-            asset = {
-                "tool": name,
-                "file_name": str(res.output["file_name"]),
-                "display_name": str(res.output.get("display_name") or res.output["file_name"]),
-            }
-            for key in ("export_id", "clean_id", "doc_id", "png_file"):
-                if res.output.get(key):
-                    asset[key] = str(res.output[key])
-            if not any(a["file_name"] == asset["file_name"] for a in assets):
-                assets.append(asset)
-        if res.ok and isinstance(res.output, dict):
-            usage = res.output.get("usage")
-            if isinstance(usage, dict):
-                added = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
-                external_tokens += added
-                if added > 0:
-                    steps_usage.append({"label": f"外部用量·{name}", "tokens": added})
-                if token_budget is not None:
-                    token_budget.consume_external(added)
-            visual = res.output.get("visual")
-            if emitter is not None and isinstance(visual, dict):
-                _emit(emitter.visual(str(visual.get("kind") or "flow"), _json_safe(visual)))
-        if emitter is not None:
-            panel = obs
-            if isinstance(obs, dict) and "visual" in obs:
-                panel = {key: value for key, value in obs.items() if key != "visual"}
-                panel["visual"] = "已交给界面绘制"
-            # 前端步骤面板展示口径（p6.9：500 → 2000，用户能看到更多过程细节）
-            _emit(emitter.observation(name, str(panel)[:2000]))
-            _emit(
-                emitter.tool_call_end(
-                    name, name, success=res.ok, error=None if res.ok else (res.error or "")
-                )
-            )
-        # p6.7：进 history 的是可读摘要（不是 str(dict) 全文），LLM 上下文卫生
-        step.observation = _summarize_observation(obs) if res.ok else str(obs)[:500]
-        history.append(step)
+            # p6.7：进 history 的是可读摘要（不是 str(dict) 全文），LLM 上下文卫生
+            unit.observation = _summarize_observation(obs) if res.ok else str(obs)[:500]
+            history.append(unit)
 
     # 超限：强制阶段结论（不硬编答案，只如实说明已达上限）
     cap = f"已达 max_iterations={max_iterations}，强制给出阶段结论"
