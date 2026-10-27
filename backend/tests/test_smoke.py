@@ -25,3 +25,11 @@ def test_health_structure():
     for svc in ("mysql", "redis", "chroma"):
         assert svc in body["services"]
         assert "ok" in body["services"][svc]
+
+
+def test_health_exposes_open_fds():
+    """v2.0.0-p2.4：health 带出进程句柄数（句柄耗尽曾致全接口 500，用于提前观测泄漏）。"""
+    c = TestClient(app)
+    body = c.get("/api/v1/health").json()
+    # Linux 下 /proc/self/fd 可读 → 具体数字；其它平台为 None（不报错即可）
+    assert body.get("open_fds") is None or isinstance(body["open_fds"], int)

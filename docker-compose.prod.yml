@@ -29,6 +29,13 @@ services:
     build: ./backend
     container_name: office-backend
     env_file: .env
+    # v2.0.0-p2.4：句柄上限 1024 → 65536——灰度实测后端在长时间高强度流式
+    # 任务下 socket 句柄累积（Errno 24 Too many open files 曾致全接口 500）。
+    # 泄漏根因待查，先抬高天花板把风险拆掉；health 暴露 open_fds 便于观测。
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
       - ./backend/data:/app/data        # 文档目录：read_document 只读 + /documents 上传写入
       - ./backend/config:/app/config    # 管理端写 models.overrides.yaml；yaml 改完 recreate 生效

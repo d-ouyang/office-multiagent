@@ -1,4 +1,5 @@
 """API 路由：/health 联动探测、/models 模型注册表、/plan 规划路由、/internal/auth/ping 内部鉴权自检、/demo/stream NDJSON 示例。"""
+import os
 import re
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
@@ -35,9 +36,17 @@ def health():
     required = [v for k, v in services.items() if k != "chroma" or settings.require_chroma]
     all_ok = all(v["ok"] for v in required)
 
+    # v2.0.0-p2.4：暴露进程句柄数（句柄耗尽曾致全接口 500，用于提前观测泄漏）
+    open_fds: int | None = None
+    try:
+        open_fds = len(os.listdir("/proc/self/fd"))
+    except OSError:
+        open_fds = None
+
     return {
         "status": "ok" if all_ok else "degraded",
         "services": services,
+        "open_fds": open_fds,
     }
 
 
