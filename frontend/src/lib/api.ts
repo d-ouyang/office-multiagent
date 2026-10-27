@@ -95,12 +95,14 @@ export async function deleteSession(sessionId: string): Promise<void> {
 
 /** p6.2c/p6.7：会话历史消息（user/assistant 终答 + assistant 的 trace 过程事件 JSON）。 */
 export async function getMessages(sessionId: string): Promise<Array<{
+  id?: number;
   role: string;
   content: string;
   trace?: string | null;
   created_at: string;
   model?: string | null;
   tokens?: number | null;
+  feedback?: MessageFeedback | null;
 }>> {
   const res = await fetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`, {
     headers: authHeaders(),
@@ -111,6 +113,74 @@ export async function getMessages(sessionId: string): Promise<Array<{
   }
   const data = await res.json();
   return data.messages ?? [];
+}
+
+// --------------------------------------------------------------------------- //
+// v2.0.0-p2.2：消息点赞/点踩反馈（闭环：提交/覆盖/取消，DB 为真相源）
+// --------------------------------------------------------------------------- //
+
+export type FeedbackRating = 'like' | 'dislike';
+
+export interface MessageFeedback {
+  rating: FeedbackRating | null;
+  tags: string[];
+  comment: string | null;
+  at: string | null;
+}
+
+/** 原因 tag 白名单——与后端 core/feedback_repo.py 保持一致（8 项）。 */
+export const FEEDBACK_TAGS = [
+  '误解了我的问题',
+  '上下文理解错误',
+  '回答模糊、不具体',
+  '数据或数字有误',
+  '图表或表格有误',
+  '工具调用有误',
+  '回答不专业',
+  '其他原因',
+] as const;
+
+export const FEEDBACK_COMMENT_MAX = 200;
+
+async function feedbackError(res: Response): Promise<never> {
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  throw new Error(String(data?.detail?.message ?? `提交失败（HTTP ${res.status}）`));
+}
+
+/** 提交/覆盖反馈（点赞可不带原因；点踩须至少 1 tag 或有文字——服务端也校验）。 */
+export async function submitMessageFeedback(
+  sessionId: string,
+  messageId: number,
+  rating: FeedbackRating,
+  tags: string[] = [],
+  comment = '',
+): Promise<MessageFeedback> {
+  const res = await fetch(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/${messageId}/feedback`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ rating, tags, comment }),
+    },
+  );
+  if (!res.ok) await feedbackError(res);
+  const data = await res.json();
+  return data.feedback as MessageFeedback;
+}
+
+/** 取消当前反馈（流水保留）。返回是否存在过当前态。 */
+export async function cancelMessageFeedback(sessionId: string, messageId: number): Promise<boolean> {
+  const res = await fetch(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/${messageId}/feedback`,
+    { method: 'DELETE', headers: authHeaders() },
+  );
+  if (!res.ok) await feedbackError(res);
+  const data = await res.json();
+  return !!data.cancelled;
 }
 
 /** 改密。成功后换成新 token（旧 token 的 token_version 已失效）。 */

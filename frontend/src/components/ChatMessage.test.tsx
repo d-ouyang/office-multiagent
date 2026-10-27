@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import ChatMessage from './ChatMessage';
 import type { StreamEvent } from '../types';
+import { act } from 'react';
 
 afterEach(() => cleanup());
 
@@ -59,12 +60,15 @@ describe('回复信息行', () => {
         index={1}
         msg={{
           role: 'assistant',
+          id: 11,
           createdAt: clock,
           events: [
             ev('content_delta', { delta: '年假五天' }, 1000, 1),
             ev('done', { status: 'single', tokens_used: 3011, model: 'glm-5.3-flash-sf' }, 4200, 2),
           ],
         }}
+        onFeedbackSubmit={() => Promise.resolve(null)}
+        onFeedbackCancel={() => Promise.resolve(true)}
       />,
     );
     expect(screen.getByRole('button', { name: '复制' })).toBeInTheDocument();
@@ -74,6 +78,15 @@ describe('回复信息行', () => {
     expect(screen.getByText('GLM-5.3-Flash')).toBeInTheDocument();
     expect(screen.getByText('22:01')).toBeInTheDocument();
     expect(screen.getByText('耗时 3.2s')).toBeInTheDocument();
+  });
+
+  it('没有消息 id 或回调时不渲染反馈按钮（流式刚结束的本地消息）', () => {
+    render(
+      <ChatMessage index={1} msg={{ role: 'assistant', content: '好', createdAt: clock }} />,
+    );
+    expect(screen.getByRole('button', { name: '复制' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '点赞' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '点踩' })).toBeNull();
   });
 
   it('trace 没有模型时用消息上的 model，排在消耗后面', () => {
@@ -90,19 +103,87 @@ describe('回复信息行', () => {
     expect(row?.textContent?.indexOf('共消耗')).toBeLessThan(row?.textContent?.indexOf('DeepSeek V3') ?? -1);
   });
 
-  it('点赞只切换选中态', () => {
+  it('点赞直接落库，激活后再点 = 取消', async () => {
+    const onSubmit = vi.fn(() => Promise.resolve({ rating: 'like', tags: [], comment: null, at: null }));
+    const onCancel = vi.fn(() => Promise.resolve(true));
     render(
       <ChatMessage
         index={1}
-        msg={{ role: 'assistant', content: '好的', createdAt: clock }}
+        msg={{ role: 'assistant', id: 5, content: '好的', createdAt: clock }}
+        onFeedbackSubmit={onSubmit}
+        onFeedbackCancel={onCancel}
       />,
     );
     const up = screen.getByRole('button', { name: '点赞' });
-    fireEvent.click(up);
-    expect(up).toHaveAttribute('data-on');
+    await act(async () => {
+      fireEvent.click(up);
+    });
+    expect(onSubmit).toHaveBeenCalledWith(5, 'like', [], '');
+    expect(await screen.findByRole('button', { name: '取消点赞' })).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '取消点赞' }));
+    });
+    expect(onCancel).toHaveBeenCalledWith(5);
+  });
+
+  it('点踩走弹窗：tag 多选 + 其他原因展开输入，提交带原因', async () => {
+    const onSubmit = vi.fn(() => Promise.resolve({ rating: 'dislike', tags: ['数据或数字有误'], comment: '', at: null }));
+    render(
+      <ChatMessage
+        index={1}
+        msg={{ role: 'assistant', id: 6, content: '答案', createdAt: clock }}
+        onFeedbackSubmit={onSubmit}
+        onFeedbackCancel={() => Promise.resolve(true)}
+      />,
+    );
     fireEvent.click(screen.getByRole('button', { name: '点踩' }));
-    expect(up).not.toHaveAttribute('data-on');
-    expect(screen.getByRole('button', { name: '点踩' })).toHaveAttribute('data-on');
+    const dialog = await screen.findByRole('dialog', { name: '意见反馈' });
+    expect(dialog).toHaveTextContent('抱歉，这次回答没能帮到你');
+    // 无原因时不能提交
+    expect(screen.getByRole('button', { name: '提交反馈' })).toBeDisabled();
+    // 选 tag + 其他原因 → 输入框出现，0/200 计数
+    fireEvent.click(screen.getByRole('button', { name: '数据或数字有误' }));
+    fireEvent.click(screen.getByRole('button', { name: '其他原因' }));
+    const input = screen.getByLabelText('其他原因');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '环比算错了' } });
+    });
+    expect(screen.getByText('5/200')).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '提交反馈' }));
+    });
+    expect(onSubmit).toHaveBeenCalledWith(6, 'dislike', ['数据或数字有误', '其他原因'], '环比算错了');
+    // 提交成功后弹窗关闭，点踩实心（激活态）
+    expect(await screen.findByRole('button', { name: '取消点踩' })).toBeInTheDocument();
+  });
+
+  it('激活的点踩再点 = 直接取消；取消后再点踩是新的一次反馈（不回显旧原因）', async () => {
+    const onCancel = vi.fn(() => Promise.resolve(true));
+    render(
+      <ChatMessage
+        index={1}
+        msg={{
+          role: 'assistant',
+          id: 7,
+          content: '答案',
+          createdAt: clock,
+          feedback: { rating: 'dislike', tags: ['回答不专业'], comment: '太笼统', at: null },
+        }}
+        onFeedbackSubmit={() => Promise.resolve(null)}
+        onFeedbackCancel={onCancel}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '取消点踩' }));
+    });
+    expect(onCancel).toHaveBeenCalledWith(7);
+    expect(screen.getByRole('button', { name: '点踩' })).toBeInTheDocument();
+
+    // 取消后再点踩 = 新的一次反馈：弹窗干净（旧原因不回显，覆盖逻辑由服务端流水负责）
+    fireEvent.click(screen.getByRole('button', { name: '点踩' }));
+    await screen.findByRole('dialog', { name: '意见反馈' });
+    expect(screen.getByRole('button', { name: '回答不专业' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByLabelText('其他原因')).toBeNull();
   });
 
   it('流式过程中不显示信息行', () => {

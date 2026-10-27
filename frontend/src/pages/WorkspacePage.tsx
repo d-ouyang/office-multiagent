@@ -11,7 +11,7 @@ import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import type { StreamEvent } from '../types';
 import ContextRing from '../components/ContextRing';
 import { deriveContextUsage, deriveCurrentAgent, agentLabel, pauseText, quotaPauseText } from '../lib/derive';
-import { authHeaders, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, updateSession } from '../lib/api';
+import { authHeaders, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
 
 const EFFORTS = ['低', '高', '最大'] as const;
 const EFFORT_API: Record<string, string> = { 低: 'low', 高: 'high', 最大: 'max' };
@@ -189,9 +189,11 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
               evs = undefined;
             }
           }
-            return evs
-            ? { role: 'assistant' as const, events: evs, streaming: false, createdAt, model: m.model ?? undefined, tokens: m.tokens ?? undefined }
-            : { role: 'assistant' as const, content: m.content, createdAt, model: m.model ?? undefined, tokens: m.tokens ?? undefined };
+          return (
+            evs
+            ? { role: 'assistant' as const, id: m.id, events: evs, streaming: false, createdAt, model: m.model ?? undefined, tokens: m.tokens ?? undefined, feedback: m.feedback ?? null }
+            : { role: 'assistant' as const, id: m.id, content: m.content, createdAt, model: m.model ?? undefined, tokens: m.tokens ?? undefined, feedback: m.feedback ?? null }
+          );
         }),
       );
     } catch (e) {
@@ -247,9 +249,35 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     }
   }, [status, events, reset, refreshQuota]);
 
+  // v2.0.0-p2.2：消息反馈闭环（提交/覆盖/取消；错误原样抛给弹窗显示）
+  const onFeedbackSubmit = useCallback(
+    async (messageId: number, rating: FeedbackRating, tags: string[], comment: string): Promise<MessageFeedback | null> => {
+      if (!currentId) return null;
+      try {
+        return await submitMessageFeedback(currentId, messageId, rating, tags, comment);
+      } catch (e) {
+        if ((e as Error).message === 'UNAUTHORIZED') onLogout();
+        throw e;
+      }
+    },
+    [currentId, onLogout],
+  );
+
+  const onFeedbackCancel = useCallback(
+    async (messageId: number): Promise<boolean> => {
+      if (!currentId) return false;
+      try {
+        return await cancelMessageFeedback(currentId, messageId);
+      } catch (e) {
+        if ((e as Error).message === 'UNAUTHORIZED') onLogout();
+        throw e;
+      }
+    },
+    [currentId, onLogout],
+  );
+
   /** p7.1：暂停——先通知后端（协作式取消），再断本地流；横幅给出继续入口。 */
-  const onPauseClick = () => {
-    const id = events.find((e) => e.run_id)?.run_id ?? '';
+  const onPauseClick = () => {    const id = events.find((e) => e.run_id)?.run_id ?? '';
     if (id) {
       void pauseTask(id).then((ok) => {
         if (ok) setPaused({ taskId: id, status: 'paused_user', needed: 0, message: '任务已按你的要求暂停，可点「继续」重跑' });
@@ -561,6 +589,8 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
               located={!!locate && messageAnchor(liveMessages, i) === `q-${locate.taskId}`}
               onEditSubmit={(idx, text, paths) => void onEditSubmit(idx, text, paths)}
               onPreview={setPreviewPath}
+              onFeedbackSubmit={onFeedbackSubmit}
+              onFeedbackCancel={onFeedbackCancel}
             />
           ))}
           </div>

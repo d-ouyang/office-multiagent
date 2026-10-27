@@ -1,11 +1,14 @@
 // 用户消息：气泡下方是提问时间，hover 出编辑/复制图标。
 // 助手消息：正文下方独立一行——复制、点赞、点踩、用量、模型、时间、耗时。
-// 点赞/点踩只留在这次渲染里，不入库。
-import { lazy, Suspense, useState, type ReactNode } from 'react';
+// 点赞/点踩 v2.0.0-p2.2 起闭环入库：激活态实心；点踩必走弹窗（原因多选/其他原因）；
+// 再点实心图标 = 取消；二次点踩回显已选原因、提交后覆盖（旧信息保留在服务端流水）。
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { Copy, Pencil, ThumbsDown, ThumbsUp } from 'lucide-react';
 
+import type { FeedbackRating, MessageFeedback } from '../lib/api';
 import type { StreamEvent } from '../types';
 import { deriveArtifacts, deriveFailure, deriveProcess, deriveReplyMeta, deriveVisuals } from '../lib/derive';
+import { FeedbackDialog } from './FeedbackDialog';
 import { FlowChart } from './FlowChart';
 import type { ChartSpec } from './ChartView';
 import type { FlowSpec } from '../lib/flowLayout';
@@ -18,6 +21,8 @@ const ChartView = lazy(() => import('./ChartView').then((module) => ({ default: 
 
 export interface ChatMessageData {
   role: 'user' | 'assistant';
+  /** 后端消息 id（p2.1 列表带出）——有 id 才能反馈闭环 */
+  id?: number;
   text?: string;
   attachments?: string[];
   attachmentPaths?: string[];
@@ -28,6 +33,8 @@ export interface ChatMessageData {
   /** 账本补上的模型 id（trace 的 done 事件没有 model 时用） */
   model?: string;
   tokens?: number;
+  /** 反馈当前态（p2.1 消息列表带出；切换会话后激活态仍在） */
+  feedback?: MessageFeedback | null;
 }
 
 function IconTip({
@@ -83,6 +90,8 @@ export function ChatMessage({
   located,
   onEditSubmit,
   onPreview,
+  onFeedbackSubmit,
+  onFeedbackCancel,
 }: {
   msg: ChatMessageData;
   index: number;
@@ -90,11 +99,28 @@ export function ChatMessage({
   located?: boolean;
   onEditSubmit?: (index: number, text: string, paths: string[]) => boolean | void | Promise<boolean | void>;
   onPreview?: (path: string) => void;
+  /** v2.0.0-p2.2：提交/覆盖反馈。成功返回最新当前态，失败返回 null。 */
+  onFeedbackSubmit?: (
+    messageId: number,
+    rating: FeedbackRating,
+    tags: string[],
+    comment: string,
+  ) => Promise<MessageFeedback | null>;
+  /** v2.0.0-p2.2：取消反馈。成功返回 true。 */
+  onFeedbackCancel?: (messageId: number) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(msg.text ?? '');
   const [paths, setPaths] = useState<string[]>(msg.attachmentPaths ?? []);
-  const [vote, setVote] = useState<'up' | 'down' | null>(null);
+  const [feedback, setFeedback] = useState<MessageFeedback | null>(msg.feedback ?? null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [fbBusy, setFbBusy] = useState(false);
+  const [fbError, setFbError] = useState<string | null>(null);
+
+  // 切会话/重载后按服务端当前态复位（消息 id 变化即视为新消息）
+  useEffect(() => {
+    setFeedback(msg.feedback ?? null);
+  }, [msg.id, msg.feedback]);
 
   const commitEdit = () => {
     if (!draft.trim() && paths.length === 0) return;
@@ -223,6 +249,41 @@ export function ChatMessage({
     return msg.content ?? '';
   };
 
+  // v2.0.0-p2.2 状态机（PLAN §4.1）：激活态再点 = 取消；点赞直接落库；
+  // 点踩（无论当前态）都走弹窗，二次点踩回显已选原因，提交后覆盖。
+  const canFeedback = !!(msg.id && onFeedbackSubmit && onFeedbackCancel);
+  const rating = feedback?.rating ?? null;
+  const submitFeedback = async (r: FeedbackRating, tags: string[], comment: string) => {
+    if (!msg.id || !onFeedbackSubmit) return false;
+    setFbBusy(true);
+    setFbError(null);
+    try {
+      const state = await onFeedbackSubmit(msg.id, r, tags, comment);
+      if (state) {
+        setFeedback(state);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      setFbError((e as Error).message);
+      return false;
+    } finally {
+      setFbBusy(false);
+    }
+  };
+  const cancelFeedback = async () => {
+    if (!msg.id || !onFeedbackCancel) return;
+    setFbBusy(true);
+    setFbError(null);
+    try {
+      if (await onFeedbackCancel(msg.id)) setFeedback(null);
+    } catch (e) {
+      setFbError((e as Error).message);
+    } finally {
+      setFbBusy(false);
+    }
+  };
+
   return (
     <div className="msg-row assistant">
       <div className="assistant-block">
@@ -275,20 +336,24 @@ export function ChatMessage({
         {!msg.streaming && (
           <div className="reply-meta">
             <CopyIcon getText={copyText} />
-            <IconTip
-              label="点赞"
-              pressed={vote === 'up'}
-              onClick={() => setVote((v) => (v === 'up' ? null : 'up'))}
-            >
-              <ThumbsUp size={15} strokeWidth={1.8} />
-            </IconTip>
-            <IconTip
-              label="点踩"
-              pressed={vote === 'down'}
-              onClick={() => setVote((v) => (v === 'down' ? null : 'down'))}
-            >
-              <ThumbsDown size={15} strokeWidth={1.8} />
-            </IconTip>
+            {canFeedback && (
+              <>
+                <IconTip
+                  label={rating === 'like' ? '取消点赞' : '点赞'}
+                  pressed={rating === 'like'}
+                  onClick={() => (rating === 'like' ? void cancelFeedback() : void submitFeedback('like', [], ''))}
+                >
+                  <ThumbsUp size={15} strokeWidth={1.8} />
+                </IconTip>
+                <IconTip
+                  label={rating === 'dislike' ? '取消点踩' : '点踩'}
+                  pressed={rating === 'dislike'}
+                  onClick={() => (rating === 'dislike' ? void cancelFeedback() : setDialogOpen(true))}
+                >
+                  <ThumbsDown size={15} strokeWidth={1.8} />
+                </IconTip>
+              </>
+            )}
             <span className="reply-stats">
               <span className="reply-tokens">
                 <span>共消耗 {formatTokens(tokens)}</span>
@@ -309,6 +374,18 @@ export function ChatMessage({
               <span>耗时 {formatDuration(meta.durationMs)}</span>
             </span>
           </div>
+        )}
+        {canFeedback && (
+          <FeedbackDialog
+            open={dialogOpen}
+            busy={fbBusy}
+            error={fbError}
+            onClose={() => {
+              setDialogOpen(false);
+              setFbError(null);
+            }}
+            onSubmit={(tags, comment) => submitFeedback('dislike', tags, comment)}
+          />
         )}
       </div>
     </div>

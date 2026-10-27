@@ -1504,6 +1504,129 @@ button.ghost {
   color: var(--accent);
   background: rgba(88, 166, 255, 0.14);
 }
+/* v2.0.0-p2.2：反馈激活态 = 实心图标 */
+.reply-meta .icon-btn[aria-pressed="true"] svg {
+  fill: currentColor;
+}
+
+/* ---- 点踩弹窗（v2.0.0-p2.2，PLAN §4.2）---- */
+.fb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 20px;
+}
+.fb-card {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
+}
+.fb-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.fb-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.fb-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.fb-close {
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.fb-close:hover {
+  color: var(--text);
+  background: var(--card2);
+}
+.fb-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fb-tag {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card2);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.fb-tag:hover {
+  border-color: var(--accent);
+}
+.fb-tag.on {
+  border-color: var(--accent);
+  background: rgba(88, 166, 255, 0.16);
+  color: var(--accent);
+}
+.fb-other {
+  position: relative;
+}
+.fb-input {
+  width: 100%;
+  min-height: 84px;
+  padding: 10px 12px 22px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.fb-count {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.fb-error {
+  margin: 0;
+  color: var(--err);
+  font-size: 12px;
+}
+.fb-submit {
+  padding: 10px 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #0d1117;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.fb-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .icon-btn[data-tip]::after {
   content: attr(data-tip);
   position: absolute;
