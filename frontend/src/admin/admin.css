@@ -2,7 +2,7 @@
 .admin-antd {
   height: 100vh;
   overflow: hidden;
-  font-size: 17px;
+  font-size: 14px;
 }
 .admin-antd > .ant-layout,
 .admin-antd > .ant-layout > .ant-layout {
@@ -35,17 +35,17 @@
 .admin-side-brand {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 28px 20px 22px;
+  gap: 10px;
+  padding: 16px 14px 12px;
 }
 .admin-logo {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   object-fit: cover;
 }
 .admin-sider-foot {
-  padding: 14px 12px 20px;
+  padding: 10px 10px 14px;
   border-top: 1px solid #232c40;
 }
 .admin-antd .admin-sider-foot .ant-btn {
@@ -56,10 +56,10 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 12px;
+  gap: 8px;
   height: auto;
-  padding: 12px 10px;
-  margin-top: 8px;
+  padding: 8px;
+  margin-top: 6px;
 }
 .admin-user-meta {
   display: flex;
@@ -75,7 +75,7 @@
 .admin-antd-header {
   background: #151b2b;
   height: auto;
-  padding: 20px 24px 14px;
+  padding: 12px 20px 10px;
   line-height: 1.4;
   border-bottom: 1px solid #232c40;
 }
@@ -90,7 +90,7 @@
   overflow: hidden;
 }
 .admin-page-pad {
-  padding: 20px 24px 32px;
+  padding: 14px 18px 20px;
   overflow: auto;
   height: 100%;
 }
@@ -106,8 +106,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
-  padding: 18px 24px;
+  gap: 10px;
+  padding: 12px 16px;
   background: #151b2b;
   border-bottom: 1px solid #232c40;
 }
@@ -121,7 +121,7 @@
 }
 .admin-list-extra {
   flex: 0 0 auto;
-  padding: 10px 20px 0;
+  padding: 8px 16px 0;
 }
 .admin-list-body {
   flex: 1 1 auto;
@@ -181,15 +181,16 @@
   font-size: inherit;
 }
 .admin-list-body .ant-table {
-  font-size: 18px;
+  font-size: 14px;
 }
 .admin-list-body .ant-table-thead > tr > th {
   white-space: nowrap;
-  font-size: 18px;
+  font-size: 13px;
+  color: #6f7b93;
 }
 .admin-list-body .ant-table-tbody > tr > td {
   white-space: nowrap;
-  font-size: 18px;
+  font-size: 14px;
 }
 .admin-list-body .ant-table .ant-btn,
 .admin-list-body .ant-table .ant-select,
@@ -200,7 +201,7 @@
 .admin-list-body .ant-table .admin-ellipsis,
 .admin-list-body .ant-table .admin-copy-cell,
 .admin-list-body .ant-table .admin-mono {
-  font-size: 18px;
+  font-size: 13px;
 }
 .admin-ellipsis {
   display: block;
@@ -222,7 +223,7 @@
 }
 .admin-list-pager {
   flex: 0 0 auto;
-  padding: 10px 20px 14px;
+  padding: 8px 16px 10px;
   border-top: 1px solid #232c40;
   background: #0f1420;
 }
@@ -234,7 +235,7 @@
 
 .admin-kpi .ant-statistic-content-value {
   font-variant-numeric: tabular-nums;
-  font-size: 28px;
+  font-size: 22px;
   line-height: 1.2;
   min-height: 34px;
   display: block;
@@ -251,7 +252,7 @@
   justify-content: center;
   background: #0f1420;
 }
-.admin-login-card { width: 420px; }
+.admin-login-card { width: 380px; }
 .admin-login-brand {
   display: flex;
   align-items: center;
@@ -263,7 +264,7 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 0 16px;
 }
-.admin-model-nums .ant-form-item { margin-bottom: 22px; }
+.admin-model-nums .ant-form-item { margin-bottom: 14px; }
 .admin-quote {
   background: #fff;
   color: #1f2937;
@@ -400,40 +401,40 @@
 }
 
 .admin-dialog .ant-modal-content {
-  padding: 28px 32px 24px;
+  padding: 20px 24px 18px;
 }
 .admin-dialog .ant-modal-header {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 .admin-dialog .ant-modal-body {
   padding: 8px 0 16px;
 }
 .admin-dialog .ant-modal-footer {
-  margin-top: 20px;
+  margin-top: 14px;
 }
 .admin-dialog .ant-drawer-header {
-  padding: 22px 28px;
+  padding: 14px 20px;
 }
 .admin-dialog .ant-drawer-body {
-  padding: 24px 28px 32px;
+  padding: 16px 20px 20px;
 }
 .admin-dialog .ant-drawer-footer {
   display: flex;
   justify-content: flex-end;
-  padding: 16px 28px 20px;
+  padding: 12px 20px 14px;
 }
 .admin-dialog .ant-form-item,
 .admin-dialog-form .ant-form-item {
-  margin-bottom: 32px;
+  margin-bottom: 16px;
 }
 .admin-dialog .ant-form-item-label,
 .admin-dialog-form .ant-form-item-label {
-  padding-bottom: 12px;
+  padding-bottom: 6px;
 }
 .admin-dialog .ant-drawer-body .ant-typography-h5,
 .admin-dialog .ant-drawer-body h5.ant-typography {
-  margin-top: 28px;
-  margin-bottom: 12px;
+  margin-top: 20px;
+  margin-bottom: 8px;
 }
 .admin-dialog .ant-descriptions {
   margin-top: 4px;

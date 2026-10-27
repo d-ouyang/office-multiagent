@@ -136,7 +136,6 @@ export default function OverviewTab() {
         title={`用量概览 · 近 ${days} 天`}
         extra={(
           <Segmented
-            size="large"
             value={days}
             onChange={(v) => setDays(Number(v))}
             options={[7, 14, 30].map((d) => ({ label: `${d} 天`, value: d }))}
@@ -177,7 +176,7 @@ export default function OverviewTab() {
       <Card title="快捷入口">
         <Space wrap size={12}>
           {SHORTCUTS.map((item) => (
-            <Button key={item.tab} type="default" size="large" onClick={() => goAdmin(item.tab)}>
+            <Button key={item.tab} type="default" onClick={() => goAdmin(item.tab)}>
               <span>
                 <strong>{item.title}</strong>
                 <Typography.Text type="secondary" style={{ marginLeft: 8 }}>{item.hint}</Typography.Text>

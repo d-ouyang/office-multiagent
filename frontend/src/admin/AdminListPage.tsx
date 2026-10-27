@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { ConfigProvider, Pagination } from './ui';
 
 export const PAGE_SIZE = 20;
-export const DRAWER_WIDTH = 'min(1080px, 86vw)';
+export const DRAWER_WIDTH = 'min(720px, 80vw)';
 
 export function AdminListPage({
   filters,

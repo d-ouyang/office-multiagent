@@ -147,8 +147,8 @@ describe('PAGE_SIZE', () => {
 });
 
 describe('DRAWER_WIDTH', () => {
-  it('任务详情和流水抽屉保持加宽', () => {
-    expect(DRAWER_WIDTH).toContain('1080px');
+  it('抽屉紧凑宽度（p2.5 对齐 rag 管理端，720px 放得下流程图与流水表）', () => {
+    expect(DRAWER_WIDTH).toBe('min(720px, 80vw)');
   });
 });
 
@@ -159,14 +159,14 @@ describe('任务监控列', () => {
     ]);
     expect(TASK_COLUMN_TITLES).not.toContain('任务原因');
   });
-  it('只有摘要弹性；id 列按完整 16/18 位加宽', () => {
+  it('只有摘要弹性；id 列按 14px 字号放下完整 16/18 位（p2.5 收窄）', () => {
     expect('summary' in TASK_COL_WIDTH).toBe(false);
-    expect(TASK_COL_WIDTH.username).toBeGreaterThanOrEqual(88);
-    expect(TASK_COL_WIDTH.duration).toBeGreaterThanOrEqual(96);
-    expect(TASK_COL_WIDTH.token).toBeGreaterThanOrEqual(100);
-    expect(TASK_COL_WIDTH.taskId).toBe(204);
-    expect(TASK_COL_WIDTH.sessionId).toBe(224);
-    expect(TASK_COL_WIDTH.action).toBeGreaterThanOrEqual(110);
+    expect(TASK_COL_WIDTH.username).toBeGreaterThanOrEqual(72);
+    expect(TASK_COL_WIDTH.duration).toBeGreaterThanOrEqual(80);
+    expect(TASK_COL_WIDTH.token).toBeGreaterThanOrEqual(92);
+    expect(TASK_COL_WIDTH.taskId).toBe(152);   // 16 位 hex @14px + padding
+    expect(TASK_COL_WIDTH.sessionId).toBe(168); // s- + 16 hex @14px + padding
+    expect(TASK_COL_WIDTH.action).toBeGreaterThanOrEqual(88);
   });
 });
 

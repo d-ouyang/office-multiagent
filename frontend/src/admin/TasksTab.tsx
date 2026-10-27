@@ -11,20 +11,19 @@ import { Alert, Button, DatePicker, Empty, Input, Select, Table, Tag } from './u
 import { useDebouncedValue } from './useDebouncedValue';
 
 /**
- * 只有任务摘要不设宽。
+ * 列宽按 14px 字号收窄（p2.5 对齐 rag 管理端紧凑尺寸；原 18px 时代的宽度已放大）。
  * 任务 id = uuid4().hex[:16]（16）；会话 id = s- + token_hex(8)（18）。
- * 列宽按 18px 字号放下完整 id，不再省略。
  */
 export const TASK_COL_WIDTH = {
-  username: 92,
-  employeeId: 110,
-  time: 204,
-  duration: 102,
-  status: 76,
-  taskId: 204,
-  sessionId: 224,
-  token: 110,
-  action: 116,
+  username: 76,
+  employeeId: 92,
+  time: 172,
+  duration: 84,
+  status: 64,
+  taskId: 152,
+  sessionId: 168,
+  token: 96,
+  action: 96,
 } as const;
 
 export const TASK_COLUMN_TITLES = [

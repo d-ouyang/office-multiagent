@@ -5,6 +5,25 @@
 
 ---
 
+## v2.0.0-p2.5 — 管理端尺寸对齐 rag admin-console（2026-10-27）
+
+**类型**：前端样式
+
+- office `/admin` 整套尺寸基准对齐 rag 管理端：正文 14px、控件高 34、表格 14px/10×12、表单间距 16、抽屉 1080→720px、侧栏 268→224、任务监控列宽按 14px 字号重算。纯样式无逻辑，vitest 103 passed。
+
+详见 `docs/iterations/v2.0.0-p2.5-admin-compact.md`。
+
+---
+
+## v2.0.0-p2.4 — backend 句柄加固（2026-10-27）
+
+**类型**：稳定性
+
+- 生产事故复盘：backend 进程 socket 句柄耗尽（1023/1024，Errno 24）致全接口 500（"chroma 异常"为 health ping 连带的症状）。
+- 加固：compose 为 office-backend 设 `ulimits.nofile=65536`；health 接口新增 `open_fds` 字段供水位观测。泄漏精确根因列入观察项。
+
+---
+
 ## v2.0.0-p2.3 — 管理端「意见反馈」页（2026-10-27）
 
 **类型**：功能（2.0.0 P2 管理侧，P2 收口）

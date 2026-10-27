@@ -89,7 +89,7 @@ function AdminShell({ user, onLogout }: { user: LoginUser; onLogout: () => void 
 
   return (
     <Layout className="admin-antd">
-      <Sider width={268} theme="dark" className="admin-antd-sider">
+      <Sider width={224} theme="dark" className="admin-antd-sider">
         <div className="admin-side-brand">
           <img className="admin-logo" src="/gq_logo.jpg" alt="锅圈" />
           <div>
@@ -128,8 +128,8 @@ function AdminShell({ user, onLogout }: { user: LoginUser; onLogout: () => void 
       <Layout>
         <Header className="admin-antd-header">
           <div>
-            <Typography.Title level={3} style={{ margin: 0 }}>{active.label}</Typography.Title>
-            <Typography.Text type="secondary">{active.hint}</Typography.Text>
+            <Typography.Title level={4} style={{ margin: 0 }}>{active.label}</Typography.Title>
+            <Typography.Text type="secondary" style={{ fontSize: 13 }}>{active.hint}</Typography.Text>
           </div>
         </Header>
         <Content className="admin-antd-content">
