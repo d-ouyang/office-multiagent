@@ -43,6 +43,9 @@ services:
     build: ./backend
     container_name: office-backend
     env_file: .env
+    # v2.0.0-p2.7：内存上限 2GB——泄漏再次发生时由 backend 自己的 cgroup OOM
+    # 击杀并靠 restart 自愈（秒级），而不是升级成全局 OOM 连累同机 mysql/chroma。
+    mem_limit: 2g
     # v2.0.0-p2.4：句柄上限 1024 → 65536——灰度实测后端在长时间高强度流式
     # 任务下 socket 句柄累积（Errno 24 Too many open files 曾致全接口 500）。
     # p2.6 已定位根因之一（chroma HttpClient 每次新建不关闭）并单例化修复；
@@ -55,10 +58,12 @@ services:
       - ./backend/data:/app/data        # 文档目录：read_document 只读 + /documents 上传写入
       - ./backend/config:/app/config    # 管理端写 models.overrides.yaml；yaml 改完 recreate 生效
     healthcheck:
+      # p2.7：15s → 60s——探活走 chroma/mysql/redis ping，单例化后虽无泄漏，
+      # 也没必要高频；仅作 liveness 标记，不自愈（自愈靠 restart 策略）
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)"]
-      interval: 15s
+      interval: 60s
       timeout: 5s
-      retries: 5
+      retries: 3
     networks: [office-net, rag-net]
 
   office-gateway:
@@ -66,6 +71,7 @@ services:
     build: ./gateway
     container_name: office-gateway
     env_file: .env
+    mem_limit: 512m
     ports:
       - "127.0.0.1:3001:3000"   # 仅供宿主侧调试；浏览器流量走 前端nginx → office-gateway:3000
     depends_on:
@@ -76,6 +82,7 @@ services:
     <<: *office-defaults
     build: ./frontend
     container_name: office-frontend
+    mem_limit: 128m
     volumes:
       - ./frontend/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro   # 上游=office-gateway
     ports:
