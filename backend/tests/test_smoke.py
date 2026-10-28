@@ -33,3 +33,10 @@ def test_health_exposes_open_fds():
     body = c.get("/api/v1/health").json()
     # Linux 下 /proc/self/fd 可读 → 具体数字；其它平台为 None（不报错即可）
     assert body.get("open_fds") is None or isinstance(body["open_fds"], int)
+
+
+def test_health_exposes_rss_mb():
+    """v2.0.0-p2.6：health 带出 RSS 内存（OOM 复盘：1.8GB 涨爆被杀且无人重启）。"""
+    c = TestClient(app)
+    body = c.get("/api/v1/health").json()
+    assert body.get("rss_mb") is None or (isinstance(body["rss_mb"], (int, float)) and body["rss_mb"] > 0)

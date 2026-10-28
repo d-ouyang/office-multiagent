@@ -38,15 +38,27 @@ def health():
 
     # v2.0.0-p2.4：暴露进程句柄数（句柄耗尽曾致全接口 500，用于提前观测泄漏）
     open_fds: int | None = None
+    rss_mb: float | None = None
     try:
         open_fds = len(os.listdir("/proc/self/fd"))
     except OSError:
         open_fds = None
+    try:
+        # v2.0.0-p2.6：RSS 当前值（非峰值）——backend 曾涨到 1.8GB 被内核 OOM
+        # 击杀且无人重启（p2.6 已补 restart 策略 + chroma 客户端单例化根修）
+        with open("/proc/self/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss_mb = round(int(line.split()[1]) / 1024, 1)
+                    break
+    except OSError:
+        rss_mb = None
 
     return {
         "status": "ok" if all_ok else "degraded",
         "services": services,
         "open_fds": open_fds,
+        "rss_mb": rss_mb,
     }
 
 

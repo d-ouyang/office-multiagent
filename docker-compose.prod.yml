@@ -24,14 +24,29 @@
 #   docker compose -f docker-compose.prod.yml up -d
 # =====================================================================
 
+# v2.0.0-p2.6（OOM 复盘）统一运维基线：
+#   · restart: unless-stopped —— 进程崩/被 OOM 击杀后自动拉起（此前 no，
+#     backend 凌晨被 OOM 杀掉后躺尸 10 小时无人自愈）；
+#   · 日志轮转 max-size —— json-file 无限增长会吃满磁盘（当前磁盘已 79%）。
+
+x-office-defaults: &office-defaults
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   office-backend:
+    <<: *office-defaults
     build: ./backend
     container_name: office-backend
     env_file: .env
     # v2.0.0-p2.4：句柄上限 1024 → 65536——灰度实测后端在长时间高强度流式
     # 任务下 socket 句柄累积（Errno 24 Too many open files 曾致全接口 500）。
-    # 泄漏根因待查，先抬高天花板把风险拆掉；health 暴露 open_fds 便于观测。
+    # p2.6 已定位根因之一（chroma HttpClient 每次新建不关闭）并单例化修复；
+    # health 暴露 open_fds / rss_mb 持续观测。
     ulimits:
       nofile:
         soft: 65536
@@ -47,6 +62,7 @@ services:
     networks: [office-net, rag-net]
 
   office-gateway:
+    <<: *office-defaults
     build: ./gateway
     container_name: office-gateway
     env_file: .env
@@ -57,6 +73,7 @@ services:
     networks: [office-net, rag-net]
 
   office-frontend:
+    <<: *office-defaults
     build: ./frontend
     container_name: office-frontend
     volumes:
