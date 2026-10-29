@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import ChatMessage from './ChatMessage';
+import type { MessageFeedback } from '../lib/api';
 import type { StreamEvent } from '../types';
 import { act } from 'react';
 
@@ -184,6 +185,78 @@ describe('回复信息行', () => {
     await screen.findByRole('dialog', { name: '意见反馈' });
     expect(screen.getByRole('button', { name: '回答不专业' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.queryByLabelText('其他原因')).toBeNull();
+  });
+
+  it('提交成功后父级重渲染（旧 props 回来）也不把激活态打回空心', async () => {
+    // p2.8 回归锚：useEffect 不能依赖 msg.feedback——本地乐观态会被父级重渲染冲掉
+    const onSubmit = vi.fn(() =>
+      Promise.resolve({ rating: 'like', tags: [], comment: null, at: '2026-10-29T06:00:00' }),
+    );
+    const { rerender } = render(
+      <ChatMessage
+        index={1}
+        msg={{ role: 'assistant', id: 8, content: '答案', createdAt: clock }}
+        onFeedbackSubmit={onSubmit}
+        onFeedbackCancel={() => Promise.resolve(true)}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '点赞' }));
+    });
+    expect(await screen.findByRole('button', { name: '取消点赞' })).toBeInTheDocument();
+    // 模拟父级重渲染：msg.feedback 仍是旧值（null）
+    rerender(
+      <ChatMessage
+        index={1}
+        msg={{ role: 'assistant', id: 8, content: '答案', createdAt: clock, feedback: null }}
+        onFeedbackSubmit={onSubmit}
+        onFeedbackCancel={() => Promise.resolve(true)}
+      />,
+    );
+    expect(screen.getByRole('button', { name: '取消点赞' })).toBeInTheDocument();
+  });
+
+  it('节流：请求在途时重复点击不再触发第二次调用（防暴力点击）', async () => {
+    let resolveFirst!: (v: MessageFeedback) => void;
+    const onSubmit = vi.fn(
+      () => new Promise<MessageFeedback>((resolve) => (resolveFirst = resolve)),
+    );
+    render(
+      <ChatMessage
+        index={1}
+        msg={{ role: 'assistant', id: 9, content: '答案', createdAt: clock }}
+        onFeedbackSubmit={onSubmit}
+        onFeedbackCancel={() => Promise.resolve(true)}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '点赞' }));
+      fireEvent.click(screen.getByRole('button', { name: '点赞' }));
+      fireEvent.click(screen.getByRole('button', { name: '点赞' }));
+    });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveFirst({ rating: 'like', tags: [], comment: null, at: null });
+    });
+    // 解除在途后恢复可点
+    expect(screen.getByRole('button', { name: '取消点赞' })).toBeInTheDocument();
+  });
+
+  it('提交失败回滚：图标回到未激活态并显示错误', async () => {
+    const onSubmit = vi.fn(() => Promise.reject(new Error('网络开小差了')));
+    render(
+      <ChatMessage
+        index={1}
+        msg={{ role: 'assistant', id: 10, content: '答案', createdAt: clock }}
+        onFeedbackSubmit={onSubmit}
+        onFeedbackCancel={() => Promise.resolve(true)}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '点赞' }));
+    });
+    expect(await screen.findByRole('button', { name: '点赞' })).toBeInTheDocument();
+    expect(screen.getByText('网络开小差了')).toBeInTheDocument();
   });
 
   it('流式过程中不显示信息行', () => {

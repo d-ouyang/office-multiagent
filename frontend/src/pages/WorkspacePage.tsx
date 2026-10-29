@@ -249,12 +249,18 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     }
   }, [status, events, reset, refreshQuota]);
 
-  // v2.0.0-p2.2：消息反馈闭环（提交/覆盖/取消；错误原样抛给弹窗显示）
+  // v2.0.0-p2.2：消息反馈闭环（提交/覆盖/取消；错误原样抛给弹窗显示）。
+  // p2.8：成功后把服务端回执写回 messages（msg.feedback）——子组件的乐观态
+  // 与服务端真相从此一致；只写 props 不写本地会造成"图标打回空心"的回退。
   const onFeedbackSubmit = useCallback(
     async (messageId: number, rating: FeedbackRating, tags: string[], comment: string): Promise<MessageFeedback | null> => {
       if (!currentId) return null;
       try {
-        return await submitMessageFeedback(currentId, messageId, rating, tags, comment);
+        const state = await submitMessageFeedback(currentId, messageId, rating, tags, comment);
+        setMessages((prev) =>
+          prev.map((m) => (m.id === messageId ? { ...m, feedback: state } : m)),
+        );
+        return state;
       } catch (e) {
         if ((e as Error).message === 'UNAUTHORIZED') onLogout();
         throw e;
@@ -267,7 +273,13 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     async (messageId: number): Promise<boolean> => {
       if (!currentId) return false;
       try {
-        return await cancelMessageFeedback(currentId, messageId);
+        const ok = await cancelMessageFeedback(currentId, messageId);
+        if (ok) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === messageId ? { ...m, feedback: null } : m)),
+          );
+        }
+        return ok;
       } catch (e) {
         if ((e as Error).message === 'UNAUTHORIZED') onLogout();
         throw e;

@@ -5,6 +5,16 @@
 
 ---
 
+## v2.0.0-p2.8 — 反馈图标即时激活修复 + 节流（2026-10-29）
+
+**类型**：缺陷修复
+
+- 修复：点赞/点踩提交成功后图标被父级重渲染打回空心（useEffect 依赖 msg.feedback 冲掉本地乐观态）——改为父级在提交/取消成功后写回 messages + 子组件仅按消息 id 复位。
+- 节流：反馈请求在途时忽略点击（ref 同步置位，同批次连点也拦得住），防暴力点击重复打接口；点赞/取消失败改为就地红字提示（此前错误只在点踩弹窗可见）。
+- vitest 106 passed（+4 回归锚：父级重渲染不回退、节流、失败回滚、错误提示）。
+
+---
+
 ## v2.0.0-p2.5 — 管理端尺寸对齐 rag admin-console（2026-10-27）
 
 **类型**：前端样式
@@ -1457,3 +1467,19 @@ Phase 1：后端核心骨架 → `v1.0.0-p1.1`。
 - 图表卡片右上角新增「下载 PNG」按钮（悬浮出现）：echarts canvas getDataURL 白底 2x 导出，文件名取图表标题。
 
 **本版为 CI 接通后首个走全自动部署的版本。**
+
+---
+
+## v2.0.0-p2.6 — OOM 事故复盘与自愈加固（2026-10-28）
+
+**类型**：稳定性（生产事故修复）
+
+- 事故：backend 内存涨到 1.8GB 被内核 OOM 击杀（05:12），且 restart 策略为 no，躺尸 10 小时全站不可用。
+- 根修：`ping_chroma` 每次新建 `chromadb.HttpClient` 且不关闭——httpx 连接池随 /health、/admin/overview 调用线性泄漏（socket 1013 个、RSS 1.8GB）。改为模块级单例 + 失败自愈重建。
+- 自愈：office 三容器 `restart: unless-stopped`（此前 no）；日志轮转 max-size 10m×3（磁盘已 79%）。
+- 观测：health 新增 `rss_mb`（当前值），与 open_fds 一起构成资源水位看板。
+- 全量 pytest 438 passed / 3 skipped。部署验证：restart 策略生效、health ok、fds 19、rss 125MB。
+
+---
+
+## v2.0.0-p2.5 — 管理端尺寸对齐 rag admin-console（2026-10-27）

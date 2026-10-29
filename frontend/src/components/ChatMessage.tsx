@@ -2,7 +2,7 @@
 // 助手消息：正文下方独立一行——复制、点赞、点踩、用量、模型、时间、耗时。
 // 点赞/点踩 v2.0.0-p2.2 起闭环入库：激活态实心；点踩必走弹窗（原因多选/其他原因）；
 // 再点实心图标 = 取消；二次点踩回显已选原因、提交后覆盖（旧信息保留在服务端流水）。
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Copy, Pencil, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import type { FeedbackRating, MessageFeedback } from '../lib/api';
@@ -115,12 +115,17 @@ export function ChatMessage({
   const [feedback, setFeedback] = useState<MessageFeedback | null>(msg.feedback ?? null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [fbBusy, setFbBusy] = useState(false);
+  const fbBusyRef = useRef(false); // p2.8 节流真相源：ref 同步置位，同批次连点也拦得住
   const [fbError, setFbError] = useState<string | null>(null);
 
-  // 切会话/重载后按服务端当前态复位（消息 id 变化即视为新消息）
+  // 只在「换消息」（id 变化）时按服务端当前态复位。
+  // p2.8：不能把 msg.feedback 放进依赖——提交成功后本地已乐观更新，而父级的
+  // messages 要等回调里才同步；期间任何父级重渲染都会把激活态打回旧值
+  //（症状：点赞成功后图标闪一下又变空心）。服务端真相由父级在提交/取消
+  // 成功后写回 msg.feedback（与本地位一致），这里只负责换消息复位。
   useEffect(() => {
     setFeedback(msg.feedback ?? null);
-  }, [msg.id, msg.feedback]);
+  }, [msg.id]);
 
   const commitEdit = () => {
     if (!draft.trim() && paths.length === 0) return;
@@ -250,36 +255,50 @@ export function ChatMessage({
   };
 
   // v2.0.0-p2.2 状态机（PLAN §4.1）：激活态再点 = 取消；点赞直接落库；
-  // 点踩（无论当前态）都走弹窗，二次点踩回显已选原因，提交后覆盖。
+  // 点踩（无论当前态）都走弹窗，提交后覆盖。
+  // p2.8：乐观更新（点击立即变实心，失败回滚）+ ref 节流（防暴力点击）——
+  // 节流必须用 ref 而非 state：同一渲染批次内的连点读到的还是旧闭包值，
+  // state guard 会被击穿；ref 置位是同步的，跨批次/同批次都拦得住。
   const canFeedback = !!(msg.id && onFeedbackSubmit && onFeedbackCancel);
   const rating = feedback?.rating ?? null;
   const submitFeedback = async (r: FeedbackRating, tags: string[], comment: string) => {
-    if (!msg.id || !onFeedbackSubmit) return false;
+    if (!msg.id || !onFeedbackSubmit || fbBusyRef.current) return false;
+    const prev = feedback;
+    fbBusyRef.current = true;
     setFbBusy(true);
     setFbError(null);
+    setFeedback({ rating: r, tags, comment: comment || null, at: null }); // 乐观
     try {
       const state = await onFeedbackSubmit(msg.id, r, tags, comment);
       if (state) {
-        setFeedback(state);
+        setFeedback(state); // 以服务端回执为准（含 at 时间戳）
         return true;
       }
+      setFeedback(prev); // 回执异常：回滚乐观态
       return false;
     } catch (e) {
+      setFeedback(prev);
       setFbError((e as Error).message);
       return false;
     } finally {
+      fbBusyRef.current = false;
       setFbBusy(false);
     }
   };
   const cancelFeedback = async () => {
-    if (!msg.id || !onFeedbackCancel) return;
+    if (!msg.id || !onFeedbackCancel || fbBusyRef.current) return;
+    const prev = feedback;
+    fbBusyRef.current = true;
     setFbBusy(true);
     setFbError(null);
+    setFeedback(null); // 乐观
     try {
-      if (await onFeedbackCancel(msg.id)) setFeedback(null);
+      if (!(await onFeedbackCancel(msg.id))) setFeedback(prev);
     } catch (e) {
+      setFeedback(prev);
       setFbError((e as Error).message);
     } finally {
+      fbBusyRef.current = false;
       setFbBusy(false);
     }
   };
@@ -374,6 +393,10 @@ export function ChatMessage({
               <span>耗时 {formatDuration(meta.durationMs)}</span>
             </span>
           </div>
+        )}
+        {/* p2.8：点赞/取消失败时（弹窗未开）就地提示，错误不该只有弹窗路径可见 */}
+        {!msg.streaming && fbError && !dialogOpen && (
+          <div className="fb-error" role="alert">{fbError}</div>
         )}
         {canFeedback && (
           <FeedbackDialog
