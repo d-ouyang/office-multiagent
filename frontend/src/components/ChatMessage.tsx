@@ -115,7 +115,11 @@ export function ChatMessage({
   const [feedback, setFeedback] = useState<MessageFeedback | null>(msg.feedback ?? null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [fbBusy, setFbBusy] = useState(false);
-  const fbBusyRef = useRef(false); // p2.8 节流真相源：ref 同步置位，同批次连点也拦得住
+  // p2.11 节流（两层）：ref 在途锁拦"请求没回来就再点"；冷却锁拦"请求刚好
+  // 完成、下一次点击又立即发出"——线上实测请求往返 ~100ms 比连点间隔还快，
+  // 只有在途锁时 6 连点会发出 6 个合法但无意义的翻转请求。
+  const fbBusyRef = useRef(false);
+  const fbCooldownRef = useRef(0);
   const [fbError, setFbError] = useState<string | null>(null);
 
   // 只在「换消息」（id 变化）时按服务端当前态复位。
@@ -261,8 +265,10 @@ export function ChatMessage({
   // state guard 会被击穿；ref 置位是同步的，跨批次/同批次都拦得住。
   const canFeedback = !!(msg.id && onFeedbackSubmit && onFeedbackCancel);
   const rating = feedback?.rating ?? null;
+  const fbThrottled = () =>
+    fbBusyRef.current || Date.now() - fbCooldownRef.current < 400;
   const submitFeedback = async (r: FeedbackRating, tags: string[], comment: string) => {
-    if (!msg.id || !onFeedbackSubmit || fbBusyRef.current) return false;
+    if (!msg.id || !onFeedbackSubmit || fbThrottled()) return false;
     const prev = feedback;
     fbBusyRef.current = true;
     setFbBusy(true);
@@ -282,11 +288,12 @@ export function ChatMessage({
       return false;
     } finally {
       fbBusyRef.current = false;
+      fbCooldownRef.current = Date.now();
       setFbBusy(false);
     }
   };
   const cancelFeedback = async () => {
-    if (!msg.id || !onFeedbackCancel || fbBusyRef.current) return;
+    if (!msg.id || !onFeedbackCancel || fbThrottled()) return;
     const prev = feedback;
     fbBusyRef.current = true;
     setFbBusy(true);
@@ -299,6 +306,7 @@ export function ChatMessage({
       setFbError((e as Error).message);
     } finally {
       fbBusyRef.current = false;
+      fbCooldownRef.current = Date.now();
       setFbBusy(false);
     }
   };

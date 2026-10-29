@@ -121,6 +121,10 @@ describe('回复信息行', () => {
     });
     expect(onSubmit).toHaveBeenCalledWith(5, 'like', [], '');
     expect(await screen.findByRole('button', { name: '取消点赞' })).toBeInTheDocument();
+    // p2.11 冷却：激活后等待冷却窗口（模拟真实用户手速），再点取消
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 450));
+    });
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '取消点赞' }));
     });
@@ -240,6 +244,34 @@ describe('回复信息行', () => {
     });
     // 解除在途后恢复可点
     expect(screen.getByRole('button', { name: '取消点赞' })).toBeInTheDocument();
+  });
+
+  it('冷却：请求完成后 400ms 内的再次点击被忽略（在途锁拦不住"完成后再点"）', async () => {
+    // p2.11 回归锚：线上实测请求往返 ~100ms 比连点间隔还快，只有在途锁时
+    // 6 连点会发出 6 个请求（每个都等上一个完成后合法发出）
+    const onSubmit = vi.fn(() =>
+      Promise.resolve({ rating: 'like', tags: [], comment: null, at: null }),
+    );
+    const onCancel = vi.fn(() => Promise.resolve(true));
+    render(
+      <ChatMessage
+        index={1}
+        msg={{ role: 'assistant', id: 12, content: '答案', createdAt: clock }}
+        onFeedbackSubmit={onSubmit}
+        onFeedbackCancel={onCancel}
+      />,
+    );
+    // 第 1 次点击完成
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '点赞' }));
+    });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    // 完成后立刻再点（400ms 冷却窗口内，点击的是"取消点赞"）→ 忽略
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '取消点赞' }));
+    });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   it('提交失败回滚：图标回到未激活态并显示错误', async () => {
