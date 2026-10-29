@@ -70,9 +70,9 @@ def _fb(client, sid: str, mid: int, body: dict):
 def test_submit_like_then_cancel(eng):
     repo = FeedbackRepo(eng)
     state = repo.submit("s1", 1, 1, "like")
-    assert state["feedback"] == "like" and state["tags"] == []
+    assert state["rating"] == "like" and state["tags"] == []
     assert repo.cancel("s1", 1, 1) is True
-    assert repo.current_state(1)["feedback"] is None
+    assert repo.current_state(1)["rating"] is None
     # 取消后流水仍在（append-only，历史可查）
     with eng.connect() as c:
         n = c.execute(text("SELECT COUNT(*) FROM message_feedback WHERE message_id = 1")).scalar()
@@ -86,7 +86,7 @@ def test_discover_requires_reason_dislike(eng):
     with pytest.raises(FeedbackValidationError):
         repo.submit("s1", 1, 1, "dislike", tags=["不存在的标签"])
     state = repo.submit("s1", 1, 1, "dislike", tags=["数据或数字有误"], comment="环比算错了")
-    assert state["feedback"] == "dislike" and state["tags"] == ["数据或数字有误"]
+    assert state["rating"] == "dislike" and state["tags"] == ["数据或数字有误"]
     assert state["comment"] == "环比算错了"
 
 
@@ -110,7 +110,7 @@ def test_switch_like_dislike_overwrites(eng):
     repo = FeedbackRepo(eng)
     repo.submit("s1", 1, 1, "like")
     repo.submit("s1", 1, 1, "dislike", tags=["工具调用有误"])
-    assert repo.current_state(1)["feedback"] == "dislike"
+    assert repo.current_state(1)["rating"] == "dislike"
 
 
 def test_get_message_for_ownership_and_role(eng):
@@ -135,7 +135,9 @@ def test_api_submit_and_cancel_roundtrip(eng):
     client = TestClient(app)
     r = _fb(client, "s1", 1, {"rating": "like"})
     assert r.status_code == 200
-    assert r.json()["feedback"]["feedback"] == "like"
+    # p2.10：回执内层字段名与消息列表契约统一为 rating（此前是 feedback，前端解析出
+    # rating=undefined 导致点赞图标被打回空心）
+    assert r.json()["feedback"]["rating"] == "like"
     # 历史消息带出反馈当前态
     msgs = client.get("/api/v1/sessions/s1/messages", headers=_auth()).json()["messages"]
     assistant = next(m for m in msgs if m["role"] == "assistant" and m["id"] == 1)

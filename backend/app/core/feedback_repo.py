@@ -117,6 +117,10 @@ class FeedbackRepo:
         return state.get("feedback") is not None
 
     def current_state(self, message_id: int) -> dict[str, Any]:
+        """当前态投影。字段名对齐消息列表契约（p2.10）：**rating** 而非 DB 列名
+        feedback——p2.8~p2.9 期间 POST 回执里的评分字段与前端 MessageFeedback
+        类型（rating）不一致，导致点赞回执解析出 rating=undefined、图标被打回空心。
+        """
         with self.engine.connect() as conn:
             row = conn.execute(
                 text(
@@ -126,12 +130,12 @@ class FeedbackRepo:
                 {"m": message_id},
             ).mappings().first()
         if row is None:
-            return {"id": message_id, "feedback": None, "tags": None, "comment": None, "at": None}
+            return {"id": message_id, "rating": None, "tags": None, "comment": None, "at": None}
         tags = row["feedback_tags"]
         at = row["feedback_at"]
         return {
             "id": row["id"],
-            "feedback": row["feedback"],
+            "rating": row["feedback"],
             "tags": json.loads(tags) if tags else [],
             "comment": row["feedback_comment"],
             "at": at.isoformat() if hasattr(at, "isoformat") else at,

@@ -5,6 +5,17 @@
 
 ---
 
+## v2.0.0-p2.10 — 反馈回执契约收敛（rating）+ 部署磁盘防护（2026-10-29）
+
+**类型**：缺陷修复（根因修复）+ 运维
+
+- **真根因**：`feedback_repo.current_state()` 的评分字段用了 DB 列名 `feedback`，而消息列表契约与前端类型是 `rating`——POST 回执解析出 `rating=undefined`，点赞图标被打回空心。**GET 列表用 rating、POST 回执用 feedback，两接口字段名不一致**。统一为 `rating`（前端类型本就如此，前端零改动）。
+- 前端契约守护：回执缺 rating 视为失败（回滚 + 就地报错），契约再坏也不会静默空心。
+- 验证方式升级：Playwright 真实浏览器线上实测（点赞保持/取消保持/6 连点节流/恢复），不再只依赖单元测试。
+- 磁盘防护：部署 workflow 末尾加 `builder prune --keep-storage 4g` + dangling image 清理（多轮 build 曾积压 ~30G 可回收层致瞬时打满）。
+
+---
+
 ## v2.0.0-p2.8 — 反馈图标即时激活修复 + 节流（2026-10-29）
 
 **类型**：缺陷修复

@@ -55,3 +55,13 @@ jobs:
           code=$(curl -s -o /dev/null -w "%{http_code}" -m 10 https://office.nianan.site/)
           [ "$code" = "200" ] || { echo "首页返回 $code"; exit 1; }
           echo "冒烟通过"
+
+      # p2.10：磁盘防护——多轮部署会积压 BuildKit 缓存与旧镜像层（曾致磁盘瞬时
+      # 打满、rsync "disk full" 部署失败）。每次部署后保留 4GB 构建缓存（下次构建
+      # 仍快），清掉其余可回收层；dangling 镜像一并清。只影响可重建资源，不碰容器。
+      - name: 清理构建缓存与悬空镜像（防磁盘积压）
+        if: always()
+        run: |
+          docker builder prune -f --keep-storage 4g || true
+          docker image prune -f || true
+          df -h / | tail -1

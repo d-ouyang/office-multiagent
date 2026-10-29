@@ -151,7 +151,9 @@ async function feedbackError(res: Response): Promise<never> {
   throw new Error(String(data?.detail?.message ?? `提交失败（HTTP ${res.status}）`));
 }
 
-/** 提交/覆盖反馈（点赞可不带原因；点踩须至少 1 tag 或有文字——服务端也校验）。 */
+/** 提交/覆盖反馈（点赞可不带原因；点踩须至少 1 tag 或有文字——服务端也校验）。
+ *  p2.10：契约守护——回执缺 rating 字段视为失败（p2.8/p2.9 的"图标打回空心"
+ *  事故根因就是后端回执字段名 feedback 与前端 rating 不一致，静默解析成 undefined）。 */
 export async function submitMessageFeedback(
   sessionId: string,
   messageId: number,
@@ -169,7 +171,11 @@ export async function submitMessageFeedback(
   );
   if (!res.ok) await feedbackError(res);
   const data = await res.json();
-  return data.feedback as MessageFeedback;
+  const state = data.feedback as MessageFeedback;
+  if (!state || (state.rating !== 'like' && state.rating !== 'dislike')) {
+    throw new Error('反馈回执格式异常，请刷新页面后重试');
+  }
+  return state;
 }
 
 /** 取消当前反馈（流水保留）。返回是否存在过当前态。 */
