@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     # 重试是「立即再打一次」，对 DB/网络瞬时抖动几乎无效。只改间隔、不改重试次数，
     # 因此不引入新的副作用风险（非幂等工具的重试次数与现状完全一致）。
     tool_retry_backoff: float = 0.3
+    # v2.0.0-p5.4：checkpointer 后端。memory=缺省，保持现状（每次调用独立 MemorySaver，
+    # 进程重启即丢，续跑走 routes 的重跑式）；sqlite=进程级共享 + 落盘，跨重启可恢复，
+    # 且 resume 时不重跑已完成的节点（探针实测：memory 新实例会静默从头重跑）。
+    checkpointer_backend: str = "memory"
+    checkpoint_sqlite_path: str = "data/checkpoints.sqlite"
     # v2.0.0-p1.5：ReAct 协议开关灰度。json=文本协议（现状）；tool_calls=OpenAI 原生
     # function calling（模型不支持时自动回落 json 并告警，禁止硬开）；auto=按模型
     # supports_tools + 本轮工具 Schema 完整性自动选。缺省 json=fail-closed。

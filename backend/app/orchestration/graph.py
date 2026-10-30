@@ -11,7 +11,6 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 from typing_extensions import TypedDict
@@ -29,6 +28,7 @@ from ..core.token_budget import TaskTokenBudget, TokenLimitReached
 from ..core.db import get_engine
 from .agents import build_default_registry, build_registry_for_spec, get_agent_spec
 from .brain import make_brain
+from .checkpoints import get_checkpointer
 from .orchestrator import compose_subtask_text, run_dag
 from .react import run_react
 from .tools import ToolRegistry
@@ -476,7 +476,7 @@ def run_task(
         if sink is not None:
             sink(ev)
 
-    checkpointer = MemorySaver() if token_pool is not None else None
+    checkpointer = get_checkpointer() if token_pool is not None else None
     graph = build_graph(
         emitter,
         emit,
@@ -603,7 +603,20 @@ def resume_task(
     emitter: RunEventEmitter,
     emit: Callable[[Event], None],
 ) -> dict[str, Any]:
-    """充值后续跑：对同一 graph + thread_id 发 Command(resume=True)。"""
-    state = graph.invoke(Command(resume=True), {"configurable": {"thread_id": thread_id}})
+    """充值后续跑：对同一 graph + thread_id 发 Command(resume=True)。
+
+    p5.4：续跑前**显式校验存档存在**。探针实测（langgraph 1.2.16）：对没有存档的
+    thread 发 `Command(resume=True)`，LangGraph 不报错，而是**静默从头重跑**——
+    持久化一旦失效，就会退化成重复执行已完成节点、重复计费，且没有任何告警。
+    因此这里先 `get_state` 确认确有挂起点，否则明确抛错，把问题暴露在续跑之前。
+    """
+    cfg = {"configurable": {"thread_id": thread_id}}
+    snap = graph.get_state(cfg)
+    if snap is None or not getattr(snap, "next", None):
+        raise ValueError(
+            f"没有可续跑的挂起任务（thread_id={thread_id}）：存档不存在或该任务已结束。"
+            "请检查 checkpointer_backend 配置与存档是否仍在。"
+        )
+    state = graph.invoke(Command(resume=True), cfg)
     emit(emitter.done(state.get("route", "single")))
     return state

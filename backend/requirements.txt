@@ -39,6 +39,9 @@ pyyaml==6.0.2                # 模型注册表等 YAML 配置（配置驱动，�
 langchain==1.4.6
 langchain-core==1.6.12
 langgraph==1.2.16
+# v2.0.0-p5.4：可选的 sqlite 持久化 checkpointer（CHECKPOINTER_BACKEND=sqlite 时才用到，
+# 缺省 memory 不改变现状）。版本与 langgraph-checkpoint 4.3.0 配套。
+langgraph-checkpoint-sqlite==3.1.2
 langchain-openai==1.7.2
 langchain-community==0.4.2
 langchain-text-splitters==1.1.3
