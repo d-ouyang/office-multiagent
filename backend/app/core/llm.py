@@ -155,7 +155,7 @@ def chat(
     tools 非空时下发 tools/tool_choice，响应里的 tool_calls 归一化为 ToolCall。
     """
     last_err: Exception | None = None
-    for attempt in range(3):
+    for attempt in range(settings.llm_max_retries + 1):
         try:
             return _chat_once(
                 model_id,
@@ -170,17 +170,44 @@ def chat(
             )
         except LlmError as e:
             last_err = e
-            # 只重试网络类瞬时错误；4xx（鉴权/参数）重试无意义
-            if not _is_transient(e) or attempt == 2:
+            # 只重试网络类瞬时错误与限流/5xx；其余 4xx（鉴权/参数）重试无意义
+            if not _is_transient(e) or attempt >= settings.llm_max_retries:
                 raise
-            time.sleep(0.8 * (attempt + 1))
+            time.sleep(_retry_delay(e, attempt))
     raise last_err  # pragma: no cover - 循环必 return/raise
 
 
+#: 可重试的 HTTP 状态码——限流与服务端瞬时错误；其余 4xx（鉴权/参数）重试无意义。
+_TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+
+
+def _status_code_of(e: LlmError) -> int | None:
+    """从 `_chat_once` 的 `LLM 返回 <code>: <body>` 错误里提取状态码（无则 None）。"""
+    msg = str(e)
+    if not msg.startswith("LLM 返回 "):
+        return None
+    token = msg[len("LLM 返回 "):].split(":", 1)[0].strip()
+    return int(token) if token.isdigit() else None
+
+
 def _is_transient(e: LlmError) -> bool:
-    """网络类瞬时错误（DNS/连接/超时/5xx）才值得重试。"""
+    """限流（429）/ 服务端瞬时错误（5xx）/ 网络类错误才值得重试。
+
+    p5.1：原先纯字符串匹配只覆盖 502/503/504，**429 与 500 完全不重试**——而 multi
+    层内并行（dag_max_concurrency=3）多个子任务同时打同一模型时，限流 429 恰是最需要
+    退避重试的场景。现在状态码优先结构化判定，网络类错误保留字符串兜底。
+    """
+    code = _status_code_of(e)
+    if code is not None:
+        return code in _TRANSIENT_STATUS
     msg = str(e)
     return any(k in msg for k in ("ConnectError", "Timeout", "timed out", "Name or service", "Connection", " 502", " 503", " 504"))
+
+
+def _retry_delay(e: LlmError, attempt: int) -> float:
+    """退避时长：429 用独立（更长）基数——限流要等服务端窗口，与网络抖动不同量级。"""
+    base = settings.llm_retry_backoff_429 if _status_code_of(e) == 429 else settings.llm_retry_backoff
+    return base * (attempt + 1)
 
 
 def _chat_once(
@@ -280,7 +307,7 @@ def chat_stream(
     raw_calls: dict[int, dict[str, Any]] = {}
     last_err: Exception | None = None
     emitted_any = False  # 已向用户吐过任何内容（正文/思考）：重试会重复输出，只能如实终止
-    for attempt in range(3):
+    for attempt in range(settings.llm_max_retries + 1):
         parts.clear()
         usage = {}
         raw_calls.clear()
@@ -343,7 +370,7 @@ def chat_stream(
             last_err = e if isinstance(e, LlmError) else LlmError(f"LLM 请求失败：{type(e).__name__}: {e}")
             if emitted_any:
                 raise last_err from e  # 已出字：重试会重复输出，如实终止
-            if not _is_transient(last_err) or attempt == 2:
+            if not _is_transient(last_err) or attempt >= settings.llm_max_retries:
                 raise last_err from e
-            time.sleep(0.8 * (attempt + 1))
+            time.sleep(_retry_delay(last_err, attempt))
     raise last_err  # pragma: no cover

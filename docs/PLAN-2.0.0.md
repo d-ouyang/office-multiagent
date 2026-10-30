@@ -328,15 +328,20 @@ CREATE TABLE IF NOT EXISTS `message_feedback` (
 - 不引入 LangSmith、不引入 LangChain Tool 层。
 - 不改 `TaskState` 的字段与合并语义。
 
-### 7.2 p5.1 · LLM 调用退避重试
+### 7.2 p5.1 · LLM 重试覆盖面补全 + 参数配置化
 
-- 在 `brain.py` 收敛一处共享的「带重试的 LLM 调用」辅助，两条协议路径（json / tool_calls）与流式、非流式共用。
-- 只对**可重试的传输类失败**重试（`LlmError` 及其超时/连接类），不对业务错误（参数解析失败、JSON 解析失败、配额不足）重试。
-- 指数退避，次数与间隔走 `core/config.py` 配置（缺省小幅开启，例如 2 次重试、基础间隔 0.5s、上限封顶）。
-- 重试期间不重复发 `content_delta`（流式路径必须**在拿到首个有效响应前不推正文**，避免用户看到两段开头）；已产生的逐字推送在重试前发生时要按现有「chunked/streamed」语义处理，不重复。
-- `reservation`（token 两段式）在重试时**不重复 reserve**：失败即 cancel、成功才 complete 的语义保持不变。
-- 全部重试耗尽后才走原有降级文案，且文案保留（不掩盖失败）。
-- 测试：mock `chat_fn` 前 N 次抛 `LlmError`、第 N+1 次成功 → 断言最终成功、调用次数正确、`usage` 只累计成功那次、降级路径在耗尽后仍生效。
+> **实施前修正（2026-10-31）**：初版计划写「LLM 调用零重试」，经读 `core/llm.py` 核实**不成立**——非流式 `chat`（`for attempt in range(3)`）与流式 `chat_stream` 自 p6.7b 起就带 3 次尝试 + 退避，流式还有「已出字不重试（`emitted_any`）防重复输出」，`brain.py` 的 `except LlmError` 只是**重试耗尽后**的降级。既有测试见 `tests/test_llm.py`「p6.7b 网络重试」组。真实缺口是下面三条，本步只补这三条。
+
+- **429 限流不重试**：`_is_transient` 仅匹配 `ConnectError/Timeout/timed out/Name or service/Connection/502/503/504`。multi 层内并行（`dag_max_concurrency=3`）多个子任务同时打同一模型，限流 429 是真实风险，而 429 恰恰最需要退避重试。
+- **500 未纳入**（只有 502/503/504）。
+- **重试参数硬编码**：`range(3)`、`0.8*(attempt+1)` 写死在两处循环里，生产想调只能改代码。
+
+做法：
+- 可重试判定由纯字符串匹配升级为「**状态码结构化判定 + 网络错误字符串兜底**」：状态码 ∈ {429, 500, 502, 503, 504} 可重试；401/403/400 等其余 4xx 维持不重试。
+- 429 单独用更长退避（限流需要等待，与网络抖动不同量级）。
+- `core/config.py` 新增 `llm_max_retries`（缺省 2，即总尝试 3 次，与现状一致）、`llm_retry_backoff`（缺省 0.8，与现状一致）、`llm_retry_backoff_429`（缺省 2.0）。
+- **保持既有红线不变**：流式已出字（`emitted_any`）绝不重试；非瞬时错误立即抛；`reservation` 失败 cancel / 成功 complete 的两段式语义不动。
+- 测试：429 重试后成功、500 重试后成功、401 仍只调 1 次、配置项生效（次数与退避）、流式 429 在首块前可重试且出字后仍不重试。
 
 ### 7.3 p5.2 · DAG 层内子任务失败隔离
 

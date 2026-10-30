@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     # Brain 用的对话大模型 id（config/models.yaml 注册表里的 id）
     llm_brain_model: str = "deepseek-chat"
     llm_timeout: float = 120.0
+    # v2.0.0-p5.1：LLM 重试参数配置化（此前 range(3) 与 0.8*(attempt+1) 硬编码在
+    # core/llm.py 两条路径里）。llm_max_retries=额外重试次数，总尝试 = 1 + 该值，
+    # 缺省 2 与 p6.7b 现状一致；0 表示完全关闭重试。
+    llm_max_retries: int = 2
+    llm_retry_backoff: float = 0.8        # 网络/5xx 退避基数：sleep = 基数 × (attempt+1)
+    llm_retry_backoff_429: float = 2.0    # 限流退避基数：429 需要等更久，与网络抖动不同量级
     # v2.0.0-p1.5：ReAct 协议开关灰度。json=文本协议（现状）；tool_calls=OpenAI 原生
     # function calling（模型不支持时自动回落 json 并告警，禁止硬开）；auto=按模型
     # supports_tools + 本轮工具 Schema 完整性自动选。缺省 json=fail-closed。

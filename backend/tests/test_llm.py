@@ -3,7 +3,16 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.core.llm import LlmError, LlmNotConfigured, chat, chat_stream, resolve_model
+from app.core.llm import (
+    LlmError,
+    LlmNotConfigured,
+    _is_transient,
+    _retry_delay,
+    _status_code_of,
+    chat,
+    chat_stream,
+    resolve_model,
+)
 
 
 _TOOLS = [{
@@ -361,3 +370,108 @@ def test_chat_includes_reasoning_effort_only_when_set(monkeypatch):
         transport=httpx.MockTransport(handler),
     )
     assert "reasoning_effort" not in seen["body"]
+
+
+# ---------- p5.1 重试覆盖面补全（429/500）+ 参数配置化 ----------
+def test_status_code_of_parses_llm_error():
+    assert _status_code_of(LlmError("LLM 返回 429: too many requests")) == 429
+    assert _status_code_of(LlmError("LLM 返回 502: bad gateway")) == 502
+    assert _status_code_of(LlmError("LLM 请求失败：ConnectError: x")) is None
+
+
+def test_transient_covers_429_and_500_but_not_other_4xx():
+    assert _is_transient(LlmError("LLM 返回 429: rate limited"))
+    assert _is_transient(LlmError("LLM 返回 500: internal error"))
+    assert _is_transient(LlmError("LLM 返回 502: bad gateway"))
+    assert not _is_transient(LlmError("LLM 返回 401: bad key"))
+    assert not _is_transient(LlmError("LLM 返回 400: bad request"))
+
+
+def test_retry_delay_429_uses_longer_backoff(monkeypatch):
+    monkeypatch.setattr(settings, "llm_retry_backoff", 0.8)
+    monkeypatch.setattr(settings, "llm_retry_backoff_429", 2.0)
+    assert _retry_delay(LlmError("LLM 返回 429: x"), 0) == 2.0
+    assert _retry_delay(LlmError("LLM 返回 429: x"), 1) == 4.0
+    assert _retry_delay(LlmError("LLM 返回 502: x"), 0) == 0.8
+
+
+def test_chat_retries_429_then_succeeds(monkeypatch):
+    """multi 层内并行打同一模型时最容易撞 429——必须能退避重试救回。"""
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("app.core.llm.time.sleep", sleeps.append)
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(429, json={"error": "rate limited"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": 1}})
+
+    res = chat("deepseek-chat", [{"role": "user", "content": "hi"}], transport=httpx.MockTransport(handler))
+    assert res.content == "ok"
+    assert calls["n"] == 3  # 429 两次 + 成功一次
+    assert sleeps == [2.0, 4.0]  # 429 走更长退避基数，不是网络错误的 0.8
+
+
+def test_chat_retries_500_then_succeeds(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    monkeypatch.setattr("app.core.llm.time.sleep", lambda _s: None)
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(500, json={"error": "internal"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": 1}})
+
+    res = chat("deepseek-chat", [{"role": "user", "content": "hi"}], transport=httpx.MockTransport(handler))
+    assert res.content == "ok"
+    assert calls["n"] == 2
+
+
+def test_chat_no_retry_on_400(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        return httpx.Response(400, json={"error": "bad request"})
+
+    with pytest.raises(LlmError, match="400"):
+        chat("deepseek-chat", [{"role": "user", "content": "hi"}], transport=httpx.MockTransport(handler))
+    assert calls["n"] == 1  # 参数错误重试无意义
+
+
+def test_chat_max_retries_zero_disables_retry(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    monkeypatch.setattr(settings, "llm_max_retries", 0)
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        return httpx.Response(502, json={"error": "bad gateway"})
+
+    with pytest.raises(LlmError, match="502"):
+        chat("deepseek-chat", [{"role": "user", "content": "hi"}], transport=httpx.MockTransport(handler))
+    assert calls["n"] == 1  # 配置关闭后不再重试
+
+
+def test_chat_stream_retries_429_before_first_chunk(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    monkeypatch.setattr("app.core.llm.time.sleep", lambda _s: None)
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, json={"error": "rate limited"})
+        return _sse(['{"choices":[{"delta":{"content":"你好"}}]}', "[DONE]"])
+
+    got: list[str] = []
+    chat_stream(
+        "deepseek-chat", [{"role": "user", "content": "hi"}], on_chunk=got.append,
+        transport=httpx.MockTransport(handler),
+    )
+    assert got == ["你好"]  # 首块前 429 可重试，无重复输出
+    assert calls["n"] == 2
