@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     llm_max_retries: int = 2
     llm_retry_backoff: float = 0.8        # 网络/5xx 退避基数：sleep = 基数 × (attempt+1)
     llm_retry_backoff_429: float = 2.0    # 限流退避基数：429 需要等更久，与网络抖动不同量级
+    # v2.0.0-p5.3：工具级重试退避基数。此前 ToolRegistry.call 缺省 backoff=0.0，
+    # 重试是「立即再打一次」，对 DB/网络瞬时抖动几乎无效。只改间隔、不改重试次数，
+    # 因此不引入新的副作用风险（非幂等工具的重试次数与现状完全一致）。
+    tool_retry_backoff: float = 0.3
     # v2.0.0-p1.5：ReAct 协议开关灰度。json=文本协议（现状）；tool_calls=OpenAI 原生
     # function calling（模型不支持时自动回落 json 并告警，禁止硬开）；auto=按模型
     # supports_tools + 本轮工具 Schema 完整性自动选。缺省 json=fail-closed。

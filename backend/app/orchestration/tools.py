@@ -10,6 +10,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ..core.config import settings
+
 
 @dataclass
 class ToolResult:
@@ -100,10 +102,18 @@ class ToolRegistry:
         name: str,
         *,
         max_retries: int = 2,
-        backoff: float = 0.0,
+        backoff: float | None = None,
         **kwargs: Any,
     ) -> ToolResult:
-        """带重试的工具调用。工具缺失 → CAPABILITY_MISSING（不抛、不编）。"""
+        """带重试的工具调用。工具缺失 → CAPABILITY_MISSING（不抛、不编）。
+
+        p5.3：`backoff` 缺省改为读 `settings.tool_retry_backoff`（缺省 0.3s）。
+        原缺省 0.0 意味着「失败后立即再打一次」，对 DB 连接抖动、对端限流这类需要
+        短暂等待的瞬时错误基本无效。显式传 `backoff=0` 仍可关闭退避（测试沿用）。
+        重试次数不变，因此非幂等工具的副作用风险与现状一致。
+        """
+        if backoff is None:
+            backoff = settings.tool_retry_backoff
         fn = self._tools.get(name)
         if fn is None:
             return ToolResult(
