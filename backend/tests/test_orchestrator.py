@@ -3,6 +3,7 @@ import pytest
 
 from app.core.decomposer import DAG, Subtask
 from app.core.events import EventType, RunEventEmitter
+from app.core.runs import RunCancelled
 from app.orchestration.react import AgentResult, StubBrain, run_react
 from app.orchestration.tools import ToolRegistry
 from app.orchestration.orchestrator import compose_subtask_text, run_dag, topo_levels
@@ -200,3 +201,91 @@ def test_run_dag_events_seq_unique_under_parallel():
     seqs = [e.seq for e in events]
     assert len(set(seqs)) == len(seqs)            # 并发下无重复 seq
     assert sorted(seqs) == list(range(1, len(seqs) + 1))  # 且连续无跳号
+
+
+# --------------------------------------------------------------------------- #
+# p5.2：DAG 层内子任务失败隔离（一个子任务炸，不再拖垮整层）
+# --------------------------------------------------------------------------- #
+def _ok_runner(st, upstream=None):
+    return run_react(
+        st.intent, StubBrain(f"{st.id}-done"), ToolRegistry(), emitter=RunEventEmitter("s", st.id)
+    )
+
+
+def test_run_dag_isolates_failure_in_serial_layer():
+    dag = _dag([("a", []), ("b", [])])
+    events: list = []
+
+    def runner(st, upstream=None):
+        if st.id == "a":
+            raise RuntimeError("工具层炸了")
+        return _ok_runner(st, upstream)
+
+    results = run_dag(
+        dag, emitter=RunEventEmitter("r", "t"), emit=events.append,
+        agent_runner=runner, max_concurrency=1,
+    )
+    assert results["b"].final == "b-done"      # 同层另一个成果保留（此前会被一并丢弃）
+    assert results["b"].hit_cap is False
+    assert results["a"].hit_cap is True        # 失败如实标注，不伪装成功
+    assert "工具层炸了" in results["a"].final
+    assert any(e.type == EventType.ERROR for e in events)  # 失败在事件流可见
+
+
+def test_run_dag_isolates_failure_in_parallel_layer():
+    dag = _dag([("a", []), ("b", []), ("c", [])])
+
+    def runner(st, upstream=None):
+        if st.id == "b":
+            raise ValueError("boom")
+        return _ok_runner(st, upstream)
+
+    results = run_dag(
+        dag, emitter=RunEventEmitter("r", "t"), emit=lambda e: None,
+        agent_runner=runner, max_concurrency=3,
+    )
+    assert results["a"].final == "a-done"
+    assert results["c"].final == "c-done"
+    assert results["b"].hit_cap is True
+    assert list(results) == ["a", "b", "c"]  # 仍按 dag.subtasks 顺序，确定性不变
+
+
+def test_run_dag_failure_does_not_block_next_layer():
+    dag = _dag([("a", []), ("b", ["a"])])
+    seen_upstream: dict = {}
+
+    def runner(st, upstream=None):
+        if st.id == "a":
+            raise RuntimeError("上游失败")
+        seen_upstream.update(upstream or {})
+        return _ok_runner(st, upstream)
+
+    results = run_dag(
+        dag, emitter=RunEventEmitter("r", "t"), emit=lambda e: None,
+        agent_runner=runner, max_concurrency=1,
+    )
+    assert results["b"].final == "b-done"          # 后续层仍执行
+    assert seen_upstream["a"].hit_cap is True      # 下游能感知上游未完成
+
+
+def test_failed_upstream_is_marked_unfinished_in_subtask_text():
+    failed = AgentResult(
+        final="子任务 a 执行失败：RuntimeError: x", steps=[], iterations=0, hit_cap=True
+    )
+    text = compose_subtask_text("analysis", {"a": failed})
+    assert "未完成" in text
+    assert "不要当作已完成的数据" in text  # §四.5：失败不可伪装成结果
+
+
+def test_run_dag_cancel_still_propagates_through_guard():
+    """用户暂停不是失败——隔离器绝不能把 RunCancelled 吞成单个子任务失败。"""
+    dag = _dag([("a", []), ("b", [])])
+
+    def runner(st, upstream=None):
+        raise RunCancelled("用户暂停")
+
+    with pytest.raises(RunCancelled):
+        run_dag(
+            dag, emitter=RunEventEmitter("r", "t"), emit=lambda e: None,
+            agent_runner=runner, max_concurrency=1,
+        )

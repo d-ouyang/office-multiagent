@@ -12,6 +12,7 @@ p4.3b：层内并行落地——同层无依赖子任务用 ThreadPoolExecutor �
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -20,6 +21,8 @@ from ..core.events import Event, RunEventEmitter
 from ..core.runs import RunCancelled
 from .react import AgentResult, StubBrain, run_react
 from .tools import ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 #: 单个上游结果进下游任务文本的截断上限（p6.7/p6.9 教训：进 LLM 上下文必须摘要化）
 UPSTREAM_MAX_CHARS = 2000
@@ -126,6 +129,49 @@ def _run_subtask(
     return st.id, res
 
 
+def _failed_subtask_result(st: Subtask, exc: Exception) -> AgentResult:
+    """p5.2：子任务失败的如实结果——`hit_cap=True` 复用「未完成」语义。
+
+    下游 `compose_subtask_text` 对 `hit_cap` 的分支会标注「未完成」并明确提示不要当作
+    已完成的数据（§四.5：失败不可伪装成结果），因此不必新增状态字段，也不会被下游
+    误当成正常产出引用。
+    """
+    return AgentResult(
+        final=f"子任务 {st.id}（{st.agent_type}）执行失败：{type(exc).__name__}: {exc}",
+        steps=[],
+        iterations=0,
+        hit_cap=True,
+    )
+
+
+def _run_subtask_guarded(
+    st: Subtask,
+    agent_runner: Callable[[Subtask, dict[str, AgentResult]], AgentResult],
+    upstream: dict[str, AgentResult],
+    emitter: RunEventEmitter,
+    emit: Callable[[Event], None],
+) -> tuple[str, AgentResult]:
+    """p5.2：单个子任务失败不再拖垮整层——隔离并如实标注，保留同层其他子任务成果。
+
+    此前 `as_completed` 里的 `fut.result()` 直接把子任务异常抛出，同层其余子任务即使
+    已经跑完、结果也一并丢弃（多层 DAG 下尤其可惜）。
+
+    `RunCancelled` 必须继续上抛：用户主动暂停不是失败，若被隔离吞成「某个子任务失败」
+    就会继续往下跑，违背取消语义（tests/test_pause_resume.py 有对应锚）。
+    """
+    try:
+        return _run_subtask(st, agent_runner, upstream, emitter, emit)
+    except RunCancelled:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 隔离是刻意的：失败要可见，但不扩散
+        logger.exception("DAG 子任务失败已隔离 subtask=%s agent=%s", st.id, st.agent_type)
+        emit(emitter.error(f"子任务 {st.id} 执行失败：{exc}", code="SUBTASK_FAILED"))
+        # 收尾状态：_run_subtask 的 done 在 runner 之后，异常时没发出，这里补上，
+        # 否则前端该子任务的 Agent 徽章会一直停在 running。
+        emit(emitter.status(st.agent_type, "done", subtask_id=st.id))
+        return st.id, _failed_subtask_result(st, exc)
+
+
 def run_dag(
     dag: DAG,
     *,
@@ -145,6 +191,9 @@ def run_dag(
     依赖顺序不受影响。`max_concurrency<=1` 或层内只有 1 个子任务时走串行基线。
 
     p7.1：`should_cancel()`——每个子任务开始前检查，命中即抛 RunCancelled（用户暂停）。
+    p5.2：单个子任务失败（异常）经 `_run_subtask_guarded` 隔离为 `hit_cap=True` 的失败
+    结果，同层其余子任务与后续层继续执行，不再整层中断；失败经 error 事件与 final 文案
+    如实可见，下游由 `compose_subtask_text` 的 hit_cap 分支感知「上游未完成」。
     """
     results: dict[str, AgentResult] = {}
     for level in topo_levels(dag):
@@ -155,7 +204,7 @@ def run_dag(
             for st in level:
                 if should_cancel is not None and should_cancel():
                     raise RunCancelled("用户暂停")
-                st_id, res = _run_subtask(st, agent_runner, _upstream_of(st, results), emitter, emit)
+                st_id, res = _run_subtask_guarded(st, agent_runner, _upstream_of(st, results), emitter, emit)
                 results[st_id] = res
             continue
         # 层内并行：先取好各子任务的上游快照（本层依赖都已满足，results 不再变动）
@@ -163,11 +212,13 @@ def run_dag(
         workers = min(len(level), max_concurrency)
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dag") as pool:
             futures = [
-                pool.submit(_run_subtask, st, agent_runner, upstreams[st.id], emitter, emit)
+                pool.submit(_run_subtask_guarded, st, agent_runner, upstreams[st.id], emitter, emit)
                 for st in level
             ]
             for fut in as_completed(futures):
-                st_id, res = fut.result()  # 子任务异常在这里抛出（与串行一致：失败即中断）
+                # p5.2：子任务异常已在 _run_subtask_guarded 内隔离为失败结果，
+                # 这里不再抛出；只有 RunCancelled（用户暂停）会穿透上抛终止整层。
+                st_id, res = fut.result()
                 results[st_id] = res
     # 并行完成顺序不固定 → 按 dag.subtasks 顺序重建，保证汇总文本确定（可对账）
     return {st.id: results[st.id] for st in dag.subtasks}
