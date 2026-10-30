@@ -45,10 +45,10 @@
 | p2.3 | 管理端「意见反馈」页 | 已完成（2026-10-27） | `v2.0.0-p2.3` |
 | p3.1 | 侧边栏标题渐变蒙层 | 已完成（2026-10-27） | `v2.0.0-p3.1` |
 | p4.1 | 对话区居中布局 1200px | 已完成（2026-10-27） | `v2.0.0-p4.1` |
-| p5.1 | LLM 调用退避重试 | 进行中 | 不打 tag（见 §7.0） |
-| p5.2 | DAG 层内子任务失败隔离 | 进行中 | 不打 tag（见 §7.0） |
-| p5.3 | 工具级重试退避生效 | 进行中 | 不打 tag（见 §7.0） |
-| p5.4 | checkpointer 持久化 + 真续跑 | 进行中 | 不打 tag（见 §7.0） |
+| p5.1 | LLM 重试补 429/500 + 参数配置化 | 已完成（2026-10-31） | 不打 tag（见 §7.0） |
+| p5.2 | DAG 层内子任务失败隔离 | 已完成（2026-10-31） | 不打 tag（见 §7.0） |
+| p5.3 | 工具级重试退避生效 | 已完成（2026-10-31） | 不打 tag（见 §7.0） |
+| p5.4 | checkpointer 持久化 + 真续跑 | 已完成（2026-10-31，HTTP 接入留后续） | 不打 tag（见 §7.0） |
 
 ---
 
@@ -359,12 +359,27 @@ CREATE TABLE IF NOT EXISTS `message_feedback` (
 
 ### 7.5 p5.4 · checkpointer 持久化 + 真续跑
 
-- 新增可配置项选择 `memory | sqlite`，**缺省 `memory`**（向后兼容，不改变现有行为；生产切换需显式配置）。
-- sqlite 模式下 checkpointer **跨 `run_task` 共享**（当前每次新建 `MemorySaver`，无法跨调用找回存档），落盘路径走配置。
-- 恢复 `Command(resume=True)` 真续跑路径（`graph.py` 的 `resume_task` 目前基本为死代码），HTTP 层在持久化模式下走真续跑、内存模式保持现有重跑式。
-- **关键安全性论证**：当前唯一的 `interrupt()` 落在 `quota` 门（`set_entry_point("quota")`，位于 planner 之前、`reserve` 失败时）。恢复后仅重试 `reserve` 再进 planner，**该位置零副作用**，因此不需要为节点幂等做改造。
-- **边界写清**：若未来把 `interrupt()` 挪进 DAG 内部（如单子任务预算超限挂起），届时 `tools_write`/`tools_export` 等写文件节点必须幂等，否则重放会重复副作用——列入文档注意事项，不在本期实现。
-- 测试：sqlite 模式下 reserve 失败挂起 → 换新进程/新 checkpointer 实例按同 `thread_id` 恢复 → 能从断点续跑而非从头重跑；内存模式行为与现状一致。
+- 新增配置 `checkpointer_backend: memory | sqlite` 与 `checkpoint_sqlite_path`，**缺省 `memory`**（向后兼容，不改变现有行为；生产切换需显式配置）。
+- `memory` 模式**每次新建 `MemorySaver`**，严格保持历史行为，不做隐式共享（避免影响既有测试与线上语义）；`sqlite` 模式为进程级共享单例，落盘、跨重启可恢复。
+- 新增 `orchestration/checkpoints.py` 统一收口；`graph.py` 的 `run_task` 改由 `get_checkpointer()` 取实例。
+- `resume_task` 恢复为可用的真续跑，并**在续跑前 `get_state` 校验存档存在**。
+- 新增依赖 `langgraph-checkpoint-sqlite==3.1.2`（与 `langgraph-checkpoint 4.3.0` 配套，装入后 langgraph 版本未漂移）。
+
+**探针实测结论（langgraph 1.2.16，本步的决策依据）**：
+
+| 场景 | resume 行为 | 已完成的前置节点 |
+| --- | --- | --- |
+| `SqliteSaver`，换新实例（≈跨进程重启） | 真续跑 | **未重跑** |
+| `MemorySaver` 换新实例 | **静默从头重跑，不报错** | 被重跑 |
+
+=> 对无存档的 thread 发 `Command(resume=True)` 不会抛错，而是静默重跑。生产上这意味着持久化一旦失效，会退化成**重复执行、重复计费且无告警**。这就是 `resume_task` 必须先 `get_state` 校验、校验不过直接抛错的原因（`tests/test_checkpoints.py` 有对应用例）。
+
+**关键安全性论证**：当前唯一的 `interrupt()` 落在 `quota` 门（`set_entry_point("quota")`，位于 planner 之前、`reserve` 失败时）。恢复后仅重试 `reserve` 再进 planner，**该位置零副作用**，因此不需要为节点幂等做改造。
+
+**本步明确不做**：HTTP 层 `/tasks/{id}/resume` 切换到真续跑。它涉及事件流（`emitter` 的 seq/turn_id 续接）与计费语义（真续跑后 `settle` 的 actual 口径变化），且只在 sqlite 模式下才有意义——在缺省 memory 的本期接入属于无收益改动。列入后续工作包，与「生产开启 sqlite」一起评估。
+
+**边界写清**：若未来把 `interrupt()` 挪进 DAG 内部（如单子任务预算超限挂起），届时 `tools_write`/`tools_export` 等写文件节点必须幂等，否则重放会重复副作用——列入文档注意事项，不在本期实现。
+- 测试：sqlite 模式下挂起 → 重置单例模拟进程重启 → 同 `thread_id` 恢复，断言**已完成节点未重跑**、挂起点重试；无存档时 resume 抛错而非静默重跑；memory 模式每次新建实例（现状不变）；未知后端 fail-closed。
 
 ### 7.6 验收与回滚
 

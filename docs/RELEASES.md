@@ -5,6 +5,22 @@
 
 ---
 
+## v2.0.0-p5.1~p5.4 — 执行器可靠性加固（2026-10-31，**本地分支，未打 tag / 未部署**）
+
+**类型**：稳定性（纯增量，缺省配置下线上行为零变化）
+
+> 分支 `feature/2.0.0-p5-reliability`。按用户要求**不打 tag**（打 `v*` tag 会触发 CI 自动部署生产），因此本条目先记为本地工作成果，上线时再补正式版本号。
+
+- **p5.1 LLM 重试补 429/500 + 参数配置化**：`_is_transient` 原先只做字符串匹配，**限流 429 与 500 完全不重试**——multi 层内并行打同一模型时，一次 429 就把已跑 N 步的子任务降级成「模型暂不可用」。改为状态码结构化判定（{429,500,502,503,504}）+ 网络错误字符串兜底；429 用独立更长的退避基数；`llm_max_retries` / `llm_retry_backoff` / `llm_retry_backoff_429` 配置化，缺省值与旧行为一致。
+- **p5.2 DAG 层内子任务失败隔离**：此前 `as_completed` 里 `fut.result()` 让单个子任务异常拖垮整层、丢弃同层已完成成果。新增 `_run_subtask_guarded`，失败转为 `hit_cap=True` 的如实结果并继续执行，下游复用现有「未完成」标注感知；**`RunCancelled` 仍上抛**，用户暂停不被吞。
+- **p5.3 工具级重试退避生效**：`ToolRegistry.call` 缺省 `backoff=0.0`（立即重试）改为读 `tool_retry_backoff`（0.3s）；只改间隔不改次数，非幂等工具副作用风险不变，显式 `backoff=0` 语义保留。
+- **p5.4 checkpointer 可选 sqlite 持久化 + 真续跑**：新增 `checkpointer_backend`（缺省 `memory`，每次新建、现状不变）与 `orchestration/checkpoints.py`；`resume_task` 恢复为真续跑，并**先校验存档存在**——探针实测 langgraph 1.2.16 对无存档 thread 发 `Command(resume=True)` 会**静默从头重跑**（已完成节点重复执行）而非报错，该校验避免持久化失效时重复计费且无告警。新依赖 `langgraph-checkpoint-sqlite==3.1.2`，langgraph 版本未漂移。
+- **两处盘点结论修正留痕**：①「LLM 零重试」不成立（p6.7b 起就有，brain 的 except 是耗尽后的降级）；②「venv_test 未装 langgraph」是 namespace package 导致的探测误判。
+- 测试：**460 passed / 3 skipped**（基线 438，净增 22，零回归）。
+- 详见 `docs/iterations/v2.0.0-p5.1-p5.4-reliability.md`。
+
+---
+
 ## v2.0.0-p2.10 — 反馈回执契约收敛（rating）+ 部署磁盘防护（2026-10-29）
 
 **类型**：缺陷修复（根因修复）+ 运维
