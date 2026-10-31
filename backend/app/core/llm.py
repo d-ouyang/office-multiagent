@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections.abc import Callable
@@ -20,6 +21,8 @@ import httpx
 
 from .config import settings
 from .model_registry import load_registry
+
+logger = logging.getLogger(__name__)
 
 
 class LlmError(RuntimeError):
@@ -173,7 +176,13 @@ def chat(
             # 只重试网络类瞬时错误与限流/5xx；其余 4xx（鉴权/参数）重试无意义
             if not _is_transient(e) or attempt >= settings.llm_max_retries:
                 raise
-            time.sleep(_retry_delay(e, attempt))
+            delay = _retry_delay(e, attempt)
+            # p5.1 可观测性：重试必须留痕，否则生产上"这次任务怎么慢了几秒"无从排查
+            logger.info(
+                "LLM 瞬时失败，%.1fs 后重试（第 %d/%d 次）model=%s 原因=%s",
+                delay, attempt + 1, settings.llm_max_retries, model_id, e,
+            )
+            time.sleep(delay)
     raise last_err  # pragma: no cover - 循环必 return/raise
 
 
@@ -372,5 +381,10 @@ def chat_stream(
                 raise last_err from e  # 已出字：重试会重复输出，如实终止
             if not _is_transient(last_err) or attempt >= settings.llm_max_retries:
                 raise last_err from e
-            time.sleep(_retry_delay(last_err, attempt))
+            delay = _retry_delay(last_err, attempt)
+            logger.info(
+                "LLM 流式首块前瞬时失败，%.1fs 后重试（第 %d/%d 次）model=%s 原因=%s",
+                delay, attempt + 1, settings.llm_max_retries, model_id, last_err,
+            )
+            time.sleep(delay)
     raise last_err  # pragma: no cover

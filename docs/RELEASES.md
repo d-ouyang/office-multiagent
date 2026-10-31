@@ -16,7 +16,9 @@
 - **p5.3 工具级重试退避生效**：`ToolRegistry.call` 缺省 `backoff=0.0`（立即重试）改为读 `tool_retry_backoff`（0.3s）；只改间隔不改次数，非幂等工具副作用风险不变，显式 `backoff=0` 语义保留。
 - **p5.4 checkpointer 可选 sqlite 持久化 + 真续跑**：新增 `checkpointer_backend`（缺省 `memory`，每次新建、现状不变）与 `orchestration/checkpoints.py`；`resume_task` 恢复为真续跑，并**先校验存档存在**——探针实测 langgraph 1.2.16 对无存档 thread 发 `Command(resume=True)` 会**静默从头重跑**（已完成节点重复执行）而非报错，该校验避免持久化失效时重复计费且无告警。新依赖 `langgraph-checkpoint-sqlite==3.1.2`，langgraph 版本未漂移。
 - **两处盘点结论修正留痕**：①「LLM 零重试」不成立（p6.7b 起就有，brain 的 except 是耗尽后的降级）；②「venv_test 未装 langgraph」是 namespace package 导致的探测误判。
-- 测试：**460 passed / 3 skipped**（基线 438，净增 22，零回归）。
+- 测试：**464 passed / 3 skipped**（基线 438，净增 26 = 单测 22 + 链路冒烟 4，零回归）。
+- **链路级冒烟**：新增 `tests/test_p5_reliability_smoke.py`（4 条）——用 MockTransport 注入 429/500/工具故障，但真实经过 `llm.chat` 重试与 brain→run_react 完整链路，验证"重试后任务能跑完、流式不重复输出、降级如实"。两条 LLM 路径补重试日志（原先重试过程零日志，生产无法排查）。
+- 手动验证用例与分工见 `docs/手动验证-p5-可靠性加固.md`。
 - 详见 `docs/iterations/v2.0.0-p5.1-p5.4-reliability.md`。
 
 ---
