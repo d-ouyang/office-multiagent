@@ -66,6 +66,8 @@ services:
       JWT_SECRET: ${GATEWAY_JWT_SECRET:-}
       # RAG 检索工具（容器内 127.0.0.1 是自己，必须走宿主打到 RAG FastAPI）
       RAG_BASE_URL: ${RAG_BASE_URL:-http://host.docker.internal:8000}
+      # rag_retrieve 内部鉴权（须与 RAG 侧 INTERNAL_SHARED_SECRET/OFFICE_GATEWAY_SHARED_SECRET 同值；漏传=401 请求未经过鉴权网关）
+      RAG_INTERNAL_SECRET: ${RAG_INTERNAL_SECRET:-}
       # DAG 层内最大并行子任务数（p4.3c；防 LLM 渠道限流，1=串行回落基线）
       DAG_MAX_CONCURRENCY: ${DAG_MAX_CONCURRENCY:-3}
       # 单任务运行中 token 硬上限（全员统一；与钱包余额/预扣门槛分开）
