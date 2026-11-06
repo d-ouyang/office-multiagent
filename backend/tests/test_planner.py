@@ -10,11 +10,50 @@ from app.main import app
 
 
 def test_simple_single_intent_low_score():
+    # p5.5：「查一下」已从 rag 关键词降级——弱信号词不再单独定路由。
+    # 本句无强实体词（订单/销售额/制度…），落 general（全 14 工具兜底）。
     p = plan("帮我查一下上个季度的销售汇总")
-    assert "rag" in p.intents or "analysis" in p.intents
+    assert p.intents == []
     d = decide(p)
     assert d.mode == "single"
+    assert d.primary_agent == "general"
     assert d.score < d.threshold
+
+
+def test_order_question_no_longer_hijacked_by_rag():
+    # p5.5 回归锚点：本地实测事故（2026-11-06）——
+    # 「查一下最近10笔订单」曾被 rag 关键词「查一下」劫持进知识库 Agent
+    # （工具池无 query_orders）。现在由强实体词「订单」确定性路由。
+    p = plan("查一下最近 10 笔订单")
+    assert p.intents == ["orders"]
+    d = decide(p)
+    assert d.mode == "single"
+    assert d.primary_agent == "data_analysis"
+
+
+def test_orders_keywords_cover_transaction_terms():
+    for text in ("9月订单数是多少", "退款了多少", "查一下销售额", "本月销量怎么样", "发货明细给我"):
+        assert "orders" in plan(text).intents, text
+
+
+def test_rag_questions_still_route_by_strong_words():
+    # 移除「查一下」后，制度/手册/检索类问句靠强词命中 rag。
+    assert plan("查一下报销制度").intents[0] == "rag"
+    assert plan("检索一下请假制度").intents[0] == "rag"
+    assert plan("帮我看看考勤手册").intents[0] == "rag"
+
+
+def test_orders_covered_by_analysis_and_report():
+    # analysis / report 的 Agent 均带 query_orders，orders 副意图不触发误拆。
+    p = plan("分析一下订单数据")
+    assert set(p.intents) == {"analysis", "orders"}
+    d = decide(p)
+    assert d.mode == "single"
+    assert d.primary_agent == "data_analysis"
+
+    p2 = plan("订单数据导出报表")
+    d2 = decide(p2)
+    assert d2.mode == "single"
 
 
 def test_multi_step_multi_intent_high_score_routes_multi():

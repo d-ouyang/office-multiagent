@@ -9,6 +9,12 @@ intents:
   analysis:
     keywords: [分析, 统计, 趋势, 对比, 占比, 洞察, 汇总分析, 相关性]
     agent: data_analysis
+  # p5.5：订单/交易是强实体信号，必须确定性路由到带 query_orders 的 Agent。
+  # 教训（2026-11-06 本地实测）：「查一下最近10笔订单」曾被 rag 的「查一下」劫持，
+  # 落进知识库 Agent（无订单工具）→ 401。orders 字母序在 rag 前，同分时稳定胜出。
+  orders:
+    keywords: [订单, 退款, 销售额, 销量, 发货]
+    agent: data_analysis
   cleaning:
     keywords: [清洗, 去重, 缺失值, 异常值, 格式化, 规范化, 补全, 脏数据]
     agent: data_cleaning
@@ -16,7 +22,9 @@ intents:
     keywords: [报表, 报告, 周报, 月报, 导出, 生成pdf, 生成excel, 生成word, ppt]
     agent: report_generation
   rag:
-    keywords: [查一下, 知识库, 文档里, 根据资料, 检索, 引用, 出处, 制度, 手册]
+    # p5.5：「查一下」是弱信号词，已移除——它曾把订单/数据类问句整体劫持进 rag。
+    # 制度/手册/知识库类问句靠「制度/手册/检索/知识库」等强词命中，不再依赖弱词。
+    keywords: [知识库, 文档里, 根据资料, 检索, 引用, 出处, 制度, 手册]
     agent: rag_retrieval
   visualization:
     keywords: [图表, 画图, 可视化, 柱状图, 折线图, 饼图, 看板, 大屏]
@@ -49,9 +57,10 @@ complexity:
 # 主意图对应 Agent 能顺序完成的意图集合。命中覆盖时保持 single，即使规则分超过阈值。
 # 只有真实跨能力交接才拆 multi。
 single_agent_covers:
-  analysis: [analysis, cleaning, report, visualization]
+  analysis: [analysis, cleaning, report, visualization, orders]
+  orders: [orders, analysis, cleaning, report, visualization]
   cleaning: [cleaning]
-  report: [report, analysis, cleaning, visualization, rag]
+  report: [report, analysis, cleaning, visualization, rag, orders]
   rag: [rag]
   visualization: [visualization]
   image_restore: [image_restore]

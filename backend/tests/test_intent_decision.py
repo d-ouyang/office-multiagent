@@ -87,3 +87,20 @@ def test_true_cross_capability_task_stays_multi():
         ),
     )
     assert decide(resolution.plan).mode == "multi"
+
+
+def test_decision_model_can_output_orders_intent():
+    # p5.5：ALLOWED_INTENTS 加入 orders——决策模型输出的 orders 不被过滤，
+    # 路由到 data_analysis（带 query_orders）。零命中问句触发决策模型。
+    resolution = resolve_intent(
+        "帮我看下最近卖得怎么样",
+        "",
+        chat_fn=_chat_outputs(
+            '{"intents":["orders"],"mode":"single","reason":"查询订单记录","confidence":0.9}'
+        ),
+    )
+    assert resolution.source == "decision_model"
+    assert resolution.plan.intents == ["orders"]
+    d = decide(resolution.plan)
+    assert d.mode == "single"
+    assert d.primary_agent == "data_analysis"

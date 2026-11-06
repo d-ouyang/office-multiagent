@@ -5,6 +5,22 @@
 
 ---
 
+## v2.0.0-p5.5 — 路由健壮化第一步：orders 意图 + 弱词降级（2026-11-07，**本地分支，未打 tag / 未部署**）
+
+**类型**：缺陷修复 + 路由加固
+
+> 分支 `feature/2.0.0-p5-reliability` 续推。事故源头：本地 p5 验证时「查一下最近 10 笔订单」被 planner.yaml rag 意图的弱关键词「查一下」劫持，路由进知识库 Agent（工具池无 `query_orders`）→ rag_retrieve 401。排查中发现 **compose backend 服务漏传 RAG_BASE_URL/RAG_INTERNAL_SECRET，生产 rag_retrieve 同样从未通过**（灰度 16 题未考 RAG 检索故未暴露），compose 修复已随本包提交（4e21b72）。
+
+- **新增 `orders` 意图**：关键词 [订单, 退款, 销售额, 销量, 发货] → `data_analysis`（带 query_orders 等 12 工具）。orders 字母序在 rag 前，与 rag 同分时稳定胜出主意图。
+- **「查一下」从 rag 关键词降级**：弱信号词不再单独定路由；制度/手册/知识库类问句靠强词（制度/手册/检索/知识库…）命中，实测「查一下报销制度」等问句路由不变。
+- **single_agent_covers 同步**：analysis / report covers 补 orders（数据分析与报表 Agent 均带订单工具，副意图不触发误拆 multi）；orders covers [orders, analysis, cleaning, report, visualization]（rag 不覆盖——「按制度分析订单」保留真实跨能力交接）。
+- **决策模型标签集同步**（intent_decision.py）：ALLOWED_INTENTS 与提示词补 `orders` 定义与示例「查一下最近10笔订单→orders single」；p6.32 的零命中触发决策模型路径对 orders 同样生效。
+- **测试**：基线 464 → **469 passed / 3 skipped**（净增 5：事故回归锚点 1 + orders 关键词覆盖 1 + rag 强词回归 1 + covers 防误拆 1 + 决策模型透传 1）；全量零回归。
+- **端到端实证**：本地全栈 recreate 后，事故原句「查一下最近 10 笔订单」→ data_analysis → `query_orders` 一次成功 → 流式终答（此前：rag_retrieval → 401）。
+- **待办移交**：p5.6 廉价预检（实体→能力校验 + 冲突改道 general）、p5.7 LLM 路由兜底开关（decision 层已有，改触发条件）。
+
+---
+
 ## v2.0.0-p5.1~p5.4 — 执行器可靠性加固（2026-10-31，**本地分支，未打 tag / 未部署**）
 
 **类型**：稳定性（纯增量，缺省配置下线上行为零变化）
