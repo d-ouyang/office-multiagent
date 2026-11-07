@@ -65,6 +65,25 @@ single_agent_covers:
   visualization: [visualization]
   image_restore: [image_restore]
 
+# p5.6 廉价预检：强实体词 → 必需工具（确定性，0 LLM）。
+# 仅对 single 路由生效：主意图 Agent 的工具池不含必需工具时，改道 general
+# （全 14 工具兜底）；multi 不预检——DAG 按意图分派各自的专家 Agent，天然无错配。
+# 设计原则：路由只决定「从哪开始」，不决定「能做什么」；关键词配错也有兜底接住。
+capability_guards:
+  订单: query_orders
+  退款: query_orders
+  销售额: query_orders
+  销量: query_orders
+  发货: query_orders
+  制度: rag_retrieve
+  手册: rag_retrieve
+  知识库: rag_retrieve
+  图表: render_chart
+  柱状图: render_chart
+  折线图: render_chart
+  饼图: render_chart
+  流程图: render_flow
+
 # DAG 拆分（p3.2，§四.2 第三步）：复杂任务按意图依赖生成子任务图。
 # 只对【同时出现】的意图生效；被依赖方不在任务里则自动忽略该边。
 # 与 p3.1 一致用确定性规则打底；LLM 分解长尾/歧义留作 DecisionModel 插槽。

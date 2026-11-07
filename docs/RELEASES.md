@@ -5,6 +5,19 @@
 
 ---
 
+## v2.0.0-p5.6 — 路由健壮化第二步：廉价预检（能力错配改道 general 兜底）（2026-11-07，**本地分支，未打 tag / 未部署**）
+
+**类型**：路由加固（确定性，0 LLM）
+
+- **机制**：planner.yaml 新增 `capability_guards`（强实体词 → 必需工具，当前 13 条：订单/退款/销售额/销量/发货→query_orders，制度/手册/知识库→rag_retrieve，图表/柱状图/折线图/饼图→render_chart，流程图→render_flow）；`router.decide` 在 **single** 路由上叠加预检——主意图 Agent 工具池不含问句实体所需工具 → 改道 `general`（全 14 工具兜底）。
+- **边界**：multi 不预检（DAG 按意图分派各自专家 Agent，天然无错配）；primary 已是 general 跳过；agents.yaml 缺失时跳过预检（不因配置缺失放大影响）；预检只改 primary_agent 与 reason 追加说明，不动 mode/score。
+- **设计原则落地**：路由只决定「从哪开始」，不决定「能做什么」——将来再配错关键词（如 orders 误配到无订单工具的 Agent），预检兜底接住，不再重演「查一下订单」401 事故。answer to「要不要放宽 intent_decision.is_ambiguous」：不改，预检以 0 LLM 成本覆盖同类风险，放宽触发条件留作 p5.7 可选。
+- **测试**：+4（误配注入 monkeypatch 回归锚点、真实配置零误伤、图表实体撞清洗主意图改道、multi 豁免），基线 469 → **473 passed / 3 skipped**，全量零回归。
+- **端到端实证**（rebuild + recreate 后 /plan 实测）：「查一下最近 10 笔订单」→ data_analysis；「清洗这张表然后画个柱状图」→ **general（预检改道）**；「查一下报销制度」→ rag_retrieval；「先查制度再分析」→ multi。
+- **运维提醒**：backend/config 是挂载卷（yaml 热生效），但 backend/app 代码烧在镜像里——改代码必须 `build` + `up -d`，只 recreate 不生效。
+
+---
+
 ## v2.0.0-p5.5 — 路由健壮化第一步：orders 意图 + 弱词降级（2026-11-07，**本地分支，未打 tag / 未部署**）
 
 **类型**：缺陷修复 + 路由加固

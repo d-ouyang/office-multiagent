@@ -56,6 +56,43 @@ def test_orders_covered_by_analysis_and_report():
     assert d2.mode == "single"
 
 
+def test_capability_guard_reroutes_misconfigured_primary(monkeypatch):
+    # p5.6 回归锚点：模拟配置错误——orders 被误配到 rag_retrieval（无订单工具）。
+    # 廉价预检发现问句实体需要 query_orders 而主 Agent 没有 → 改道 general 兜底。
+    import copy
+
+    from app.core import router as router_mod
+
+    cfg = copy.deepcopy(router_mod.load_planner_config())
+    cfg["intents"]["orders"] = {"keywords": ["订单"], "agent": "rag_retrieval"}
+    monkeypatch.setattr(router_mod, "load_planner_config", lambda: cfg)
+    d = decide(plan("查一下最近 10 笔订单"))
+    assert d.mode == "single"
+    assert d.primary_agent == "general"
+    assert "能力预检" in d.reason
+
+
+def test_capability_guard_no_false_positive():
+    # 真实配置下不误伤：订单题主 Agent 带 query_orders、制度题主 Agent 带 rag_retrieve。
+    assert decide(plan("查一下最近 10 笔订单")).primary_agent == "data_analysis"
+    assert decide(plan("查一下报销制度")).primary_agent == "rag_retrieval"
+
+
+def test_capability_guard_chart_entity_on_cleaning_primary():
+    # 清洗主意图的 Agent 没有 render_chart，图表实体 → single 改道 general（不丢能力）。
+    d = decide(plan("清洗这张表然后画个柱状图"))
+    assert d.primary_agent == "general"
+    assert "能力预检" in d.reason
+
+
+def test_capability_guard_skips_multi_mode():
+    # multi 不预检：DAG 会给 rag 意图分派自己的专家 Agent，制度实体无需改道。
+    p = plan("先查一下报销制度，然后基于这个制度分析销售数据")
+    d = decide(p)
+    assert d.mode == "multi"
+    assert d.primary_agent in ("data_analysis", "rag_retrieval")
+
+
 def test_multi_step_multi_intent_high_score_routes_multi():
     # 知识库口径 → 数据分析是真实跨能力交接，应走 multi。
     text = "先查一下报销制度，然后基于这个制度分析销售数据"
