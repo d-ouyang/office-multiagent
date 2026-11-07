@@ -1,7 +1,7 @@
 {
   "name": "office-multiagent-frontend",
   "private": true,
-  "version": "2.0.0-p5.4",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
