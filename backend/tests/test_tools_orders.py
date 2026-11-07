@@ -177,3 +177,40 @@ def test_sales_report_echoes_excluded_status(engine):
     assert out["complete"] is True
     assert out["numbers"][0]["order_count"] == 2
     assert "排除状态=已取消" in out["definition"]
+
+
+def test_columns_accept_chinese_labels(engine):
+    # p5.7：columns 支持中文名——事故回归锚点（2026-11-07）：
+    # 「查一下最近10笔订单」模型按 export_orders 习惯传中文名被拒，多烧一次调用。
+    out = make_query_orders_tool(engine)(
+        date_from="2025-01-01",
+        date_to="2025-12-31",
+        limit=10,
+        columns=["订单号", "下单时间", "门店", "销售金额", "订单状态"],
+    )
+    assert "error" not in out
+    assert out["row_count"] == 3
+    row = out["rows"][0]
+    assert set(row) == {"order_no", "order_create_time", "store_name", "pay_amount", "order_status"}
+
+
+def test_columns_mixed_chinese_and_db_names(engine):
+    out = make_query_orders_tool(engine)(
+        date_from="2025-01-01",
+        date_to="2025-12-31",
+        limit=5,
+        columns=["订单号", "store_name"],
+    )
+    assert "error" not in out
+    assert set(out["rows"][0]) == {"order_no", "store_name"}
+
+
+def test_columns_unknown_lists_valid_names(engine):
+    out = make_query_orders_tool(engine)(
+        date_from="2025-01-01",
+        date_to="2025-12-31",
+        columns=["不存在列"],
+    )
+    assert "error" in out
+    assert "不存在列" in out["error"]
+    assert "order_no(订单号)" in out["error"]  # 报错列出合法列名供模型一次自我纠正

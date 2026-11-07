@@ -18,7 +18,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .orders_seed import COLUMNS, ensure_orders_loaded
+from .orders_seed import COLUMNS, COLUMN_LABELS, ensure_orders_loaded
 from .tools_db import _jsonable
 
 logger = logging.getLogger(__name__)
@@ -410,10 +410,29 @@ def make_query_orders_tool(
 
         requested = _as_list(raw.get("columns"))
         if requested:
-            unknown = [name for name in requested if name not in COLUMNS]
-            hidden = [name for name in requested if name in _CUSTOMER_PII]
+            # p5.7：columns 接受中文名（如 订单号/门店/销售金额）或数据库列名。
+            # 事故（2026-11-07）：模型按 export_orders 的习惯传中文名被拒，
+            # 多烧一次调用自我纠正——两工具列名语义应一致。
+            alias = {label: col for col, label in COLUMN_LABELS.items()}
+            resolved, unknown = [], []
+            for name in requested:
+                if name in COLUMNS:
+                    resolved.append(name)
+                elif alias.get(name) in COLUMNS:
+                    resolved.append(alias[name])
+                else:
+                    unknown.append(name)
+            hidden = [name for name in resolved if name in _CUSTOMER_PII]
             if unknown:
-                return {"error": f"没有这些字段：{'、'.join(unknown)}。请用订单表列名。"}
+                valid = "、".join(
+                    f"{col}({COLUMN_LABELS.get(col, col)})" for col in COLUMNS if col not in _CUSTOMER_PII
+                )
+                return {
+                    "error": (
+                        f"没有这些字段：{'、'.join(unknown)}。"
+                        f"可用列名（数据库列名或中文名均可）：{valid}。"
+                    )
+                }
             if hidden:
                 return {
                     "error": (
@@ -421,7 +440,7 @@ def make_query_orders_tool(
                         "要带脱敏手机号的明细文件请用 export_orders。"
                     )
                 }
-            columns = tuple(dict.fromkeys(requested))
+            columns = tuple(dict.fromkeys(resolved))
         else:
             columns = _LIST_COLUMNS + (_DETAIL_EXTRA if "order_no" in applied else ())
         count_sql = f"SELECT COUNT(*) AS n FROM guoquan_orders{where}"

@@ -129,7 +129,7 @@ def build_default_registry(
             "city 分组从门店地址取城市名（上海市→上海，河南省郑州市→郑州）。"
             "分组时 metric 默认 sum_pay，还可取 count、sum_total、sum_discount、sum_refund、"
             "avg_pay、sum_goods、sum_goods_amount、sum_delivery_fee、sum_packing_fee、sum_coupon、sum_points。"
-            "columns：可选，指定要返回的列名；不传用默认列。limit 最大 50。"
+            "columns：可选，指定要返回的列；支持中文名（如 订单号、下单时间、门店、销售金额、订单状态）或数据库列名，不传用默认列。limit 最大 50。"
             "不返回手机号、真实姓名和收货地址。"
             "不要某状态时传 exclude_status，例如不要退款就传 已退款。"
             "字段名对不上时会说明没有这个字段。某个取值在表里不存在时返回 0 行，不要改去猜列名或改用 db_query。"
@@ -145,7 +145,7 @@ def build_default_registry(
                 "order_no": {"type": "string", "description": "按订单号精确查"},
                 **_ORDER_OPTIONAL,
                 **_ORDER_METRIC,
-                "columns": {"type": "array", "items": {"type": "string"}, "description": "可选返回列"},
+                "columns": {"type": "array", "items": {"type": "string"}, "description": "可选返回列；中文名或数据库列名均可（如 订单号/order_no）"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50},
             },
         ),

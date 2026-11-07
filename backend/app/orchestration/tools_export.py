@@ -23,7 +23,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .orders_seed import COLUMNS, ensure_orders_loaded
+from .orders_seed import COLUMNS, COLUMN_LABELS as _COLUMN_LABELS, ensure_orders_loaded
 from .tools_db import _jsonable
 from .tools_orders import (
     _CUSTOMER_PII,
@@ -118,46 +118,6 @@ _FIELD_SPECS: dict[str, tuple[str, Any]] = {
 
 _PII_OMIT = object()
 _PII_ALIAS = frozenset({"收货人", "姓名", "真实姓名", "收货地址", "用户姓名"})
-_COLUMN_LABELS = {
-    "order_no": "订单号",
-    "order_create_time": "下单时间",
-    "pay_time": "支付时间",
-    "order_status": "订单状态",
-    "order_type": "订单类型",
-    "order_channel": "平台",
-    "activity_id": "活动编号",
-    "activity_name": "活动名称",
-    "store_id": "门店编号",
-    "store_name": "门店",
-    "store_address": "门店地址",
-    "store_business_hours": "营业时间",
-    "store_phone": "门店电话",
-    "fulfillment_type": "履约方式",
-    "goods_list": "商品清单",
-    "goods_quantity": "商品件数",
-    "goods_amount": "商品金额",
-    "delivery_fee": "配送费",
-    "packing_fee": "包装费",
-    "total_amount": "订单金额",
-    "discount_amount": "优惠金额",
-    "pay_amount": "销售金额",
-    "points_earned": "获得积分",
-    "is_coupon_used": "是否用券",
-    "coupon_code": "券码",
-    "coupon_type": "券类型",
-    "coupon_name": "券名称",
-    "coupon_value": "券面额",
-    "order_remark": "备注",
-    "order_complete_time": "完成时间",
-    "refund_amount": "退款金额",
-    "user_id": "用户编号",
-    "user_nickname": "用户昵称",
-    "user_gender": "性别",
-    "member_level": "会员等级",
-    "member_points": "会员积分",
-    "need_invoice": "是否要发票",
-}
-
 # SELECT 用。手机号只参与脱敏，姓名和收货地址不取出。
 _DB_COLUMNS = tuple(name for name in COLUMNS if name not in _CUSTOMER_PII or name in _PHONE_COLUMNS)
 
