@@ -62,6 +62,54 @@ class TaskState(TypedDict, total=False):
     usage_steps: list               # p6.45：逐步用量明细（label+tokens），随 DONE/trace 给前端
     intent_source: str
     token_limit_reached: bool
+    need_input: dict | None         # 2.1.0 P1-1：ask_user 载荷（question/options/need_file/file_hint）
+    react_history: list             # 2.1.0 P1-1：已完成步骤回放（thought/action/input/observation）
+    user_answer: str | None         # 2.1.0 P1-1：resume 注入的用户补充
+    ask_count: int                  # 2.1.0 P1-1：ask_user 已触发次数（≥3 不再允许，防循环）
+
+
+def _serialize_react_history(steps: list) -> list[dict[str, Any]]:
+    """2.1.0 P1-1：Step → 可落库回放的 dict（thought/action/input/observation）。
+    不保留 calls/call_id——续跑后这些步以观察文本形式进上下文（原 tool 消息
+    已随上个进程结束，重放协议回填反而会造出没有配对 tool 消息的悬空 id）。"""
+    out: list[dict[str, Any]] = []
+    for st in steps or []:
+        out.append(
+            {
+                "thought": str(getattr(st, "thought", "") or ""),
+                "action": getattr(st, "action", None),
+                "action_input": _json_safe_dict(getattr(st, "action_input", {}) or {}),
+                "observation": str(getattr(st, "observation", "") or "")[:4000],
+            }
+        )
+    return out
+
+
+def _deserialize_react_history(rows: list[dict[str, Any]]) -> list:
+    from .react import Step
+
+    out: list = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        out.append(
+            Step(
+                thought=str(row.get("thought") or ""),
+                action=row.get("action"),
+                action_input=dict(row.get("action_input") or {}),
+                observation=str(row.get("observation") or "") or None,
+            )
+        )
+    return out
+
+
+def _json_safe_dict(value: Any) -> dict[str, Any]:
+    import json as _json
+
+    try:
+        return _json.loads(_json.dumps(value, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        return {str(k): str(v) for k, v in (value or {}).items()}
 
 
 def _emit_context(state: TaskState, system: str, tools, emitter: RunEventEmitter, emit: Callable[[Event], None]) -> None:
@@ -294,6 +342,11 @@ def build_graph(
             reasoning_effort=_effort_for(state),
             token_budget=token_budget,
         )
+        # 2.1.0 P1-1（HITL）：paused_input 续跑时回放已完成步骤 + 注入用户补充；
+        # ask_count ≥ 3 后不再允许 ask_user（防问询循环），强制收敛给终答。
+        ask_count = int(state.get("ask_count") or 0)
+        prior_steps = _deserialize_react_history(state.get("react_history") or [])
+        seed = str(state.get("user_answer") or "").strip() or None
         res = run_react(
             state["text"],
             brain,
@@ -302,6 +355,9 @@ def build_graph(
             emit=emit,
             should_cancel=should_cancel,
             token_budget=token_budget,
+            prior_steps=prior_steps,
+            seed_observation=seed,
+            allow_ask_user=ask_count < 3,
         )
         usage = getattr(brain, "usage", None) or {}
         validation = _validate_and_flag(
@@ -315,12 +371,28 @@ def build_graph(
         # p6.45：逐步用量（规划 + ReAct 各步 + 外部用量），随 DONE/trace 给前端浮窗
         usage_steps = [{"label": "规划与决策", "tokens": int(state.get("planning_tokens", 0))}]
         usage_steps += list(getattr(res, "steps_usage", []) or [])
+        # 2.1.0 P1-1：ask_user 触发——回放序列化 + 计数，交给 ask_pause 节点 interrupt
+        if getattr(res, "need_input", None):
+            return {
+                "result": "",
+                "tokens_used": billed,
+                "usage_steps": usage_steps,
+                "validation": validation,
+                "token_limit_reached": token_budget.limit_reached,
+                "need_input": dict(res.need_input),
+                "react_history": _serialize_react_history(res.steps),
+                "ask_count": ask_count + 1,
+            }
         return {
             "result": res.final,
             "tokens_used": billed,
             "usage_steps": usage_steps,
             "validation": validation,
             "token_limit_reached": token_budget.limit_reached,
+            # 显式清除：TypedDict 合并只覆盖返回的键——残留旧 need_input 会让
+            # ask_gate 在终答后再次进 ask_pause（实测踩过）
+            "need_input": None,
+            "user_answer": None,
         }
 
     def multi_node(state: TaskState) -> dict[str, Any]:
@@ -428,7 +500,20 @@ def build_graph(
     g.add_node("single", single_node)
     g.add_node("multi", multi_node)
     g.add_conditional_edges("planner", route_edge, {"single": "single", "multi": "multi"})
-    g.add_edge("single", END)
+    # 2.1.0 P1-1（HITL）：single 完成后若带 need_input → ask_pause 节点 interrupt()
+    # 挂起等用户（checkpoint 落档）；resume 注入回答后回到 single，从回放观察继续。
+    # ask_pause 节点零副作用，重入安全（interrupt 语义要求）。
+    def ask_pause_node(state: TaskState) -> dict[str, Any]:
+        payload = dict(state.get("need_input") or {})
+        answer = interrupt({"type": "ask_user", **payload})
+        return {"user_answer": str(answer or "").strip()}
+
+    def ask_gate(state: TaskState) -> str:
+        return "ask_pause" if state.get("need_input") else "end"
+
+    g.add_node("ask_pause", ask_pause_node)
+    g.add_conditional_edges("single", ask_gate, {"ask_pause": "ask_pause", "end": END})
+    g.add_edge("ask_pause", "single")
     g.add_edge("multi", END)
 
     if token_pool is not None:
@@ -544,6 +629,32 @@ def run_task(
 
     if "__interrupt__" in state:
         payload = state["__interrupt__"][0].value if state["__interrupt__"] else {}
+        if payload.get("type") == "ask_user":
+            # 2.1.0 P1-1（HITL）：模型请求补充输入——任务转 paused_input，
+            # checkpoint 已由 interrupt 落档；graph 实例登记供同进程续跑。
+            ask = {k: v for k, v in payload.items() if k != "type"}
+            emit(emitter.ask_user(**ask))
+            emit(emitter.done("paused_input", model=model_id))
+            if token_pool is not None and user_id is not None:
+                token_pool.settle(user_id, estimate, estimate, task_id=rid, model=model_id)  # 保守：不退
+            _register_live_graph(rid, graph)
+            return (
+                {
+                    "run_id": rid,
+                    "thread_id": rid,
+                    "status": "paused_input",
+                    "route": state.get("route"),
+                    "result": "",
+                    "ask": ask,
+                    "react_history": state.get("react_history") or [],
+                    "pause_payload": {
+                        "ask": ask,
+                        "replay": state.get("react_history") or [],
+                    },
+                    "tokens_used": int(state.get("tokens_used", 0) or 0),
+                },
+                events,
+            )
         emit(
             emitter.quota_paused(
                 "余额不足，已暂停",
@@ -620,3 +731,147 @@ def resume_task(
     state = graph.invoke(Command(resume=True), cfg)
     emit(emitter.done(state.get("route", "single")))
     return state
+
+
+# --------------------------------------------------------------------------- #
+# 2.1.0 P1-1（HITL）：paused_input 任务的续跑
+# --------------------------------------------------------------------------- #
+
+_LIVE_GRAPHS: dict[str, Any] = {}
+_LIVE_GRAPHS_LOCK = threading.Lock()
+
+
+def _register_live_graph(run_id: str, graph: Any) -> None:
+    """同进程保留 graph 实例（memory checkpointer 的存档跟着实例走）。
+
+    sqlite 后端下存档在盘上，graph 重建也能找回；memory 后端（缺省）必须
+    用同实例。上限 200 防泄漏（每个挂起任务一个实例，量级很小）。"""
+    with _LIVE_GRAPHS_LOCK:
+        if len(_LIVE_GRAPHS) >= 200:
+            _LIVE_GRAPHS.pop(next(iter(_LIVE_GRAPHS)))
+        _LIVE_GRAPHS[run_id] = graph
+
+
+def _take_live_graph(run_id: str) -> Any | None:
+    with _LIVE_GRAPHS_LOCK:
+        graph = _LIVE_GRAPHS.pop(run_id, None)
+        if graph is not None:
+            _LIVE_GRAPHS[run_id] = graph  # peek 语义：resume 失败时仍保留
+        return graph
+
+
+def _forget_live_graph(run_id: str) -> None:
+    with _LIVE_GRAPHS_LOCK:
+        _LIVE_GRAPHS.pop(run_id, None)
+
+
+def resume_with_answer(
+    run_id: str,
+    answer: str,
+    *,
+    emitter: RunEventEmitter,
+    emit: Callable[[Event], None],
+    token_pool: TokenPool | None = None,
+    user_id: int | None = None,
+    model: str | None = None,
+    effort: str | None = None,
+    username: str | None = None,
+) -> tuple[dict[str, Any], list[Event]]:
+    """用户补充输入后断点续跑：Command(resume=answer) 回到 ask_pause 节点。
+
+    p5.4 铁律：先 get_state 校验存档存在（无存档时 Command(resume) 会静默
+    从头重跑而非报错——重复执行已完成节点、重复计费且无告警）。
+    graph 实例优先取进程内登记表；memory 后端 + 进程重启后拿不到 → 明确报错
+    （提示配 sqlite 或重新发起任务）。"""
+    events: list[Event] = []
+
+    def emit2(ev: Event) -> None:
+        events.append(ev)
+        emit(ev)
+
+    graph = _take_live_graph(run_id)
+    if graph is None:
+        # sqlite 后端下重建 graph（checkpointer 从共享单例取，存档在盘上可找回）
+        checkpointer = get_checkpointer()
+        backend = (settings.checkpointer_backend or "memory").strip().lower()
+        probe = build_graph(
+            RunEventEmitter(run_id, run_id),
+            lambda ev: None,
+            token_pool=None,
+            checkpointer=checkpointer,
+            username=username,
+        )
+        probe_state = probe.get_state({"configurable": {"thread_id": run_id}})
+        if backend == "sqlite" and probe_state is not None and getattr(probe_state, "next", None):
+            graph = build_graph(
+                emitter,
+                emit2,
+                token_pool=token_pool,
+                checkpointer=checkpointer,
+                username=username,
+                user_id=user_id,
+                task_id=run_id,
+                model=model,
+                effort=effort,
+                should_cancel=None,
+            )
+        else:
+            raise ValueError(
+                f"暂停任务的存档已失效（run_id={run_id}）：memory 后端不支持跨重启续跑，"
+                "请配置 CHECKPOINTER_BACKEND=sqlite，或重新发起任务并在附件里带上补充材料。"
+            )
+    cfg = {"configurable": {"thread_id": run_id}}
+    snap = graph.get_state(cfg)
+    if snap is None or not getattr(snap, "next", None):
+        raise ValueError(
+            f"没有可续跑的挂起任务（thread_id={run_id}）：存档不存在或该任务已结束。"
+        )
+    state = graph.invoke(Command(resume=str(answer or "").strip()), cfg)
+    actual = int(state.get("tokens_used", 0) or 0)
+    if token_pool is not None and user_id is not None:
+        token_pool.settle(user_id, 0, actual, task_id=run_id, model=state.get("model") or model)
+    route = state.get("route", "single")
+    if state.get("need_input"):
+        # 续跑后模型又发起了一轮 ask_user——保持 paused_input，graph 重新登记
+        ask = dict(state.get("need_input") or {})
+        emit2(emitter.ask_user(**ask))
+        emit2(emitter.done("paused_input", model=state.get("model") or model))
+        _register_live_graph(run_id, graph)
+        return (
+            {
+                "run_id": run_id,
+                "thread_id": run_id,
+                "status": "paused_input",
+                "route": route,
+                "result": "",
+                "ask": ask,
+                "react_history": state.get("react_history") or [],
+                "tokens_used": actual,
+            },
+            events,
+        )
+    _forget_live_graph(run_id)
+    emit2(
+        emitter.done(
+            route,
+            tokens_used=actual,
+            model=state.get("model") or model,
+            steps=state.get("usage_steps") or None,
+        )
+    )
+    return (
+        {
+            "run_id": run_id,
+            "thread_id": run_id,
+            "status": "done",
+            "route": route,
+            "intents": state.get("intents", []),
+            "primary_agent": state.get("primary_agent"),
+            "dag": state.get("dag"),
+            "tokens_used": actual,
+            "result": state.get("result", ""),
+            "validation": state.get("validation"),
+            "token_limit_reached": bool(state.get("token_limit_reached")),
+        },
+        events,
+    )

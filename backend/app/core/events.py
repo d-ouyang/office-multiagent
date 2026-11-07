@@ -44,6 +44,7 @@ class EventType(str, Enum):
     TASK_SUMMARY = "task_summary"
     CONTEXT_USAGE = "context_usage"
     VISUAL = "visual"
+    ASK_USER = "ask_user"
 
 
 class Event(BaseModel):
@@ -130,6 +131,22 @@ class RunEventEmitter:
 
     def quota_paused(self, reason: str, balance: int, needed: int) -> Event:
         return self.emit(EventType.QUOTA_PAUSED, reason=reason, balance=balance, needed=needed)
+
+    def ask_user(
+        self,
+        question: str,
+        options: list[str] | None = None,
+        need_file: bool = False,
+        file_hint: str = "",
+    ) -> Event:
+        """p2.1.0 HITL：模型请求用户补充输入（任务随即进入 paused_input）。"""
+        return self.emit(
+            EventType.ASK_USER,
+            question=question,
+            options=options or [],
+            need_file=need_file,
+            file_hint=file_hint,
+        )
 
     def artifact(self, asset_id: str, type: str, storage_url: str, name: str | None = None) -> Event:
         return self.emit(

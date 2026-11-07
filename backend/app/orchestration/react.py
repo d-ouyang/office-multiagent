@@ -101,6 +101,7 @@ class AgentResult:
     external_tokens: int = 0   # 外部工具（知识库检索）带回的 token，并入办公侧结算
     assets: list[dict[str, str]] = field(default_factory=list)  # p6.30：过程产出的文件/数据资产（file_name 等）
     steps_usage: list[dict[str, Any]] = field(default_factory=list)  # p6.45：逐步用量（label+tokens），随 DONE/trace 给前端
+    need_input: dict[str, Any] | None = None  # 2.1.0 P1-1：ask_user 触发——任务转 paused_input，等用户补充后断点续跑
 
 
 class StubBrain:
@@ -127,6 +128,9 @@ def run_react(
     synthesize: Callable[[str, list[Step]], str] | None = None,
     should_cancel: Callable[[], bool] | None = None,
     token_budget: TaskTokenBudget | None = None,
+    prior_steps: list["Step"] | None = None,
+    seed_observation: str | None = None,
+    allow_ask_user: bool = False,
 ) -> AgentResult:
     """跑 ReAct 循环；超 max_iterations 强制给阶段结论（§四.4 防跑飞）。
 
@@ -136,8 +140,17 @@ def run_react(
 
     p7.1：`should_cancel()`——每一步开始前检查；命中即抛 `RunCancelled`（协作式取消），
     由 run_task 收尾为 paused_user。检查点放在【LLM 调用之前】，保证暂停最多多跑一步。
+
+    2.1.0 P1-1（HITL）：`prior_steps` + `seed_observation`——paused_input 续跑时
+    把已完成步骤的观察回放进 history（副作用零重跑），并把用户补充输入作为最后一条
+    观察注入；`allow_ask_user`——模型调 ask_user 时是否允许暂停（single=True；
+    multi 子任务层内并行无法安全暂停，False 时给"无法中途确认"的替代观察继续循环）。
     """
-    history: list[Step] = []
+    history: list[Step] = list(prior_steps or [])  # 2.1.0 P1-1：续跑时回放已完成步骤（观察进上下文，副作用零重跑）
+    if seed_observation:
+        history.append(
+            Step(thought="", observation=f"用户已补充输入：{seed_observation}")
+        )
     invalid_streak = 0  # p6.7：连续无效工具名计数（幻觉兜底）
     assets: list[dict[str, str]] = []  # p6.30：产出资产（下游子任务要能拿到文件名/id，不只文本摘要）
     external_tokens = 0
@@ -287,6 +300,38 @@ def run_react(
                 _emit(emitter.tool_call_start(tool_id, name, unit.action_input))
             res: ToolResult = tools.call(name, **unit.action_input)
             obs = res.output if res.ok else (res.error or "工具调用失败")
+            # 2.1.0 P1-1（HITL）：ask_user sentinel——模型请求用户补充输入。
+            # single（allow_ask_user=True）→ 发 ask_user 事件并终止本轮，任务转
+            # paused_input（graph 层 interrupt 落 checkpoint）；multi 层内并行无法
+            # 安全暂停，给替代观察让模型继续循环。
+            if res.ok and isinstance(obs, dict) and obs.get("__ask_user__"):
+                ask = {
+                    "question": str(obs.get("question") or ""),
+                    "options": list(obs.get("options") or []),
+                    "need_file": bool(obs.get("need_file")),
+                    "file_hint": str(obs.get("file_hint") or ""),
+                }
+                if not allow_ask_user:
+                    unit.observation = (
+                        "当前为多任务协作流程，无法中途向用户确认。"
+                        "请基于已有信息继续完成任务；确实缺少必要材料时，"
+                        "在最终回答里明确列出需要用户提供什么。"
+                    )
+                    history.append(unit)
+                    continue
+                unit.observation = f"已向用户发起补充输入请求：{ask['question']}"
+                history.append(unit)
+                if emitter is not None:
+                    _emit(emitter.ask_user(**ask))
+                return AgentResult(
+                    final="",
+                    steps=history,
+                    iterations=i,
+                    assets=assets,
+                    external_tokens=external_tokens,
+                    steps_usage=steps_usage,
+                    need_input=ask,
+                )
             if emitter is not None and res.ok and isinstance(res.output, dict) and res.output.get("file_name"):
                 _emit(
                     emitter.artifact(

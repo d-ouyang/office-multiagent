@@ -436,6 +436,34 @@ def build_default_registry(
         from ..core.user_memory_repo import UserMemoryRepo
 
         register_memory_tools(reg, UserMemoryRepo(engine), int(user_id))
+    # 2.1.0 P1-1：HITL 任务中交互澄清——所有 Agent 可见；multi 下由 react 循环层
+    # 给出"无法中途确认"的替代观察（allow_ask_user=False），白名单不区分。
+    from .tools_ask import make_ask_user_tool
+
+    reg.register(
+        "ask_user",
+        make_ask_user_tool(),
+        description=(
+            "任务缺少必要输入（未上传文件、缺关键参数、需要在选项中确认）时，"
+            "向用户发起补充输入请求，任务会暂停等用户回答后从断点继续。"
+            "question 必须说清：缺什么、数据从哪来（数据库订单表 / 请上传文件 / 知识库没有）。"
+            "options 可给 2~6 个候选选项；need_file=true 表示需要用户上传文件，"
+            "file_hint 说明要什么文件（格式/内容）。能从数据库或知识库拿到的数据不要问用户。"
+        ),
+        parameters=_params(
+            {
+                "question": {"type": "string", "description": "要问用户的问题（含数据来源说明）"},
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "可选，候选选项（2~6 个）",
+                },
+                "need_file": {"type": "boolean", "description": "是否需要用户上传文件"},
+                "file_hint": {"type": "string", "description": "需要什么文件（格式/内容说明）"},
+            },
+            ["question"],
+        ),
+    )
     return reg
 
 

@@ -24,28 +24,28 @@ def test_specs_loaded_all_seven():
 def test_spec_tools_whitelist():
     # p6.29：general/rag_retrieval/data_analysis/report_generation 四类挂显式长期记忆工具
     # p6.30：query_orders 系三类加 export_orders（明细导出）
-    assert get_agent_spec("rag_retrieval").tools == ["rag_retrieve", "render_flow", "remember", "recall"]
+    assert get_agent_spec("rag_retrieval").tools == ["rag_retrieve", "render_flow", "remember", "recall", "ask_user"]
     assert get_agent_spec("data_analysis").tools == [
         "query_orders", "export_orders", "compare_orders", "sales_report", "db_query", "clean_table",
-        "analyze_table", "write_document", "render_chart", "render_flow", "remember", "recall",
+        "analyze_table", "write_document", "render_chart", "render_flow", "remember", "recall", "ask_user",
     ]
-    assert get_agent_spec("data_cleaning").tools == ["db_query", "clean_table", "analyze_table"]
+    assert get_agent_spec("data_cleaning").tools == ["db_query", "clean_table", "analyze_table", "ask_user"]
     assert get_agent_spec("general").tools == [
         "query_orders", "export_orders", "compare_orders", "sales_report", "db_query", "rag_retrieve", "read_document",
-        "clean_table", "analyze_table", "write_document", "render_chart", "render_flow", "remember", "recall",
+        "clean_table", "analyze_table", "write_document", "render_chart", "render_flow", "remember", "recall", "ask_user",
     ]
     assert get_agent_spec("report_generation").tools == [
         "query_orders", "export_orders", "compare_orders", "sales_report", "db_query", "rag_retrieve", "read_document",
-        "clean_table", "analyze_table", "write_document", "render_chart", "render_flow", "remember", "recall",
+        "clean_table", "analyze_table", "write_document", "render_chart", "render_flow", "remember", "recall", "ask_user",
     ]
 
 
 def test_no_tool_agents_declare_empty():
     # visualization（p6.46）：补上 query_orders——"按数据库订单统计并画图"走
     # query_orders(group_by)→clean_id→render_chart，不再依赖上传文件作跳板。
-    assert get_agent_spec("visualization").tools == ["query_orders", "clean_table", "render_chart"]
-    # image_restore：工具池暂无对应工具——留空，由 Brain 如实告知能力暂缺
-    assert get_agent_spec("image_restore").tools == []
+    assert get_agent_spec("visualization").tools == ["query_orders", "clean_table", "render_chart", "ask_user"]
+    # image_restore：修图工具未接入前，ask_user 是它向用户要原图的唯一途径（2.1.0 P1-1）
+    assert get_agent_spec("image_restore").tools == ["ask_user"]
 
 
 def test_unknown_agent_falls_back_to_general():

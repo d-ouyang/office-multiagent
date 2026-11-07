@@ -14,7 +14,7 @@
 agents:
   general:
     name: 通用办公 Agent
-    tools: [query_orders, export_orders, compare_orders, sales_report, db_query, rag_retrieve, read_document, clean_table, analyze_table, write_document, render_chart, render_flow, remember, recall]
+    tools: [query_orders, export_orders, compare_orders, sales_report, db_query, rag_retrieve, read_document, clean_table, analyze_table, write_document, render_chart, render_flow, remember, recall, ask_user]
     system_prompt: |
       你是企业办公助手的通用 Agent。理解并回答用户的办公相关问题。
       - 锅圈订单用 query_orders。销售报表用 sales_report，不要自己写时间和数字。
@@ -39,7 +39,7 @@ agents:
 
   rag_retrieval:
     name: 知识库问答 Agent
-    tools: [rag_retrieve, render_flow, remember, recall]
+    tools: [rag_retrieve, render_flow, remember, recall, ask_user]
     system_prompt: |
       你是知识库问答 Agent，负责回答公司制度、流程、文档类问题。
       - 用 rag_retrieve 检索公司知识库；**最多检索 2 次**，之后必须基于已有结果作答
@@ -50,7 +50,7 @@ agents:
 
   data_analysis:
     name: 数据分析 Agent
-    tools: [query_orders, export_orders, compare_orders, sales_report, db_query, clean_table, analyze_table, write_document, render_chart, render_flow, remember, recall]
+    tools: [query_orders, export_orders, compare_orders, sales_report, db_query, clean_table, analyze_table, write_document, render_chart, render_flow, remember, recall, ask_user]
     system_prompt: |
       你是数据分析 Agent。锅圈订单用 query_orders，不要自己写订单 SQL。
       销售报表用 sales_report。缺时间范围或指标时不要补一个完成的报表。
@@ -73,7 +73,7 @@ agents:
 
   data_cleaning:
     name: 数据清洗 Agent
-    tools: [db_query, clean_table, analyze_table]
+    tools: [db_query, clean_table, analyze_table, ask_user]
     system_prompt: |
       你是数据清洗 Agent。上传的表格用 clean_table。公司业务库的质量问题才用 db_query，而且必须带筛选或聚合。
       - clean_table 不改原文件。回答时列出删了什么、关键列缺了多少行、哪些列有空值或数字格式问题。
@@ -82,7 +82,7 @@ agents:
 
   report_generation:
     name: 报表生成 Agent
-    tools: [query_orders, export_orders, compare_orders, sales_report, db_query, rag_retrieve, read_document, clean_table, analyze_table, write_document, render_chart, render_flow, remember, recall]
+    tools: [query_orders, export_orders, compare_orders, sales_report, db_query, rag_retrieve, read_document, clean_table, analyze_table, write_document, render_chart, render_flow, remember, recall, ask_user]
     system_prompt: |
       你是报表生成 Agent，负责产出结构化的阶段性报告。
       - 锅圈销售报表只能用 sales_report。时间范围、指标、口径、数据来源由工具给出。
@@ -105,7 +105,7 @@ agents:
 
   visualization:
     name: 图表可视化 Agent
-    tools: [query_orders, clean_table, render_chart]
+    tools: [query_orders, clean_table, render_chart, ask_user]
     system_prompt: |
       你是图表可视化 Agent。数据有两个来源：用户上传的表，或数据库里的订单。
       - 上传的表：先 clean_table，再用 clean_id 调用 render_chart。
@@ -118,7 +118,7 @@ agents:
 
   image_restore:
     name: 图像修复 Agent
-    tools: []
+    tools: [ask_user]
     system_prompt: |
       你是图像修复 Agent。当前工具池暂未接入图像处理工具。
       - 用户提出修复/增强图片需求时，如实告知该能力暂未接入；不要假装已处理。

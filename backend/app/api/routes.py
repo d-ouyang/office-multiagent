@@ -965,6 +965,173 @@ def _resume_task_impl(task_id: str, *, operator_id: int | None = None) -> Stream
     )
 
 
+@router.post("/tasks/{task_id}/answer")
+def answer_task(task_id: str, body: dict[str, Any] | None = None, authorization: str | None = Header(default=None)):
+    """2.1.0 P1-1（HITL）：回答 paused_input 任务的补充输入请求，断点续跑。
+
+    已完成步骤以"观察回放"进上下文（副作用零重跑）；回答与附件随 Command(resume)
+    注入原循环。返回 NDJSON 流（可能再次 ask_user——模型可多轮追问，上限 3 次）。"""
+    if not isinstance(body, dict):
+        body = {}
+    answer = str(body.get("answer") or "").strip()
+    attachments = [str(a).strip() for a in (body.get("attachments") or []) if str(a).strip()]
+    if not answer and not attachments:
+        raise HTTPException(422, detail={"code": "EMPTY_ANSWER", "message": "请填写回答或上传附件"})
+    user = _current_user(authorization)
+    from ..core.db import get_engine
+    from ..core.session_repo import SessionRepo
+
+    repo = SessionRepo(get_engine())
+    task = repo.get_task(task_id)
+    if not task or not repo.task_belongs_to(task_id, user["id"]):
+        raise HTTPException(404, detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"})
+    if task["status"] != "paused_input":
+        raise HTTPException(409, detail={"code": "TASK_NOT_WAITING_INPUT", "message": "该任务不在等待补充输入状态"})
+    import json as _json
+
+    payload = {}
+    try:
+        payload = _json.loads(task.get("pause_payload") or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    ask = payload.get("ask") or {}
+    return _stream_answer(
+        user=user,
+        task=task,
+        ask=ask,
+        answer=answer,
+        attachments=attachments,
+    )
+
+
+def _stream_answer(
+    *,
+    user: dict[str, Any],
+    task: dict[str, Any],
+    ask: dict[str, Any],
+    answer: str,
+    attachments: list[str],
+) -> StreamingResponse:
+    """断点续跑流（镜像 _stream_task 的队列+worker 结构；run_id 沿用原任务 id）。"""
+    import json as _json
+    import logging
+    import queue as _queue
+    import threading
+
+    from ..core import runs
+    from ..core.db import get_engine
+    from ..core.events import RunEventEmitter
+    from ..core.token_pool import TokenPool
+    from ..orchestration.graph import resume_with_answer
+
+    logger = logging.getLogger(__name__)
+    task_id = str(task["id"])
+    session_id = str(task["session_id"])
+    repo = SessionRepo(get_engine())
+    pool = TokenPool(get_engine())
+
+    # 供模型续跑的用户补充文本（问题已由 ask_user 事件展示，这里聚合回答与附件）
+    parts = []
+    if answer:
+        parts.append(answer)
+    if attachments:
+        parts.append("已上传文件：" + "、".join(attachments))
+    user_answer = "；".join(parts)
+
+    q: _queue.Queue = _queue.Queue()
+    run_id = task_id
+
+    def worker():
+        try:
+            runs.register(run_id, owner_id=int(user["id"]))
+            emitter = RunEventEmitter(run_id, run_id)
+            result, events = resume_with_answer(
+                run_id,
+                user_answer,
+                emitter=emitter,
+                emit=q.put,
+                token_pool=pool,
+                user_id=int(user["id"]),
+                model=None,
+                username=str(user.get("username") or ""),
+            )
+            status = str(result.get("status"))
+            # 落库：完成 → 补 user/assistant 消息 + 更新原任务行；再问 → 恢复 paused_input
+            try:
+                trace = _json.dumps(
+                    [_json.loads(ev.model_dump_json()) for ev in events], ensure_ascii=False
+                )
+                original_text = str(task.get("text") or "")
+                user_msg = original_text + (f"\n\n【补充】{answer}" if answer else "")
+                user_trace = (
+                    _json.dumps({"attachments": attachments, "answer_to": ask}, ensure_ascii=False)
+                    if (attachments or ask)
+                    else None
+                )
+                actual = int(result.get("tokens_used", 0))
+                if status == "done":
+                    repo.append_message(session_id, "user", user_msg, trace=user_trace)
+                    repo.append_message(session_id, "assistant", str(result.get("result", "")), trace=trace)
+                    _finish_answered_task(task_id, status, str(result.get("result", "")), actual)
+                elif status == "paused_input":
+                    new_ask = _json.dumps(result.get("ask") or {}, ensure_ascii=False)
+                    _finish_answered_task(task_id, "paused_input", "", actual, pause_payload=new_ask)
+                else:
+                    _finish_answered_task(task_id, status, "", actual)
+            except Exception:  # noqa: BLE001 - 落库失败：ERROR 级记录，流照常结束
+                logger.exception("续跑落库失败 task_id=%s", task_id)
+        except Exception as e:  # noqa: BLE001 - 续跑失败（存档失效等）以 error 事件体面收尾
+            logger.exception("断点续跑失败 task_id=%s", task_id)
+            from ..core.events import RunEventEmitter as _E
+
+            q.put(_E(run_id, run_id).error(f"续跑失败：{e}"))
+            q.put(_E(run_id, run_id).done("paused_error"))
+        finally:
+            runs.finish(run_id)
+            q.put(None)
+
+    threading.Thread(target=worker, daemon=True, name="task_answer").start()
+
+    def gen():
+        while True:
+            ev = q.get()
+            if ev is None:
+                break
+            yield encode_line(ev)
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+def _finish_answered_task(
+    task_id: str,
+    status: str,
+    result: str,
+    actual_tokens: int,
+    *,
+    pause_payload: str | None = None,
+) -> None:
+    """更新原任务行：resumed/paused_input → done（token 累加）或新一轮 paused_input。"""
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+
+    with get_engine().begin() as conn:
+        conn.execute(
+            _text(
+                "UPDATE task SET status = :st, result = CASE WHEN :r = '' THEN result ELSE :r END, "
+                "tokens_used = tokens_used + :tk, pause_reason = :pr, pause_payload = :pp WHERE id = :i"
+            ),
+            {
+                "st": status,
+                "r": result,
+                "tk": int(actual_tokens),
+                "pr": "need_input" if status == "paused_input" else None,
+                "pp": pause_payload,
+                "i": task_id,
+            },
+        )
+
+
 @router.post("/tasks/{task_id}/resume")
 def resume_task(task_id: str, authorization: str | None = Header(default=None)):
     """继续/重试（p7.1）：按原请求重跑，新任务 retry_of 指回原任务，返回 NDJSON 流。
@@ -1117,7 +1284,13 @@ def _stream_task(
                     repo.append_message(session_id, "user", text, trace=user_trace)
                     repo.append_message(session_id, "assistant", body, trace=trace)
                 payload = None
-                if status == "paused_insufficient_quota":
+                if status == "paused_input":
+                    # 2.1.0 P1-1：ask 载荷 + 步骤回放存 pause_payload（answer 端点续跑用）
+                    payload = _json.dumps(
+                        {"ask": result.get("ask") or {}, "replay": result.get("react_history") or []},
+                        ensure_ascii=False,
+                    )
+                elif status == "paused_insufficient_quota":
                     ev = next((e for e in events if e.type == EventType.QUOTA_PAUSED), None)
                     payload = _json.dumps(ev.data if ev else {}, ensure_ascii=False)
                 elif status == "paused_user":
