@@ -5,6 +5,17 @@
 
 ---
 
+## v2.0.0-p5.8 — 管理端任务监控增强：执行模式 / Agent 链 / 子任务归属 / 工具来源（2026-11-08，**本地分支，未打 tag / 未部署**）
+
+**类型**：可观测性（用户需求：任务监控看不出单/多任务、触发了哪些 Agent、工具来自哪个池）
+
+- **run_trace.summarize**：从 status 事件提炼 `mode`（done.status：single/multi）、`agents`（Agent 链，保序去重）、`subtasks`（multi 子任务 id→执行 Agent）；管理端 tasks 列表与 runs 详情自动携带。
+- **前端任务详情抽屉**新增「执行编排」块：执行模式、Agent 链（如 planner→orchestrator→data_cleaning→data_analysis→report_generation→orchestrator）、multi 子任务归属、工具来源说明（single=主 Agent 白名单 / multi=各子任务各自白名单，均 agents.yaml；能力预检改道时为 general 全量池）。
+- **测试**：+2（multi 全链路提炼、single 连续同名去重），基线 473 → **476 passed**；vitest 107 passed。本地 84 条历史任务全部解析出 mode/agents。
+- 已知遗留（不阻塞）：FeedbackTab 存在三处 tsc 类型漂移（stash 验证为历史遗留，vite build 不受影响）。
+
+---
+
 ## v2.0.0-p5.7 — 工具完善：query_orders columns 支持中文名，消除双调用浪费（2026-11-07，**本地分支，未打 tag / 未部署**）
 
 **类型**：工具能力补齐（与 export_orders 列名语义对齐）

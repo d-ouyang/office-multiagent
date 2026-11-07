@@ -678,6 +678,9 @@ export interface AdminTaskRow {
   created_at: string | null;
   duration_ms?: number | null;
   tool_summary?: string;
+  mode?: string;
+  agents?: string[];
+  subtasks?: { id: string; agent: string }[];
   rag_called?: boolean;
   validation_mismatch?: boolean;
   identity_mismatch?: boolean;

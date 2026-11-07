@@ -40,6 +40,9 @@ def summarize(events: list[dict[str, Any]], *, request: dict[str, Any] | None = 
     identity_mismatch = False
     intents: list[str] = []
     route = ""
+    agents_order: list[str] = []  # p5.8：状态事件里的 Agent 链（保序去重）
+    subtask_agents: list[dict[str, str]] = []  # p5.8：multi 子任务 → 执行 Agent
+    subtask_seen: set[str] = set()
     for ev in events:
         if not isinstance(ev, dict):
             continue
@@ -67,6 +70,14 @@ def summarize(events: list[dict[str, Any]], *, request: dict[str, Any] | None = 
             line = str(data.get("delta") or data.get("text") or "")
             if line.startswith("识别意图"):
                 intents.append(line[:120])
+        elif kind == "status":
+            agent = str(data.get("agent") or "")
+            if agent and agents_order[-1:] != [agent]:
+                agents_order.append(agent)
+            sid = str(data.get("subtask_id") or "")
+            if sid and agent and sid not in subtask_seen:
+                subtask_seen.add(sid)
+                subtask_agents.append({"id": sid, "agent": agent})
         elif kind == "done":
             route = str(data.get("status") or route)
     req = request or {}
@@ -86,6 +97,9 @@ def summarize(events: list[dict[str, Any]], *, request: dict[str, Any] | None = 
         ),
         "intents": intents[:3],
         "route": route,
+        "mode": route,
+        "agents": agents_order,
+        "subtasks": subtask_agents,
         "model": str(req.get("model") or ""),
         "has_trace": bool(events),
         "duration_ms": duration_ms(events),

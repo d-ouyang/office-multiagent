@@ -47,6 +47,26 @@ export default function TaskDetailDrawer({
         <FlowPathSvg flow={flow} />
       </div>
 
+      <Typography.Title level={5}>执行编排</Typography.Title>
+      <Descriptions column={1} size="small" bordered>
+        <Descriptions.Item label="执行模式">
+          {detail.mode === 'multi' ? '多 Agent 协作（multi）' : detail.mode === 'single' ? '单 Agent（single）' : '—'}
+        </Descriptions.Item>
+        <Descriptions.Item label="Agent 链">
+          {detail.agents?.length ? detail.agents.join(' → ') : '—'}
+        </Descriptions.Item>
+        {detail.mode === 'multi' && detail.subtasks?.length ? (
+          <Descriptions.Item label="子任务归属">
+            {detail.subtasks.map((s) => `${s.id}→${s.agent}`).join('、')}
+          </Descriptions.Item>
+        ) : null}
+        <Descriptions.Item label="工具来源">
+          {detail.mode === 'multi'
+            ? '各子任务使用各自 Agent 的固定白名单（agents.yaml）'
+            : '主 Agent 的固定白名单（agents.yaml）；能力预检改道时为 general 全量池'}
+        </Descriptions.Item>
+      </Descriptions>
+
       <Typography.Title level={5}>关键指标</Typography.Title>
       <Descriptions column={1} size="small" bordered>
         <Descriptions.Item label="用户">{detail.username ?? '—'}</Descriptions.Item>
