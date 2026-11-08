@@ -53,6 +53,9 @@ services:
       MYSQL_USER: ${MYSQL_USER:-office}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-office_pass}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-office}
+      # 2.1.0 P1-1：HITL/quota 真断点续跑依赖 checkpoint 落盘（memory 后端重启即丢）。
+      # 上线标注：生产 /opt/office/.env 必须加 CHECKPOINTER_BACKEND=sqlite。
+      CHECKPOINTER_BACKEND: ${CHECKPOINTER_BACKEND:-sqlite}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_DB: 0
