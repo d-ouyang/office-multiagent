@@ -20,7 +20,7 @@ export default function AskUserCard({
   onSubmit: (answer: string, attachments: string[]) => void;
   onDismiss: () => void;
 }) {
-  const qs = ask.questions;
+  const qs = ask?.questions ?? []; // 防御：旧格式/缺 questions 时不崩，渲染空态
   const total = qs.length;
   const [idx, setIdx] = useState(0);
   const [answers, setAnswers] = useState<(string | null)[]>(() => qs.map(() => null));

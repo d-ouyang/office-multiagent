@@ -10,7 +10,7 @@ import { sortDialogueModels, toPromptModel, type DialogueModel } from '../compon
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import type { StreamEvent } from '../types';
 import ContextRing from '../components/ContextRing';
-import { deriveAskUser, deriveContextUsage, deriveCurrentAgent, agentLabel, pauseText, quotaPauseText, type AskUserPayload } from '../lib/derive';
+import { deriveAskUser, deriveContextUsage, deriveCurrentAgent, agentLabel, normalizeAsk, pauseText, quotaPauseText } from '../lib/derive';
 import AskUserCard from '../components/AskUserCard';
 import { authHeaders, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
 
@@ -206,13 +206,22 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
       if (!t) {
         setPaused(null);
       } else {
-        const payload = (t.pause_payload as Record<string, unknown>) ?? {};
+        // pause_payload 后端存的是 JSON 字符串，可能解析失败；ask 可能是旧单问题格式
+        let payload: Record<string, unknown> = {};
+        try {
+          payload =
+            typeof t.pause_payload === 'string'
+              ? (JSON.parse(t.pause_payload) as Record<string, unknown>)
+              : ((t.pause_payload as Record<string, unknown>) ?? {});
+        } catch {
+          payload = {};
+        }
         setPaused({
           taskId: t.id,
           status: String(t.status),
           needed: Number(payload.needed ?? 0),
           message: pauseText(String(t.status), payload),
-          ask: (payload.ask as AskUserPayload | undefined) ?? undefined,
+          ask: normalizeAsk(payload.ask) ?? undefined,
         });
       }
     } catch {
@@ -230,7 +239,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
       if (doneStatus.startsWith('paused') || doneStatus === 'failed') {
         const quota = [...events].reverse().find((e) => e.type === 'quota_paused');
         const payload = (quota?.data ?? done?.data ?? {}) as Record<string, unknown>;
-        const ask = doneStatus === 'paused_input' ? deriveAskUser(events) : undefined;
+        const ask = doneStatus === 'paused_input' ? deriveAskUser(events) ?? undefined : undefined;
         setPaused({
           taskId: done?.run_id ?? '',
           status: doneStatus,
@@ -635,7 +644,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
         </div>
         {uploadError && <div className="banner warn">{uploadError}</div>}
         {error && <div className="banner err">{error}</div>}
-        {paused && paused.status === 'paused_input' && paused.ask && !paused.dismissed && (
+        {paused && paused.status === 'paused_input' && paused.ask && paused.ask.questions.length > 0 && !paused.dismissed && (
           <AskUserCard
             ask={paused.ask}
             uploadError={uploadError}
@@ -644,7 +653,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
             onDismiss={() => setPaused((p) => (p ? { ...p, dismissed: true } : p))}
           />
         )}
-        {paused && paused.status === 'paused_input' && paused.ask && paused.dismissed && (
+        {paused && paused.status === 'paused_input' && paused.ask && paused.ask.questions.length > 0 && paused.dismissed && (
           <div className="banner warn pause-banner">
             <span>⏸ 任务在等待你的补充输入</span>
             <span className="pause-actions">

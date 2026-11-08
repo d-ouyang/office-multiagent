@@ -349,30 +349,42 @@ export interface AskUserPayload {
   questions: AskQuestion[];
 }
 
+/** 把任意形状（新 questions 数组 / 旧单 question / JSON 字符串）归一成
+ *  AskUserPayload；无有效问题返回 null。防旧格式 paused_input 崩渲染（实测踩过）。 */
+export function normalizeAsk(raw: unknown): AskUserPayload | null {
+  if (raw == null) return null;
+  let obj: Record<string, unknown> | null = null;
+  if (typeof raw === 'string') {
+    try {
+      obj = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  } else if (typeof raw === 'object') {
+    obj = raw as Record<string, unknown>;
+  }
+  if (!obj) return null;
+  // 兼容两种包裹：{questions:[...]} 或旧版 {question,options,...} 直接展开
+  const listRaw = Array.isArray(obj.questions)
+    ? obj.questions
+    : [obj.question != null ? obj : null].filter(Boolean);
+  const questions = (listRaw as Record<string, unknown>[])
+    .map((q) => ({
+      question: String(q.question ?? ''),
+      options: Array.isArray(q.options) ? q.options.map(String) : [],
+      need_file: !!q.need_file,
+      file_hint: String(q.file_hint ?? ''),
+    }))
+    .filter((q) => q.question);
+  return questions.length ? { questions } : null;
+}
+
 /** 2.1.0 P1-1 HITL：取流里最后一个 ask_user 载荷（模型请求补充输入，可能一次多个问题）。 */
 export function deriveAskUser(events: StreamEvent[]): AskUserPayload | null {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const ev = events[i];
     if (ev.type === 'ask_user') {
-      const raw = Array.isArray(ev.data.questions)
-        ? ev.data.questions
-        : [
-            {
-              question: ev.data.question,
-              options: ev.data.options,
-              need_file: ev.data.need_file,
-              file_hint: ev.data.file_hint,
-            },
-          ];
-      const questions = (raw as Record<string, unknown>[])
-        .map((q) => ({
-          question: String(q.question ?? ''),
-          options: Array.isArray(q.options) ? q.options.map(String) : [],
-          need_file: !!q.need_file,
-          file_hint: String(q.file_hint ?? ''),
-        }))
-        .filter((q) => q.question);
-      return questions.length ? { questions } : null;
+      return normalizeAsk(ev.data);
     }
   }
   return null;

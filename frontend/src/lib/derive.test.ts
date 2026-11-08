@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveAskUser } from './derive';
+import { deriveAskUser, normalizeAsk } from './derive';
 
 import {
   agentLabel,
@@ -219,5 +219,29 @@ describe('deriveAskUser（2.1.0 P1-1 HITL）', () => {
     expect(ask?.questions[0].question).toBe('要哪个文件？');
     expect(ask?.questions[0].need_file).toBe(true);
     expect(deriveAskUser([])).toBeNull();
+  });
+});
+
+describe('normalizeAsk（旧格式/字符串防御，黑屏闪烁修复回归）', () => {
+  it('旧单问题格式归一为 questions 数组', () => {
+    const ask = normalizeAsk({
+      question: '需要清洗的表格文件还没有提供',
+      options: ['上传 CSV 文件'],
+      need_file: true,
+      file_hint: 'csv',
+    });
+    expect(ask?.questions).toHaveLength(1);
+    expect(ask?.questions[0].need_file).toBe(true);
+  });
+
+  it('JSON 字符串也能解析归一', () => {
+    const ask = normalizeAsk('{"questions":[{"question":"数据来源？","options":["订单库"]}]}');
+    expect(ask?.questions[0].question).toBe('数据来源？');
+  });
+
+  it('坏字符串/空对象返回 null 不抛错', () => {
+    expect(normalizeAsk('not-json{{')).toBeNull();
+    expect(normalizeAsk({})).toBeNull();
+    expect(normalizeAsk(undefined)).toBeNull();
   });
 });
