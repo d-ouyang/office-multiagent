@@ -255,7 +255,11 @@ export function ChatMessage({
         return null;
       })()
     : null;
-  const showDeliverables = !msg.streaming && (finalStatus === null || finalStatus === 'done');
+  // ⚠️ done 事件的 data.status 是【路由值】（single/multi），不是任务状态——
+  // 上一版用 finalStatus==='done' 判定导致交付物永远不显示（实测踩过）。
+  // 正确判定：非流式中 且 done 状态不是暂停/失败中间态 → 显示交付物。
+  const showDeliverables =
+    !msg.streaming && (finalStatus === null || !finalStatus.startsWith('paused'));
   const artifacts = events && showDeliverables ? deriveArtifacts(events) : [];
   const visuals = events && showDeliverables ? deriveVisuals(events) : [];
   const content = process ? process.result : (msg.content ?? '');
@@ -275,7 +279,10 @@ export function ChatMessage({
   // p2.8：乐观更新（点击立即变实心，失败回滚）+ ref 节流（防暴力点击）——
   // 节流必须用 ref 而非 state：同一渲染批次内的连点读到的还是旧闭包值，
   // state guard 会被击穿；ref 置位是同步的，跨批次/同批次都拦得住。
-  const canFeedback = !!(msg.id && onFeedbackSubmit && onFeedbackCancel);
+  // 2.1.0：挂起中间态（HITL/预算暂停）的消息是"半截对话"，反馈没有意义——隐藏
+  const canFeedback =
+    !!(msg.id && onFeedbackSubmit && onFeedbackCancel) &&
+    !(finalStatus === 'paused_input' || finalStatus === 'paused_budget');
   const rating = feedback?.rating ?? null;
   const fbThrottled = () =>
     fbBusyRef.current || Date.now() - fbCooldownRef.current < 400;

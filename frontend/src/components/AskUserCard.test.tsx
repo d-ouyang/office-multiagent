@@ -24,29 +24,28 @@ const multiAsk = {
 };
 
 describe('AskUserCard', () => {
-  it('单问题：点选项只记录，显式点「提交并继续」才提交', async () => {
+  it('单问题：选完直接进入续跑（无确认按钮）', async () => {
     const onSubmit = vi.fn();
     render(<AskUserCard ask={singleAsk} onSubmit={onSubmit} onUploadFile={vi.fn()} onDismiss={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /用数据库订单数据/ }));
-    expect(onSubmit).not.toHaveBeenCalled(); // 选择≠提交
-    fireEvent.click(screen.getByRole('button', { name: '提交并继续' }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('用数据库订单数据', []));
+    expect(screen.queryByRole('button', { name: '提交并继续' })).toBeNull();
   });
 
-  it('need_file 题答案声称上传但没传 → 提交禁用（防空跑死循环）', () => {
+  it('need_file 题裸选上传 → 挂在本题不提交；传完文件自动续跑', async () => {
     const needAsk = {
       questions: [
         { question: '数据从哪来？', options: ['我来上传文件', '用数据库订单数据（推荐）'], need_file: true, file_hint: 'csv/xlsx' },
       ],
     };
     const onSubmit = vi.fn();
-    render(<AskUserCard ask={needAsk} onSubmit={onSubmit} onUploadFile={vi.fn()} onDismiss={vi.fn()} />);
+    const onUploadFile = vi.fn().mockResolvedValue('sales.csv');
+    render(<AskUserCard ask={needAsk} onSubmit={onSubmit} onUploadFile={onUploadFile} onDismiss={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /我来上传文件/ }));
-    expect((screen.getByRole('button', { name: '提交并继续' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/还没有实际上传/)).toBeTruthy();
-    // 改选数据库来源后可提交
-    fireEvent.click(screen.getByRole('button', { name: /用数据库订单数据/ }));
-    expect((screen.getByRole('button', { name: '提交并继续' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(onSubmit).not.toHaveBeenCalled(); // 挂在本题等上传
+    expect(screen.getByText(/选了要上传文件但还没传/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('上传文件'), { target: { files: [new File(['x'], 'sales.csv')] } });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('我来上传文件', ['sales.csv']));
   });
 
   it('多问题：n/N 逐题收集，全部答完后一次提交（Q/A 段落聚合）', async () => {
@@ -56,7 +55,6 @@ describe('AskUserCard', () => {
     fireEvent.click(screen.getByRole('button', { name: /数据库订单/ }));
     await waitFor(() => expect(screen.getByText('2/2')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /按月汇总/ }));
-    fireEvent.click(screen.getByRole('button', { name: '提交并继续' }));
     await waitFor(() =>
       expect(onSubmit).toHaveBeenCalledWith(
         '问题：数据来源？\n回答：数据库订单\n\n问题：统计口径？\n回答：按月汇总',
@@ -71,7 +69,6 @@ describe('AskUserCard', () => {
     fireEvent.click(screen.getByRole('button', { name: '跳过此题' })); // 第 1 题跳过 → 自动到第 2 题
     await waitFor(() => expect(screen.getByText('2/2')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /按门店/ }));
-    fireEvent.click(screen.getByRole('button', { name: '提交并继续' }));
     await waitFor(() =>
       expect(onSubmit).toHaveBeenCalledWith(
         '问题：数据来源？\n回答：（跳过）\n\n问题：统计口径？\n回答：按门店',
@@ -86,8 +83,6 @@ describe('AskUserCard', () => {
     fireEvent.click(screen.getByText('其他补充…'));
     fireEvent.change(screen.getByLabelText('其他补充'), { target: { value: '先按订单表统计' } });
     fireEvent.click(screen.getByLabelText('确认补充'));
-    expect(onSubmit).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '提交并继续' }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('先按订单表统计', []));
   });
 

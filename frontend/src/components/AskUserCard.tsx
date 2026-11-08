@@ -32,21 +32,38 @@ export default function AskUserCard({
   const q: AskQuestion = qs[Math.min(idx, total - 1)];
   const answer = answers[idx] ?? null;
   const answered = (i: number) => answers[i] !== null;
-  const allDone = answers.every((a) => a !== null);
   const last = idx === total - 1;
   const canSubmitCurrent = Boolean(answer) || Boolean((custom[idx] ?? '').trim()) || (files[idx]?.length ?? 0) > 0;
 
-  // 2.1.0 交互修正：选择/输入只【记录】答案，绝不自动触发续跑——
-  // 全部问题答完 + 用户点「提交并继续」才一次性进入续跑（实测踩过：
-  // 点"上传 csv"选项立即续跑但文件根本没传，模型再次 ask_user 死循环）。
+  // 2.1.0 定稿交互：单问题/最后一题答完【自动进入续跑】（无确认按钮）；
+  // 多题中间跳过/选择即翻页并记住（（跳过）会如实告知模型）。
+  // 唯一例外：need_file 题答案声称要上传但没传 → 挂在本题等上传（上传完成自动续跑）。
+  const tryAutoSubmit = (nextAnswers: (string | null)[], nextFiles: { [k: number]: string[] }) => {
+    const pending = qs.some((item, i) => {
+      const a = nextAnswers[i] ?? '';
+      return item.need_file && a && /上传|文件/i.test(a) && !(nextFiles[i]?.length);
+    });
+    if (pending) return; // 停在本题，等上传
+    const parts = qs.map((item, i) => {
+      const a = nextAnswers[i] ?? '（跳过）';
+      if (total === 1) return a === '（跳过）' ? '' : a;
+      return `问题：${item.question}\n回答：${a}`;
+    });
+    const answer = total === 1 ? parts[0] : parts.join('\n\n');
+    const attachments = Object.values(nextFiles).flat();
+    onSubmit(answer, attachments);
+  };
+
   const record = (value: string | null) => {
     const v = value ?? '（跳过）'; // 跳过也给模型明确信号，不是空字符串
-    setAnswers((prev) => {
-      const next = [...prev];
-      next[idx] = v;
-      return next;
-    });
-    if (!last) setIdx((i) => Math.min(i + 1, total - 1));
+    const next = [...answers];
+    next[idx] = v;
+    setAnswers(next);
+    if (last || total === 1) {
+      tryAutoSubmit(next, files);
+      return;
+    }
+    setIdx((i) => Math.min(i + 1, total - 1));
   };
 
   // need_file 的题：答案声称要上传文件但实际没传 → 阻止提交（防"裸选上传选项"空跑）
@@ -55,26 +72,17 @@ export default function AskUserCard({
     return item.need_file && a && /上传|文件/i.test(a) && !(files[i]?.length);
   });
 
-  const submitAll = () => {
-    if (pendingUpload) return;
-    // 未作答的题按「跳过」处理；当前题「其他补充」输入优先；多问题时按 Q/A 段落聚合
-    const parts = qs.map((item, i) => {
-      const a = answers[i] ?? ((i === idx ? (custom[idx] ?? '').trim() : '') || '（跳过）');
-      if (total === 1) return a === '（跳过）' ? '' : a;
-      return `问题：${item.question}\n回答：${a}`;
-    });
-    const answer = total === 1 ? parts[0] : parts.join('\n\n');
-    const attachments = Object.values(files).flat();
-    onSubmit(answer, attachments);
-  };
-
   const onPickFiles = async (list: FileList | null) => {
     if (!list) return;
+    const nextFiles = { ...files };
     for (const file of Array.from(list)) {
       const name = await onUploadFile(file);
-      if (name) setFiles((prev) => ({ ...prev, [idx]: [...(prev[idx] ?? []), name] }));
+      if (name) nextFiles[idx] = [...(nextFiles[idx] ?? []), name];
     }
+    setFiles(nextFiles);
     if (fileRef.current) fileRef.current.value = '';
+    // 上传完成：本题答案若在等文件 → 自动进入续跑
+    tryAutoSubmit(answers, nextFiles);
   };
 
   return (
@@ -188,7 +196,7 @@ export default function AskUserCard({
       )}
       {uploadError && <div className="ask-files err">{uploadError}</div>}
       {pendingUpload && (
-        <div className="ask-files err">答案提到要上传文件，但还没有实际上传——请先上传，或改选其他选项。</div>
+        <div className="ask-files err">选了要上传文件但还没传——请先点上方选择文件，或改选其他选项。</div>
       )}
 
       <div className="ask-foot">
@@ -199,15 +207,6 @@ export default function AskUserCard({
           onClick={() => record(null)}
         >
           跳过此题
-        </button>
-        <button
-          type="button"
-          className="admin-btn"
-          disabled={pendingUpload}
-          title={pendingUpload ? '本题答案提到上传文件，但还没有实际上传——请先点上方选择文件，或改选其他选项' : undefined}
-          onClick={submitAll}
-        >
-          提交并继续
         </button>
         {!last && (answered(idx) || canSubmitCurrent) && (
           <button type="button" className="admin-btn ghost" onClick={() => record((custom[idx] ?? '').trim() || answer)}>
