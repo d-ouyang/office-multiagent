@@ -4,8 +4,8 @@ import { useRef, useState } from 'react';
 import type { ProcessStep, ToolCall } from '../lib/derive';
 import { formatDuration } from '../lib/format';
 import MarkdownView from './MarkdownView';
-import FlowChart from './FlowChart';
-import ChartView from './ChartView';
+import { FlowChart } from './FlowChart';
+import { ChartView } from './ChartView';
 
 export function ThinkingPanel({ text, streaming }: { text: string; streaming: boolean }) {
   const [open, setOpen] = useState(false);
