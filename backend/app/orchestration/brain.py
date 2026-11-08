@@ -485,6 +485,16 @@ def make_brain(
     v2.0.0-p1.5：protocol 缺省读 settings.react_protocol（json | tool_calls | auto）；
     auto 按 models.yaml supports_tools + 工具 Schema 完整性自动判定。
     """
+    # 2.1.0：系统提示注入当前日期/星期（模型无时间感知；全局生效，含 single/multi 子任务）
+    from datetime import datetime as _dt
+
+    _now = _dt.now()
+    _date_block = f"【当前时间】{_now.strftime('%Y-%m-%d %H:%M')}（{_now.strftime('%A')}）。涉及'今天/昨天/上周/本月'等相对时间时，以此为准换算具体日期。"
+    if system_prompt:
+        system_prompt = f"{system_prompt}\n\n{_date_block}"
+    else:
+        system_prompt = _date_block
+
     mid = model_id or settings.llm_brain_model
     try:
         resolve_model(mid)

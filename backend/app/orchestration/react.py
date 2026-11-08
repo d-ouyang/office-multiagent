@@ -213,10 +213,11 @@ def run_react(
                     external_tokens=external_tokens,
                     steps_usage=steps_usage,
                 )
+            used = int(getattr(token_budget, "used", 0) or 0)
             cap = (
-                f"本次任务已达到全局 token 上限 {token_budget.limit if token_budget else ''}，"
-                f"已在模型调用边界停止。已完成 {len(done_steps)} 个工具步骤；"
-                "已有结果保留，未完成部分请拆成下一次任务继续。"
+                f"任务 token 预算已用尽（已消耗 {used}/{token_budget.limit if token_budget else ''}），"
+                "剩余额度不足以安全发起下一次模型调用（每步都会重发全部上下文），已在调用边界停止。"
+                f"已完成 {len(done_steps)} 个工具步骤；已有结果保留，未完成部分请拆成下一次任务继续。"
             )
             if emitter is not None:
                 _emit(emitter.observation("token_limit", cap))

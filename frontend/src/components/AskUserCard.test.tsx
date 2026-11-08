@@ -50,7 +50,7 @@ describe('AskUserCard', () => {
   it('跳过的问题按「（跳过）」聚合', async () => {
     const onSubmit = vi.fn();
     render(<AskUserCard ask={multiAsk} onSubmit={onSubmit} onUploadFile={vi.fn()} onDismiss={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: '跳过' })); // 第 1 题跳过 → 自动到第 2 题
+    fireEvent.click(screen.getByRole('button', { name: '跳过此题' })); // 第 1 题跳过 → 自动到第 2 题
     await waitFor(() => expect(screen.getByText('2/2')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /按门店/ }));
     fireEvent.click(screen.getByRole('button', { name: '提交并继续' }));

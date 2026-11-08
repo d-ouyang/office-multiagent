@@ -34,6 +34,7 @@ export default function AskUserCard({
   const answered = (i: number) => answers[i] !== null;
   const allDone = answers.every((a) => a !== null);
   const last = idx === total - 1;
+  const canSubmitCurrent = Boolean(answer) || Boolean((custom[idx] ?? '').trim()) || (files[idx]?.length ?? 0) > 0;
 
   const record = (value: string | null) => {
     const v = value ?? '（跳过）'; // 跳过也给模型明确信号，不是空字符串
@@ -49,9 +50,9 @@ export default function AskUserCard({
   };
 
   const submitAll = () => {
-    // 未作答的题按「跳过」处理；多问题时按 Q/A 段落聚合，单问题直接给答案文本
+    // 未作答的题按「跳过」处理；当前题「其他补充」输入优先；多问题时按 Q/A 段落聚合
     const parts = qs.map((item, i) => {
-      const a = answers[i] ?? '（跳过）';
+      const a = answers[i] ?? ((i === idx ? (custom[idx] ?? '').trim() : '') || '（跳过）');
       if (total === 1) return a === '（跳过）' ? '' : a;
       return `问题：${item.question}\n回答：${a}`;
     });
@@ -181,16 +182,21 @@ export default function AskUserCard({
       {uploadError && <div className="ask-files err">{uploadError}</div>}
 
       <div className="ask-foot">
-        <button type="button" className="admin-btn ghost" onClick={() => record(null)}>
-          跳过
+        <button
+          type="button"
+          className="admin-btn ghost"
+          title="本题不留回答，模型将自行判断"
+          onClick={() => record(null)}
+        >
+          跳过此题
         </button>
-        {last && allDone && (
+        {last && (allDone || canSubmitCurrent) && (
           <button type="button" className="admin-btn" onClick={submitAll}>
             提交并继续
           </button>
         )}
-        {!last && answered(idx) && (
-          <button type="button" className="admin-btn" onClick={() => setIdx((i) => Math.min(total - 1, i + 1))}>
+        {!last && (answered(idx) || canSubmitCurrent) && (
+          <button type="button" className="admin-btn" onClick={() => record((custom[idx] ?? '').trim() || answer)}>
             下一题
           </button>
         )}

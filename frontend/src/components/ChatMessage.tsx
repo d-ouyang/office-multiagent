@@ -397,7 +397,7 @@ export function ChatMessage({
               <span className="reply-tokens">
                 <span>
                   {finalStatus === 'paused_input' || finalStatus === 'paused_budget'
-                    ? `已消耗 ${formatTokens(tokens)} · 任务未完结`
+                    ? '⏸ 任务未完结（等待你的输入/选择后从断点继续）'
                     : `共消耗 ${formatTokens(tokens)}`}
                 </span>
                 {meta.steps && meta.steps.length > 0 && (
