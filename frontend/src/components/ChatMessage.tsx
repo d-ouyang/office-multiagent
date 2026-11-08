@@ -2,22 +2,17 @@
 // 助手消息：正文下方独立一行——复制、点赞、点踩、用量、模型、时间、耗时。
 // 点赞/点踩 v2.0.0-p2.2 起闭环入库：激活态实心；点踩必走弹窗（原因多选/其他原因）；
 // 再点实心图标 = 取消；二次点踩回显已选原因、提交后覆盖（旧信息保留在服务端流水）。
-import { lazy, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Copy, Pencil, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import type { FeedbackRating, MessageFeedback } from '../lib/api';
 import type { StreamEvent } from '../types';
 import { deriveArtifacts, deriveFailure, deriveProcess, deriveReplyMeta } from '../lib/derive';
 import { FeedbackDialog } from './FeedbackDialog';
-import { FlowChart } from './FlowChart';
-import type { ChartSpec } from './ChartView';
-import type { FlowSpec } from '../lib/flowLayout';
 import { formatClock, formatDuration, formatTokens } from '../lib/format';
 import { modelDisplayName } from './ModelPicker';
 import MarkdownView from './MarkdownView';
 import { ProcessTrace } from './FoldPanels';
-
-const ChartView = lazy(() => import('./ChartView').then((module) => ({ default: module.ChartView })));
 
 export interface ChatMessageData {
   role: 'user' | 'assistant';

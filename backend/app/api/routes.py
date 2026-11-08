@@ -1100,6 +1100,16 @@ def _stream_answer(
                     repo.append_message(session_id, "assistant", str(result.get("result", "")), trace=trace)
                     _finish_answered_task(task_id, status, str(result.get("result", "")), actual)
                 elif status == "paused_input":
+                    # 2.1.0：二次挂起也要落本段续跑的消息（流式正文 + trace）——
+                    # 否则模型又追问一次时，上一段已生成的内容（含图表）刷新后
+                    # 从对话里消失，只留任务行（实测踩过：两套图表只剩一套）。
+                    streamed = "".join(
+                        str(e.data.get("delta") or "")
+                        for e in events
+                        if e.type == EventType.CONTENT_DELTA
+                    ).strip()
+                    body = streamed or "（本段已继续执行并生成中间结果，模型再次发起补充输入）"
+                    repo.append_message(session_id, "assistant", body, trace=trace)
                     new_ask = _json.dumps(result.get("ask") or {}, ensure_ascii=False)
                     _finish_answered_task(task_id, "paused_input", "", actual, pause_payload=new_ask)
                 else:

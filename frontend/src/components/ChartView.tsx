@@ -154,21 +154,10 @@ function ChartViewInner({ spec }: { spec: ChartSpec }) {
     };
   }, []);
 
-  // p6.48：导出图表为 PNG（白底 2x，与卡片浅色风格一致）
-  const downloadPng = () => {
-    const url = chart.current?.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' });
-    if (!url) return;
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${(spec.title || '图表').replace(/[\\/:*?"<>|]/g, '_')}.png`;
-    link.click();
-  };
-
+  // 2.1.0 P1-1n：内部"下载 PNG"按钮移除——下载统一由外层 VisualCard 提供
+  //（避免双按钮；白底 2x 导出走 echarts.getInstanceByDom）
   return (
     <div className="chart-card">
-      <button type="button" className="chart-download" onClick={downloadPng}>
-        下载 PNG
-      </button>
       <div ref={host} className="chart-host" />
     </div>
   );

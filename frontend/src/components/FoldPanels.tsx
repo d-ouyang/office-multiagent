@@ -6,6 +6,7 @@ import { formatDuration } from '../lib/format';
 import MarkdownView from './MarkdownView';
 import { FlowChart } from './FlowChart';
 import { ChartView } from './ChartView';
+import { getInstanceByDom as _echartsGet } from 'echarts/core';
 
 export function ThinkingPanel({ text, streaming }: { text: string; streaming: boolean }) {
   const [open, setOpen] = useState(false);
@@ -80,7 +81,15 @@ export function VisualCard({ visual }: { visual: { kind: string; payload: Record
     let url = '';
     let name = '';
     if (canvas) {
-      url = canvas.toDataURL('image/png');
+      // 优先走 ECharts 实例：白底 2x，与卡片浅色风格一致（p6.48 逻辑迁移到此处）
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const inst = _echartsGet(canvas.parentElement ?? canvas);
+        url = inst?.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' }) ?? '';
+      } catch {
+        url = '';
+      }
+      if (!url) url = canvas.toDataURL('image/png');
       name = 'chart.png';
     } else if (svg) {
       const xml = new XMLSerializer().serializeToString(svg);
