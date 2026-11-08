@@ -275,9 +275,14 @@ export function deriveFailure(events: StreamEvent[]): FailureInfo | null {
       };
     }
   }
-  // 兜底：quota_paused/error 事件缺失时看 done 状态
+  // 兜底：quota_paused/error 事件缺失时看 done 状态。
+  // paused_input 是 HITL 等待补充输入（不是余额问题）——返回 null 交由 ask 卡片接管，
+  // 否则会渲染出误导性的"余额不足"横幅（实测踩过）。
   const done = events.find((e) => e.type === 'done');
   const st = done ? String(done.data.status ?? 'done') : 'done';
+  if (st === 'paused_input') {
+    return null;
+  }
   if (st.startsWith('paused')) {
     return { kind: 'quota', title: '余额不足，任务已暂停', reason: st };
   }

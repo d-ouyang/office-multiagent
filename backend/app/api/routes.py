@@ -1066,8 +1066,8 @@ def _stream_answer(
                 trace = _json.dumps(
                     [_json.loads(ev.model_dump_json()) for ev in events], ensure_ascii=False
                 )
-                original_text = str(task.get("text") or "")
-                user_msg = original_text + (f"\n\n【补充】{answer}" if answer else "")
+                # 挂起时已落过原问题消息，这里只补"【补充】"一条，避免历史重复
+                user_msg = f"【补充】{answer}" if answer else "【补充】（见上传附件）"
                 user_trace = (
                     _json.dumps({"attachments": attachments, "answer_to": ask}, ensure_ascii=False)
                     if (attachments or ask)
@@ -1374,6 +1374,30 @@ def _stream_task(
                     )
                     repo.append_message(session_id, "user", text, trace=user_trace)
                     repo.append_message(session_id, "assistant", result.get("result", ""), trace=trace)
+                elif status == "paused_input":
+                    # 2.1.0 P1-1：HITL 挂起也落库——否则刷新后对话只剩弹窗、
+                    # 前置问答全部消失（实测踩过）。assistant 存流式正文 + 挂起说明，
+                    # trace 带完整事件（含 ask_user），消息流可还原"已完成步骤"。
+                    streamed = "".join(
+                        str(e.data.get("delta") or "")
+                        for e in events
+                        if e.type == EventType.CONTENT_DELTA
+                    ).strip()
+                    body = streamed or "任务已暂停，等待补充输入。"
+                    repo.append_message(session_id, "user", text)
+                    repo.append_message(session_id, "assistant", body, trace=trace)
+                elif status == "paused_input":
+                    # 2.1.0 P1-1：HITL 挂起也落库——否则刷新后对话只剩弹窗、
+                    # 前置问答全部消失（实测踩过）。assistant 存流式正文 + 挂起说明，
+                    # trace 带完整事件（含 ask_user），消息流可还原"已完成步骤"。
+                    streamed = "".join(
+                        str(e.data.get("delta") or "")
+                        for e in events
+                        if e.type == EventType.CONTENT_DELTA
+                    ).strip()
+                    body = streamed or "任务已暂停，等待补充输入。"
+                    repo.append_message(session_id, "user", text)
+                    repo.append_message(session_id, "assistant", body, trace=trace)
                 elif status == "paused_user":
                     # p6.46：手动停止也落库——流式内容用户已经看到，刷新后不能凭空消失。
                     # 正文取流里实际推过的内容（含"已暂停"收尾提示），而不是占位结果。

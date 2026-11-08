@@ -667,7 +667,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
             </span>
           </div>
         )}
-        {paused && quotaBanner && (
+        {paused && paused.status !== 'paused_input' && quotaBanner && (
           <div className="banner warn pause-banner">
             <span>⏸ {quotaBanner}</span>
             <span className="pause-actions">
