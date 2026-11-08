@@ -801,6 +801,7 @@ def resume_with_answer(
             f"暂停任务的存档已失效（run_id={run_id}）：memory 后端不支持跨重启续跑，"
             "请配置 CHECKPOINTER_BACKEND=sqlite，或重新发起任务并在附件里带上补充材料。"
         )
+    # model/effort 不传——build_graph 无此参数，且 checkpoint 里的 TaskState 已含原值
     graph = build_graph(
         emitter,
         emit2,
@@ -809,8 +810,6 @@ def resume_with_answer(
         username=username,
         user_id=user_id,
         task_id=run_id,
-        model=model,
-        effort=effort,
         should_cancel=None,
     )
     cfg = {"configurable": {"thread_id": run_id}}

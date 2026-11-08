@@ -10,7 +10,8 @@ import { sortDialogueModels, toPromptModel, type DialogueModel } from '../compon
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import type { StreamEvent } from '../types';
 import ContextRing from '../components/ContextRing';
-import { deriveContextUsage, deriveCurrentAgent, agentLabel, pauseText, quotaPauseText } from '../lib/derive';
+import { deriveAskUser, deriveContextUsage, deriveCurrentAgent, agentLabel, pauseText, quotaPauseText, type AskUserPayload } from '../lib/derive';
+import AskUserCard from '../components/AskUserCard';
 import { authHeaders, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
 
 const EFFORTS = ['低', '高', '最大'] as const;
@@ -51,7 +52,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
   const [loadingSession, setLoadingSession] = useState(false); // p6.48：切会话拉消息期间不闪空态
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
-  const [paused, setPaused] = useState<{ taskId: string; status: string; needed: number; message: string } | null>(null);
+  const [paused, setPaused] = useState<{ taskId: string; status: string; needed: number; message: string; ask?: AskUserPayload } | null>(null);
   const [usage, setUsage] = useState<{ month_tokens: number; month_count: number; total_tokens: number; total_count: number } | null>(null);
   const [modelId, setModelId] = useState(() => localStorage.getItem('office_model') || 'deepseek-chat');
   const [locate, setLocate] = useState<{ taskId: string; question: string } | null>(null);
@@ -211,6 +212,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
           status: String(t.status),
           needed: Number(payload.needed ?? 0),
           message: pauseText(String(t.status), payload),
+          ask: (payload.ask as AskUserPayload | undefined) ?? undefined,
         });
       }
     } catch {
@@ -228,11 +230,13 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
       if (doneStatus.startsWith('paused') || doneStatus === 'failed') {
         const quota = [...events].reverse().find((e) => e.type === 'quota_paused');
         const payload = (quota?.data ?? done?.data ?? {}) as Record<string, unknown>;
+        const ask = doneStatus === 'paused_input' ? deriveAskUser(events) : undefined;
         setPaused({
           taskId: done?.run_id ?? '',
           status: doneStatus,
           needed: Number(payload.needed ?? 0),
           message: pauseText(doneStatus, payload),
+          ask,
         });
         if (doneStatus === 'paused_insufficient_quota') refreshQuota();
       } else {
@@ -314,6 +318,28 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
       },
     });
   };
+
+  /** 2.1.0 P1-1：回答 ask_user → POST /answer 断点续跑（新流作为新的助手消息接上）。 */
+  const onAskSubmit = useCallback(
+    (answer: string, attachments: string[]) => {
+      if (!paused?.taskId) return;
+      const taskId = paused.taskId;
+      setPaused(null);
+      sealedRef.current = false;
+      void start({
+        url: `/api/v1/tasks/${encodeURIComponent(taskId)}/answer`,
+        method: 'POST',
+        body: { answer, attachments },
+        headers: authHeaders(),
+        on401: () => {
+          clearToken();
+          onLogout();
+        },
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [paused?.taskId, start, onLogout],
+  );
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -609,6 +635,14 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
         </div>
         {uploadError && <div className="banner warn">{uploadError}</div>}
         {error && <div className="banner err">{error}</div>}
+        {paused && paused.status === 'paused_input' && paused.ask && (
+          <AskUserCard
+            ask={paused.ask}
+            uploadError={uploadError}
+            onUploadFile={uploadFile}
+            onSubmit={onAskSubmit}
+          />
+        )}
         {paused && quotaBanner && (
           <div className="banner warn pause-banner">
             <span>⏸ {quotaBanner}</span>

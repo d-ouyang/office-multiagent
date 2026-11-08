@@ -338,12 +338,36 @@ export function quotaPauseText(needed: number, balance: number | null): string |
   return `余额不足，当前余额 ${bal}。充值后重新发送即可。`;
 }
 
+export interface AskUserPayload {
+  question: string;
+  options: string[];
+  need_file: boolean;
+  file_hint: string;
+}
+
+/** 2.1.0 P1-1 HITL：取流里最后一个 ask_user 载荷（模型请求补充输入）。 */
+export function deriveAskUser(events: StreamEvent[]): AskUserPayload | null {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const ev = events[i];
+    if (ev.type === 'ask_user') {
+      return {
+        question: String(ev.data.question ?? ''),
+        options: Array.isArray(ev.data.options) ? ev.data.options.map(String) : [],
+        need_file: !!ev.data.need_file,
+        file_hint: String(ev.data.file_hint ?? ''),
+      };
+    }
+  }
+  return null;
+}
+
 /** p7.1：任务暂停原因 → 横幅文案（user / error）。余额不足不走这里。 */
 export function pauseText(status: string, payload: Record<string, unknown> = {}): string {
   if (status === 'paused_insufficient_quota') {
     const need = Number(payload.needed ?? 0);
     return need > 0 ? `余额不足，这次提问大约需要 ${need}。` : '余额不足，这次提问没有开始。';
   }
+  if (status === 'paused_input') return '任务在等待你的补充输入，回答后从断点继续（已完成步骤不重跑）';
   if (status === 'paused_user') return '任务已按你的要求暂停，可点「继续」重跑';
   if (status === 'paused_error' || status === 'failed') return '任务中途出错已暂停，可点「重试」';
   return '任务已暂停';

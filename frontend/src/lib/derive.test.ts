@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { deriveAskUser } from './derive';
 
 import {
   agentLabel,
@@ -197,5 +198,25 @@ describe('pauseText（p7.1 暂停原因）', () => {
     expect(low).toContain('当前余额 0');
     expect(low).toContain('2,000');
     expect(low).not.toContain('继续');
+  });
+});
+
+describe('deriveAskUser（2.1.0 P1-1 HITL）', () => {
+  it('取最后一个 ask_user 载荷', () => {
+    const events = [
+      { type: 'status', run_id: 'r', turn_id: 't', seq: 1, ts: 1, data: { agent: 'planner' } },
+      {
+        type: 'ask_user',
+        run_id: 'r',
+        turn_id: 't',
+        seq: 2,
+        ts: 2,
+        data: { question: '要哪个文件？', options: ['a.csv'], need_file: true, file_hint: 'csv' },
+      },
+    ];
+    const ask = deriveAskUser(events as never[]);
+    expect(ask?.question).toBe('要哪个文件？');
+    expect(ask?.need_file).toBe(true);
+    expect(deriveAskUser([])).toBeNull();
   });
 });

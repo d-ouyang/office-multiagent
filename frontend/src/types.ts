@@ -13,7 +13,8 @@ export type EventType =
   | 'done'
   | 'task_summary'
   | 'context_usage'
-  | 'visual';
+  | 'visual'
+  | 'ask_user';
 
 export interface StreamEvent {
   type: EventType;

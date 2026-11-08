@@ -1025,6 +1025,7 @@ def _stream_answer(
     from ..core import runs
     from ..core.db import get_engine
     from ..core.events import RunEventEmitter
+    from ..core.session_repo import SessionRepo
     from ..core.token_pool import TokenPool
     from ..orchestration.graph import resume_with_answer
 
@@ -1161,7 +1162,6 @@ def _stream_quota_resume(task: dict[str, Any], *, operator_id: int | None = None
                 username=owner_name,
                 user_id=owner_id,
                 task_id=run_id,
-                model=None,
                 should_cancel=None,
             )
             state = graph.invoke(Command(resume=True), {"configurable": {"thread_id": run_id}})
