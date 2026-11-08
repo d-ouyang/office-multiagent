@@ -106,6 +106,12 @@ _DETAIL_EXTRA = (
 )
 _HIDDEN = tuple(sorted(_CUSTOMER_PII))
 
+# 2.1.0：查询结果缓存（进程级）——同参数重复查询（追问场景尤其常见）直接回缓存，
+# 不再打库、不再重复消耗 token。TTL 防长会话数据陈旧；backend 重启即失效（灌库幂等在启动时）。
+_QUERY_CACHE: dict[str, tuple[float, dict]] = {}
+_QUERY_CACHE_TTL = 600.0  # 秒
+_QUERY_CACHE_MAX = 64
+
 
 def _text(raw: Any) -> str:
     return str(raw or "").strip()
@@ -317,6 +323,28 @@ def make_query_orders_tool(
     engine: Engine | None, *, max_rows: int = _MAX_ROWS, base_dir: str | None = None
 ) -> Callable[..., Any]:
     def query_orders(**raw: Any) -> dict[str, Any]:
+        import json as _json
+        import time as _time
+
+        try:
+            key = _json.dumps(raw, sort_keys=True, ensure_ascii=False, default=str)
+        except Exception:  # noqa: BLE001 - 参数不可序列化时退化为 repr
+            key = repr(sorted(raw.items(), key=lambda kv: str(kv[0])))
+        now = _time.monotonic()
+        hit = _QUERY_CACHE.get(key)
+        if hit is not None and now - hit[0] < _QUERY_CACHE_TTL:
+            cached = dict(hit[1])
+            cached["cached"] = True  # 告知模型/用户：本结果来自缓存
+            return cached
+        result = query_orders_uncached(**raw)
+        if isinstance(result, dict) and not result.get("error"):
+            if len(_QUERY_CACHE) >= _QUERY_CACHE_MAX:
+                oldest = min(_QUERY_CACHE, key=lambda k: _QUERY_CACHE[k][0])
+                _QUERY_CACHE.pop(oldest, None)
+            _QUERY_CACHE[key] = (now, result)
+        return result
+
+    def query_orders_uncached(**raw: Any) -> dict[str, Any]:
         if engine is None:
             return {"error": "数据库不可用：未配置数据库连接"}
         loaded = ensure_orders_loaded(engine)

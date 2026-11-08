@@ -72,7 +72,7 @@ _ORDER_METRIC = {
     "metrics": {
         "type": "array",
         "items": {"type": "string", "enum": _METRIC_ENUM},
-        "description": "一次聚合多个指标（宽表，各指标一列 m_<指标>），最多 6 个。要多个指标时优先用这个，别按指标逐个查询",
+        "description": "一次聚合多个指标（宽表，各指标一列 m_<指标>），最多 6 个。要多个指标时优先用这个，别按指标逐个查询。相同参数的重复查询会直接返回缓存结果（结果里 cached=true），不要反复查同一样东西",
     },
     "group_by": {"type": "string", "description": "month、city 或订单表字段"},
 }

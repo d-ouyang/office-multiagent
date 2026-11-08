@@ -214,3 +214,53 @@ def test_columns_unknown_lists_valid_names(engine):
     assert "error" in out
     assert "不存在列" in out["error"]
     assert "order_no(订单号)" in out["error"]  # 报错列出合法列名供模型一次自我纠正
+
+
+def test_query_orders_same_params_hit_cache(engine):
+    """2.1.0：同参数重复查询直接回缓存（cached=true），不重打库。"""
+    from app.orchestration.tools_orders import _QUERY_CACHE, make_query_orders_tool
+
+    tool = make_query_orders_tool(engine)
+    raw = {"date_from": "2026-01-01", "date_to": "2026-11-08", "group_by": "store_name", "metric": "sum_pay"}
+    first = tool(**raw)
+    assert not first.get("cached")
+    n_calls = len(_QUERY_CACHE)
+    assert n_calls >= 1
+
+    second = tool(**raw)
+    assert second.get("cached") is True
+    assert second["rows"] == first["rows"]  # 数据一致
+    assert len(_QUERY_CACHE) == n_calls  # 未新增条目
+
+    # 不同参数不命中
+    other = tool(date_from="2026-01-01", date_to="2026-11-08", group_by="store_name", metric="avg_pay")
+    assert not other.get("cached")
+
+    # 错误结果不进缓存
+    bad = tool(date_from="bad-date", date_to="2026-11-08")
+    assert bad.get("error")
+
+
+def test_query_orders_same_params_hit_cache(engine):
+    """2.1.0：同参数重复查询直接回缓存（cached=true），不重打库。"""
+    from app.orchestration.tools_orders import _QUERY_CACHE, make_query_orders_tool
+
+    tool = make_query_orders_tool(engine)
+    raw = {"date_from": "2026-01-01", "date_to": "2026-11-08", "group_by": "store_name", "metric": "sum_pay"}
+    first = tool(**raw)
+    assert not first.get("cached")
+    n_calls = len(_QUERY_CACHE)
+    assert n_calls >= 1
+
+    second = tool(**raw)
+    assert second.get("cached") is True
+    assert second["rows"] == first["rows"]  # 数据一致
+    assert len(_QUERY_CACHE) == n_calls  # 未新增条目
+
+    # 不同参数不命中
+    other = tool(date_from="2026-01-01", date_to="2026-11-08", group_by="store_name", metric="avg_pay")
+    assert not other.get("cached")
+
+    # 错误结果不进缓存
+    bad = tool(date_from="bad-date", date_to="2026-11-08")
+    assert bad.get("error")
