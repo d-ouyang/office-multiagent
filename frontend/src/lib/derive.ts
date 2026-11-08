@@ -280,8 +280,8 @@ export function deriveFailure(events: StreamEvent[]): FailureInfo | null {
   // 否则会渲染出误导性的"余额不足"横幅（实测踩过）。
   const done = events.find((e) => e.type === 'done');
   const st = done ? String(done.data.status ?? 'done') : 'done';
-  if (st === 'paused_input') {
-    return null;
+  if (st === 'paused_input' || st === 'paused_budget') {
+    return null; // HITL 卡片 / 预算暂停横幅接管，不走"余额不足"误导横幅
   }
   if (st.startsWith('paused')) {
     return { kind: 'quota', title: '余额不足，任务已暂停', reason: st };
@@ -402,6 +402,7 @@ export function pauseText(status: string, payload: Record<string, unknown> = {})
     return need > 0 ? `余额不足，这次提问大约需要 ${need}。` : '余额不足，这次提问没有开始。';
   }
   if (status === 'paused_input') return '任务在等待你的补充输入，回答后从断点继续（已完成步骤不重跑）';
+  if (status === 'paused_budget') return '已达单任务 token 上限，任务已暂停。可继续（重置预算）或放弃本轮';
   if (status === 'paused_user') return '任务已按你的要求暂停，可点「继续」重跑';
   if (status === 'paused_error' || status === 'failed') return '任务中途出错已暂停，可点「重试」';
   return '任务已暂停';

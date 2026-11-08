@@ -540,7 +540,7 @@ export async function resumeTaskResponse(taskId: string): Promise<Response> {
 /** 2.1.0 P1-1 HITL：回答 paused_input 任务的补充输入请求，断点续跑（返回原始 Response 供 consumeNdjson） */
 export async function answerTaskResponse(
   taskId: string,
-  body: { answer?: string; attachments?: string[] },
+  body: { answer?: string; attachments?: string[]; action?: 'cancel' },
 ): Promise<Response> {
   return fetch(`/api/v1/tasks/${encodeURIComponent(taskId)}/answer`, {
     method: 'POST',

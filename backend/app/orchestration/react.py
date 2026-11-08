@@ -131,6 +131,7 @@ def run_react(
     prior_steps: list["Step"] | None = None,
     seed_observation: str | None = None,
     allow_ask_user: bool = False,
+    budget_interrupt: Callable[[dict[str, Any]], str] | None = None,
 ) -> AgentResult:
     """跑 ReAct 循环；超 max_iterations 强制给阶段结论（§四.4 防跑飞）。
 
@@ -181,6 +182,37 @@ def run_react(
             step = brain.next_step(task, history)
         except TokenLimitReached:
             done_steps = [item for item in history if item.observation]
+            # 2.1.0：graph 场景 → interrupt 暂停（用户可继续=预算重置 / 放弃本轮）；
+            # 纯函数场景（单测/无 checkpointer）→ 原收尾终答，基线不变。
+            if budget_interrupt is not None:
+                choice = budget_interrupt(
+                    {
+                        "type": "budget_paused",
+                        "used": int(getattr(token_budget, "used", 0) or 0),
+                        "limit": int(token_budget.limit if token_budget else 0),
+                        "done_steps": len(done_steps),
+                    }
+                )
+                if choice == "continue":
+                    if token_budget is not None:
+                        token_budget.renew()
+                    continue  # 预算重置，从当前步重新发起模型调用
+                cap = (
+                    f"已按你的选择提前结束本轮（已完成 {len(done_steps)} 个工具步骤，"
+                    "已有结果保留在会话中）。"
+                )
+                cap = _cap_final("用户放弃本轮任务", cap)
+                if emitter is not None:
+                    _emit(emitter.content_delta(cap))
+                return AgentResult(
+                    final=cap,
+                    steps=history,
+                    iterations=i,
+                    hit_cap=True,
+                    assets=assets,
+                    external_tokens=external_tokens,
+                    steps_usage=steps_usage,
+                )
             cap = (
                 f"本次任务已达到全局 token 上限 {token_budget.limit if token_budget else ''}，"
                 f"已在模型调用边界停止。已完成 {len(done_steps)} 个工具步骤；"

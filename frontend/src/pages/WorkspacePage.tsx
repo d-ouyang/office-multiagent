@@ -12,7 +12,7 @@ import type { StreamEvent } from '../types';
 import ContextRing from '../components/ContextRing';
 import { deriveAskUser, deriveContextUsage, deriveCurrentAgent, agentLabel, normalizeAsk, pauseText, quotaPauseText } from '../lib/derive';
 import AskUserCard from '../components/AskUserCard';
-import { authHeaders, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
+import { answerTaskResponse, authHeaders, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
 
 const EFFORTS = ['低', '高', '最大'] as const;
 const EFFORT_API: Record<string, string> = { 低: 'low', 高: 'high', 最大: 'max' };
@@ -644,6 +644,29 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
         </div>
         {uploadError && <div className="banner warn">{uploadError}</div>}
         {error && <div className="banner err">{error}</div>}
+        {paused && paused.status === 'paused_budget' && (
+          <div className="banner warn pause-banner">
+            <span>⏸ 已达单任务 token 上限，任务已暂停（{paused.needed ? `已消耗 ${paused.needed.toLocaleString('zh-CN')} tokens` : '可在余额充足后继续'}）</span>
+            <span className="pause-actions">
+              <button type="button" className="admin-btn" onClick={onResume} disabled={status === 'streaming'}>
+                继续（重置预算）
+              </button>
+              <button
+                type="button"
+                className="admin-btn ghost"
+                disabled={status === 'streaming'}
+                onClick={() => {
+                  const id = paused.taskId;
+                  setPaused(null);
+                  sealedRef.current = false;
+                  void answerTaskResponse(id, { action: 'cancel' }).catch(() => {});
+                }}
+              >
+                放弃本轮
+              </button>
+            </span>
+          </div>
+        )}
         {paused && paused.status === 'paused_input' && paused.ask && paused.ask.questions.length > 0 && !paused.dismissed && (
           <AskUserCard
             ask={paused.ask}
@@ -667,7 +690,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
             </span>
           </div>
         )}
-        {paused && paused.status !== 'paused_input' && quotaBanner && (
+        {paused && paused.status !== 'paused_input' && paused.status !== 'paused_budget' && quotaBanner && (
           <div className="banner warn pause-banner">
             <span>⏸ {quotaBanner}</span>
             <span className="pause-actions">

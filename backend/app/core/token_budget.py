@@ -94,6 +94,14 @@ class TaskTokenBudget:
             if self.used >= self.limit:
                 self.limit_reached = True
 
+    def renew(self) -> None:
+        """2.1.0：budget 暂停后续跑时重置预算（用户确认继续 = 授予新一轮额度）。
+        任务级上限是防 runaway 的护栏，不是钱包扣费（真钱在钱包 settle）；重置合理。"""
+        with self._lock:
+            self.used = 0
+            self.reserved = 0
+            self.limit_reached = False
+
     def consume_external(self, tokens: int) -> None:
         """记录外部工作流返回的实际用量；它无法在本进程内提前限制单次响应。"""
         amount = max(0, int(tokens))

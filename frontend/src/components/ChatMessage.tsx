@@ -395,7 +395,11 @@ export function ChatMessage({
             )}
             <span className="reply-stats">
               <span className="reply-tokens">
-                <span>共消耗 {formatTokens(tokens)}</span>
+                <span>
+                  {finalStatus === 'paused_input' || finalStatus === 'paused_budget'
+                    ? `已消耗 ${formatTokens(tokens)} · 任务未完结`
+                    : `共消耗 ${formatTokens(tokens)}`}
+                </span>
                 {meta.steps && meta.steps.length > 0 && (
                   <span className="token-pop" role="tooltip">
                     <span className="token-pop__head">逐步用量</span>

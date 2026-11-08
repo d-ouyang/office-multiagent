@@ -347,6 +347,13 @@ def build_graph(
         ask_count = int(state.get("ask_count") or 0)
         prior_steps = _deserialize_react_history(state.get("react_history") or [])
         seed = str(state.get("user_answer") or "").strip() or None
+        # 2.1.0：token 上限触达 → interrupt 暂停（用户可继续=预算重置 / 放弃本轮）。
+        # 无 checkpointer 时不可暂停（中断后无法恢复=假挂起），回落收尾终答。
+        budget_interrupt_fn = None
+        if checkpointer is not None and token_budget is not None:
+            def budget_interrupt_fn(payload: dict[str, Any]) -> str:
+                return str(interrupt(payload) or "")
+
         res = run_react(
             state["text"],
             brain,
@@ -358,6 +365,7 @@ def build_graph(
             prior_steps=prior_steps,
             seed_observation=seed,
             allow_ask_user=ask_count < 3,
+            budget_interrupt=budget_interrupt_fn,
         )
         usage = getattr(brain, "usage", None) or {}
         validation = _validate_and_flag(
@@ -629,6 +637,27 @@ def run_task(
 
     if "__interrupt__" in state:
         payload = state["__interrupt__"][0].value if state["__interrupt__"] else {}
+        if payload.get("type") == "budget_paused":
+            # 2.1.0：token 上限暂停——用户可继续（预算重置）或放弃本轮
+            ask_payload = {k: v for k, v in payload.items() if k != "type"}
+            emit(emitter.observation("budget_paused", f"已达单任务 token 上限 {payload.get('limit')}，已暂停等待你的选择"))
+            emit(emitter.done("paused_budget", model=model_id))
+            if token_pool is not None and user_id is not None:
+                token_pool.settle(user_id, estimate, estimate, task_id=rid, model=model_id)  # 保守：不退
+            _register_live_checkpointer(rid, checkpointer)
+            return (
+                {
+                    "run_id": rid,
+                    "thread_id": rid,
+                    "status": "paused_budget",
+                    "route": state.get("route"),
+                    "result": "",
+                    "pause_payload": {"budget": ask_payload, "replay": state.get("react_history") or []},
+                    "estimate": estimate,
+                    "tokens_used": int(state.get("tokens_used", 0) or 0),
+                },
+                events,
+            )
         if payload.get("type") == "ask_user":
             # 2.1.0 P1-1（HITL）：模型请求补充输入——任务转 paused_input，
             # checkpoint 已由 interrupt 落档；graph 实例登记供同进程续跑。
