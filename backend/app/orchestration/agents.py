@@ -68,7 +68,12 @@ _METRIC_ENUM = [
     "sum_coupon", "sum_points",
 ]
 _ORDER_METRIC = {
-    "metric": {"type": "string", "enum": _METRIC_ENUM, "description": "聚合指标"},
+    "metric": {"type": "string", "enum": _METRIC_ENUM, "description": "聚合指标（单值，兼容旧用法）"},
+    "metrics": {
+        "type": "array",
+        "items": {"type": "string", "enum": _METRIC_ENUM},
+        "description": "一次聚合多个指标（宽表，各指标一列 m_<指标>），最多 6 个。要多个指标时优先用这个，别按指标逐个查询",
+    },
     "group_by": {"type": "string", "description": "month、city 或订单表字段"},
 }
 
@@ -169,9 +174,10 @@ def build_default_registry(
                 "date_from": _ORDER_OPTIONAL["date_from"],
                 "date_to": _ORDER_OPTIONAL["date_to"],
                 "metric": _ORDER_METRIC["metric"],
+                "metrics": _ORDER_METRIC["metrics"],
                 **{k: v for k, v in _ORDER_OPTIONAL.items() if k not in ("date_from", "date_to")},
             },
-            ["date_from", "date_to", "metric"],
+            ["date_from", "date_to"],
         ),
     )
     reg.register(

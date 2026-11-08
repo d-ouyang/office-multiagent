@@ -343,6 +343,16 @@ def make_query_orders_tool(
         metric = _text(raw.get("metric")) or ("sum_pay" if group_by else "")
         if metric and metric not in _METRICS:
             return {"error": f"metric 只能是 {'、'.join(_METRICS)}"}
+        # 2.1.0：metrics 数组——一次聚合多个指标成宽表（消除"每个指标查一次"）；
+        # metric 单值参数保持兼容（等价于 metrics=[metric]）。
+        metrics_raw = raw.get("metrics")
+        metrics = [_text(m) for m in (metrics_raw if isinstance(metrics_raw, list) else _as_list(metrics_raw))]
+        if not metrics and metric:
+            metrics = [metric]
+        bad = [m for m in metrics if m not in _METRICS]
+        if bad:
+            return {"error": f"metrics 里的 {bad} 不支持。可选：{'、'.join(_METRICS)}"}
+        metrics = list(dict.fromkeys(metrics))[:6]  # 去重，最多 6 个指标
         limit = min(max_rows, _limit(raw.get("limit")))
 
         if not clauses and not group_by and not metric:
@@ -358,17 +368,26 @@ def make_query_orders_tool(
                 label = _month_expr(dialect)
             else:
                 label = group_by
-            metric_sql = _METRICS[metric or "count"]
+            # 单值 metric（兼容路径）沿用 metric_value 列名——compare_orders/旧测试/旧 clean 依赖它；
+            # 显式 metrics 数组（新用法）才用 m_<指标> 前缀。
+            single = bool(not raw.get("metrics") and metric)
+            if single:
+                metric_cols = f"{_METRICS[metric or 'count']} AS metric_value"
+                first = "metric_value"
+            elif metrics:
+                metric_cols = ", ".join(f"{_METRICS[m]} AS m_{m}" for m in metrics)
+                first = f"m_{metrics[0]}"
+            else:
+                metric_cols = ""
+                first = "order_count"
+            sel = f"COUNT(*) AS order_count{(', ' + metric_cols) if metric_cols else ''}"
             if group_by:
                 sql = (
-                    f"SELECT {hint}{label} AS grp, COUNT(*) AS order_count, {metric_sql} AS metric_value "
-                    f"FROM guoquan_orders{where} GROUP BY {label} ORDER BY metric_value DESC LIMIT {limit}"
+                    f"SELECT {hint}{label} AS grp, {sel} "
+                    f"FROM guoquan_orders{where} GROUP BY {label} ORDER BY {first} DESC LIMIT {limit}"
                 )
             else:
-                sql = (
-                    f"SELECT {hint}COUNT(*) AS order_count, {metric_sql} AS metric_value "
-                    f"FROM guoquan_orders{where}"
-                )
+                sql = f"SELECT {hint}{sel} FROM guoquan_orders{where}"
             rows = _run(engine, sql, params)
             # p6.46：分组结果存一份可分析副本（clean_id）——"按 X 统计再画图/再分析"这类
             # 问题不再需要先有文件；render_chart / analyze_table 直接吃这个 clean_id。
@@ -377,7 +396,11 @@ def make_query_orders_tool(
                 try:
                     from .tools_table import _write_clean
 
-                    cols = ["grp", "order_count", "metric_value"]
+                    cols = (
+                        ["grp", "order_count", "metric_value"]
+                        if single
+                        else ["grp", "order_count", *[f"m_{m}" for m in metrics]]
+                    )
                     chart_id = _write_clean(
                         Path(base_dir),
                         cols,
@@ -396,13 +419,14 @@ def make_query_orders_tool(
                 "filters": applied,
                 "group_by": group_by or None,
                 "metric": metric or "count",
+                "metrics": metrics,  # 2.1.0：本次聚合的指标清单（列名 m_<metric>）
                 "scope": "全部已入库订单" if not applied else "按筛选汇总",
                 "truncated": bool(group_by) and len(rows) >= limit,
                 "row_count": len(rows),
                 "rows": rows,
                 "clean_id": chart_id,
                 "chart_hint": (
-                    f"要画图或再分析：把 clean_id 交给 render_chart（x=grp，y=metric_value 或 order_count）/ analyze_table"
+                    f"要画图或再分析：把 clean_id 交给 render_chart（x=grp，y=order_count 或 m_<指标名>）/ analyze_table"
                     if chart_id
                     else None
                 ),
