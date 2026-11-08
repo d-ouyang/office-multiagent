@@ -244,8 +244,20 @@ export function ChatMessage({
 
   const events = msg.events;
   const process = events ? deriveProcess(events) : null;
-  const artifacts = events ? deriveArtifacts(events) : [];
-  const visuals = events ? deriveVisuals(events) : [];
+  // 2.1.0：交付物暂存——流式期间与挂起/失败中间态不显示，任务终态 done 后统一展示
+  // （用户反馈：中途产物一直挂在对话框最下面，等完全回复之后再显示）
+  const finalStatus = events
+    ? (() => {
+        for (let i = events.length - 1; i >= 0; i -= 1) {
+          const e = events[i];
+          if (e.type === 'done') return String(e.data?.status ?? '');
+        }
+        return null;
+      })()
+    : null;
+  const showDeliverables = !msg.streaming && (finalStatus === null || finalStatus === 'done');
+  const artifacts = events && showDeliverables ? deriveArtifacts(events) : [];
+  const visuals = events && showDeliverables ? deriveVisuals(events) : [];
   const content = process ? process.result : (msg.content ?? '');
   const failure = events ? deriveFailure(events) : null;
   const meta = events ? deriveReplyMeta(events) : {};

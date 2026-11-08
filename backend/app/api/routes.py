@@ -1091,6 +1091,12 @@ def _stream_answer(
 
             q.put(_E(run_id, run_id).error(f"续跑失败：{e}"))
             q.put(_E(run_id, run_id).done("paused_error"))
+            # 2.1.0：续跑失败必须落库为 paused_error——否则任务行永远停在
+            # paused_input，前端反复把它当"待确认"捞出来，点了又失败（僵尸任务，实测踩过）
+            try:
+                _finish_answered_task(task_id, "paused_error", "", 0)
+            except Exception:  # noqa: BLE001
+                logger.exception("续跑失败落库也失败 task_id=%s", task_id)
         finally:
             runs.finish(run_id)
             q.put(None)
