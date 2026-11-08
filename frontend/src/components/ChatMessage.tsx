@@ -2,12 +2,12 @@
 // 助手消息：正文下方独立一行——复制、点赞、点踩、用量、模型、时间、耗时。
 // 点赞/点踩 v2.0.0-p2.2 起闭环入库：激活态实心；点踩必走弹窗（原因多选/其他原因）；
 // 再点实心图标 = 取消；二次点踩回显已选原因、提交后覆盖（旧信息保留在服务端流水）。
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Copy, Pencil, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import type { FeedbackRating, MessageFeedback } from '../lib/api';
 import type { StreamEvent } from '../types';
-import { deriveArtifacts, deriveFailure, deriveProcess, deriveReplyMeta, deriveVisuals } from '../lib/derive';
+import { deriveArtifacts, deriveFailure, deriveProcess, deriveReplyMeta } from '../lib/derive';
 import { FeedbackDialog } from './FeedbackDialog';
 import { FlowChart } from './FlowChart';
 import type { ChartSpec } from './ChartView';
@@ -261,7 +261,8 @@ export function ChatMessage({
   const showDeliverables =
     !msg.streaming && (finalStatus === null || !finalStatus.startsWith('paused'));
   const artifacts = events && showDeliverables ? deriveArtifacts(events) : [];
-  const visuals = events && showDeliverables ? deriveVisuals(events) : [];
+  // 2.1.0 定稿：图表/流程图改为过程时间线内实时渲染（ProcessTrace visual 项），
+  // 消息级不再渲染 visual——最终回答不重复显示图。底部只保留文件级 artifacts。
   const content = process ? process.result : (msg.content ?? '');
   const failure = events ? deriveFailure(events) : null;
   const meta = events ? deriveReplyMeta(events) : {};
@@ -350,19 +351,6 @@ export function ChatMessage({
           </div>
         )}
         {content && <MarkdownView text={content} streaming={msg.streaming} />}
-        {visuals.map((item, index) => {
-          if (item.kind === 'flow' && Array.isArray(item.nodes) && Array.isArray(item.edges) && Array.isArray(item.path)) {
-            return <FlowChart key={`flow-${index}`} spec={item as unknown as FlowSpec} />;
-          }
-          if (item.kind === 'chart' && typeof item.chart === 'string') {
-            return (
-              <Suspense key={`chart-${index}`} fallback={<div className="chart-card">正在绘制图表…</div>}>
-                <ChartView spec={item as unknown as ChartSpec} />
-              </Suspense>
-            );
-          }
-          return null;
-        })}
         {artifacts.length > 0 && (
           <div className="msg-attachments">
             <span className="attach-label">生成文件</span>

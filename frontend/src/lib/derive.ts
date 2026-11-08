@@ -43,7 +43,8 @@ export function deriveToolCalls(events: StreamEvent[]): ToolCall[] {
 export type ProcessStep =
   | { kind: 'thinking'; text: string; durationMs?: number }
   | { kind: 'answer'; text: string }
-  | { kind: 'tool'; call: ToolCall };
+  | { kind: 'tool'; call: ToolCall }
+  | { kind: 'visual'; visual: { kind: string; payload: Record<string, unknown> } };  // 2.1.0：图表/流程图跟随工具步骤（过程内实时显示，最终回答不重复渲染）
 
 type OpenStep =
   | { kind: 'thinking'; text: string; startTs: number; endTs: number }
@@ -116,6 +117,16 @@ export function deriveProcess(events: StreamEvent[]): ProcessView {
         if (typeof ev.data.duration_ms === 'number') call.durationMs = ev.data.duration_ms;
         if (ev.data.error) call.error = String(ev.data.error);
       }
+    } else if (ev.type === 'visual') {
+      // 2.1.0：图表/流程图事件 → 独立过程项（seq 紧跟产生它的工具步骤），
+      // 实时显示在过程时间线里；最终回答不再重复渲染。
+      steps.push({
+        kind: 'visual',
+        visual: {
+          kind: String(ev.data.kind ?? 'chart'),
+          payload: (ev.data.payload ?? {}) as Record<string, unknown>,
+        },
+      });
     }
   }
   flush();

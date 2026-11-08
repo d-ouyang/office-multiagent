@@ -2371,3 +2371,9 @@ button.ghost {
 .ask-user-card .ask-option { width: 100%; justify-content: flex-start; text-align: left; }
 .ask-user-card .ask-custom { width: 100%; }
 .ask-user-card .ask-foot { justify-content: flex-end; }
+
+/* 2.1.0 P1-1m：过程内视觉卡片 + 下载按钮 */
+.visual-mod { position: relative; }
+.visual-mod .visual-box { padding: 4px 0; }
+.visual-mod .visual-download { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--border, rgba(128,128,128,0.25)); background: var(--bg, rgba(0,0,0,0.35)); color: inherit; cursor: pointer; font-size: 12px; line-height: 1; }
+.visual-mod .visual-download:hover { border-color: var(--accent, #00e0a4); color: var(--accent, #00e0a4); }
