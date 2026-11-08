@@ -2364,3 +2364,10 @@ button.ghost {
 .ask-hint { font-size: 11px; opacity: 0.55; }
 .session-pending-badge { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 11px; background: color-mix(in srgb, var(--accent, #00e0a4) 18%, transparent); color: var(--accent, #00e0a4); flex-shrink: 0; }
 .session-pending-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+/* 2.1.0 P1-1l：向导卡片左对齐补强（banner 类可能带居中继承） */
+.ask-user-card .ask-title { flex: 1; text-align: left; }
+.ask-user-card .ask-options { width: 100%; align-items: stretch; }
+.ask-user-card .ask-option { width: 100%; justify-content: flex-start; text-align: left; }
+.ask-user-card .ask-custom { width: 100%; }
+.ask-user-card .ask-foot { justify-content: flex-end; }
