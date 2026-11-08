@@ -36,20 +36,27 @@ export default function AskUserCard({
   const last = idx === total - 1;
   const canSubmitCurrent = Boolean(answer) || Boolean((custom[idx] ?? '').trim()) || (files[idx]?.length ?? 0) > 0;
 
+  // 2.1.0 交互修正：选择/输入只【记录】答案，绝不自动触发续跑——
+  // 全部问题答完 + 用户点「提交并继续」才一次性进入续跑（实测踩过：
+  // 点"上传 csv"选项立即续跑但文件根本没传，模型再次 ask_user 死循环）。
   const record = (value: string | null) => {
     const v = value ?? '（跳过）'; // 跳过也给模型明确信号，不是空字符串
-    const next = [...answers];
-    next[idx] = v;
-    setAnswers(next);
-    if (total === 1) {
-      // 单问题：答完即提交（含跳过）
-      onSubmit(v, Object.values(files).flat());
-      return;
-    }
+    setAnswers((prev) => {
+      const next = [...prev];
+      next[idx] = v;
+      return next;
+    });
     if (!last) setIdx((i) => Math.min(i + 1, total - 1));
   };
 
+  // need_file 的题：答案声称要上传文件但实际没传 → 阻止提交（防"裸选上传选项"空跑）
+  const pendingUpload = qs.some((item, i) => {
+    const a = answers[i] ?? (i === idx ? (custom[idx] ?? '').trim() : '');
+    return item.need_file && a && /上传|文件/i.test(a) && !(files[i]?.length);
+  });
+
   const submitAll = () => {
+    if (pendingUpload) return;
     // 未作答的题按「跳过」处理；当前题「其他补充」输入优先；多问题时按 Q/A 段落聚合
     const parts = qs.map((item, i) => {
       const a = answers[i] ?? ((i === idx ? (custom[idx] ?? '').trim() : '') || '（跳过）');
@@ -180,6 +187,9 @@ export default function AskUserCard({
         <div className="ask-files">已上传：{(files[idx] ?? []).join('、')}</div>
       )}
       {uploadError && <div className="ask-files err">{uploadError}</div>}
+      {pendingUpload && (
+        <div className="ask-files err">答案提到要上传文件，但还没有实际上传——请先上传，或改选其他选项。</div>
+      )}
 
       <div className="ask-foot">
         <button
@@ -190,13 +200,17 @@ export default function AskUserCard({
         >
           跳过此题
         </button>
-        {last && (allDone || canSubmitCurrent) && (
-          <button type="button" className="admin-btn" onClick={submitAll}>
-            提交并继续
-          </button>
-        )}
+        <button
+          type="button"
+          className="admin-btn"
+          disabled={pendingUpload}
+          title={pendingUpload ? '本题答案提到上传文件，但还没有实际上传——请先点上方选择文件，或改选其他选项' : undefined}
+          onClick={submitAll}
+        >
+          提交并继续
+        </button>
         {!last && (answered(idx) || canSubmitCurrent) && (
-          <button type="button" className="admin-btn" onClick={() => record((custom[idx] ?? '').trim() || answer)}>
+          <button type="button" className="admin-btn ghost" onClick={() => record((custom[idx] ?? '').trim() || answer)}>
             下一题
           </button>
         )}

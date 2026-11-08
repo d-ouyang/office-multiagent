@@ -1,4 +1,5 @@
-// 2.1.0 P1-1 HITL：多问题向导——单题选项提交 / 多题 n/N 收集 / 跳过 / 其他补充 / 收起。
+// 2.1.0 P1-1 HITL：多问题向导——显式提交收口 / 多题 n/N 收集 / 跳过 / 其他补充 / 收起。
+// 2.1.0 交互修正：选择/输入只记录答案，绝不自动触发续跑；统一由「提交并继续」收口。
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -23,11 +24,29 @@ const multiAsk = {
 };
 
 describe('AskUserCard', () => {
-  it('单问题：点选项直接提交（answer=选项文本）', async () => {
+  it('单问题：点选项只记录，显式点「提交并继续」才提交', async () => {
     const onSubmit = vi.fn();
     render(<AskUserCard ask={singleAsk} onSubmit={onSubmit} onUploadFile={vi.fn()} onDismiss={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /用数据库订单数据/ }));
+    expect(onSubmit).not.toHaveBeenCalled(); // 选择≠提交
+    fireEvent.click(screen.getByRole('button', { name: '提交并继续' }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('用数据库订单数据', []));
+  });
+
+  it('need_file 题答案声称上传但没传 → 提交禁用（防空跑死循环）', () => {
+    const needAsk = {
+      questions: [
+        { question: '数据从哪来？', options: ['我来上传文件', '用数据库订单数据（推荐）'], need_file: true, file_hint: 'csv/xlsx' },
+      ],
+    };
+    const onSubmit = vi.fn();
+    render(<AskUserCard ask={needAsk} onSubmit={onSubmit} onUploadFile={vi.fn()} onDismiss={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /我来上传文件/ }));
+    expect((screen.getByRole('button', { name: '提交并继续' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/还没有实际上传/)).toBeTruthy();
+    // 改选数据库来源后可提交
+    fireEvent.click(screen.getByRole('button', { name: /用数据库订单数据/ }));
+    expect((screen.getByRole('button', { name: '提交并继续' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('多问题：n/N 逐题收集，全部答完后一次提交（Q/A 段落聚合）', async () => {
@@ -37,7 +56,6 @@ describe('AskUserCard', () => {
     fireEvent.click(screen.getByRole('button', { name: /数据库订单/ }));
     await waitFor(() => expect(screen.getByText('2/2')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /按月汇总/ }));
-    // 最后一题答完 → 点「提交并继续」一次性提交
     fireEvent.click(screen.getByRole('button', { name: '提交并继续' }));
     await waitFor(() =>
       expect(onSubmit).toHaveBeenCalledWith(
@@ -62,12 +80,14 @@ describe('AskUserCard', () => {
     );
   });
 
-  it('「其他补充」展开输入框，输入后提交', async () => {
+  it('「其他补充」展开输入框，输入后显式提交', async () => {
     const onSubmit = vi.fn();
     render(<AskUserCard ask={singleAsk} onSubmit={onSubmit} onUploadFile={vi.fn()} onDismiss={vi.fn()} />);
     fireEvent.click(screen.getByText('其他补充…'));
     fireEvent.change(screen.getByLabelText('其他补充'), { target: { value: '先按订单表统计' } });
     fireEvent.click(screen.getByLabelText('确认补充'));
+    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '提交并继续' }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('先按订单表统计', []));
   });
 
