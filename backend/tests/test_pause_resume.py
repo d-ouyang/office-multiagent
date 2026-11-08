@@ -223,20 +223,38 @@ def test_pause_forbidden_for_other_owner(eng):
         runs.finish("run-x")
 
 
-def test_resume_reruns_paused_task(eng):
-    _paused_task(eng)
+def test_resume_reruns_paused_user_task(eng):
+    # 2.1.0：quota 暂停已改走真断点续跑（见下一条测试）；user/error 暂停
+    # 无 checkpoint，仍走重跑式（新任务 retry_of 指回，原任务标 resumed）。
+    _paused_task(eng, status="paused_user", task_id="t-paused-u")
     c = TestClient(app)
-    r = c.post("/api/v1/tasks/t-paused/resume", headers=_auth())
+    r = c.post("/api/v1/tasks/t-paused-u/resume", headers=_auth())
     assert r.status_code == 200
     assert "ndjson" in r.headers["content-type"]
     lines = [json.loads(x) for x in r.text.splitlines() if x.strip()]
     assert lines and lines[-1]["type"] == "done"
-    # 新任务行：retry_of 指回原任务，原任务保持不变
     with eng.connect() as conn:
         rows = conn.execute(text("SELECT id, retry_of, status FROM task ORDER BY created_at")).mappings().all()
     assert len(rows) == 2
-    retried = [r for r in rows if r["retry_of"] == "t-paused"]
-    assert len(retried) == 1 and retried[0]["id"] != "t-paused"
+    retried = [r for r in rows if r["retry_of"] == "t-paused-u"]
+    assert len(retried) == 1 and retried[0]["id"] != "t-paused-u"
+
+
+def test_resume_quota_without_archive_fails_loudly(eng):
+    # 2.1.0：quota 暂停走真断点续跑；无 checkpoint 存档（memory 后端/进程重启）
+    # 时必须响亮报错（error 事件），绝不静默从头重跑重复计费。
+    _paused_task(eng)  # paused_insufficient_quota，无存档
+    c = TestClient(app)
+    r = c.post("/api/v1/tasks/t-paused/resume", headers=_auth())
+    assert r.status_code == 200
+    lines = [json.loads(x) for x in r.text.splitlines() if x.strip()]
+    types = [line["type"] for line in lines]
+    assert "error" in types
+    assert lines[-1]["type"] == "done" and lines[-1]["data"]["status"] == "paused_error"
+    # 任务行不被静默改成 done
+    with eng.connect() as conn:
+        row = conn.execute(text("SELECT status FROM task WHERE id = 't-paused'")).mappings().first()
+    assert row["status"] == "paused_insufficient_quota"
 
 
 def test_resume_rejects_done_task(eng):

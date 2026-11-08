@@ -637,7 +637,7 @@ def run_task(
             emit(emitter.done("paused_input", model=model_id))
             if token_pool is not None and user_id is not None:
                 token_pool.settle(user_id, estimate, estimate, task_id=rid, model=model_id)  # 保守：不退
-            _register_live_graph(rid, graph)
+            _register_live_checkpointer(rid, checkpointer)
             return (
                 {
                     "run_id": rid,
@@ -655,6 +655,7 @@ def run_task(
                 },
                 events,
             )
+        _register_live_checkpointer(rid, checkpointer)
         emit(
             emitter.quota_paused(
                 "余额不足，已暂停",
@@ -670,6 +671,7 @@ def run_task(
                 "status": "paused_insufficient_quota",
                 "route": None,
                 "result": "",
+                "estimate": estimate,  # 2.1.0：真续跑结算要退预扣，预扣额随 pause_payload 落库
             },
             events,
         )
@@ -737,32 +739,31 @@ def resume_task(
 # 2.1.0 P1-1（HITL）：paused_input 任务的续跑
 # --------------------------------------------------------------------------- #
 
-_LIVE_GRAPHS: dict[str, Any] = {}
-_LIVE_GRAPHS_LOCK = threading.Lock()
+_LIVE_CHECKPOINTERS: dict[str, Any] = {}
+_LIVE_CHECKPOINTERS_LOCK = threading.Lock()
 
 
-def _register_live_graph(run_id: str, graph: Any) -> None:
-    """同进程保留 graph 实例（memory checkpointer 的存档跟着实例走）。
+def _register_live_checkpointer(run_id: str, checkpointer: Any) -> None:
+    """暂停任务登记 checkpointer 实例（memory 后端的存档跟着实例走）。
 
-    sqlite 后端下存档在盘上，graph 重建也能找回；memory 后端（缺省）必须
-    用同实例。上限 200 防泄漏（每个挂起任务一个实例，量级很小）。"""
-    with _LIVE_GRAPHS_LOCK:
-        if len(_LIVE_GRAPHS) >= 200:
-            _LIVE_GRAPHS.pop(next(iter(_LIVE_GRAPHS)))
-        _LIVE_GRAPHS[run_id] = graph
-
-
-def _take_live_graph(run_id: str) -> Any | None:
-    with _LIVE_GRAPHS_LOCK:
-        graph = _LIVE_GRAPHS.pop(run_id, None)
-        if graph is not None:
-            _LIVE_GRAPHS[run_id] = graph  # peek 语义：resume 失败时仍保留
-        return graph
+    续跑时重建 graph（事件绑新流）+ 复用该 checkpointer——graph 实例本身
+    不能复用：它的事件回调闭包绑着创建时的流，重建后旧流早关了。
+    sqlite 后端存档在盘上，无需登记也能找回。上限 200 防泄漏。"""
+    with _LIVE_CHECKPOINTERS_LOCK:
+        if len(_LIVE_CHECKPOINTERS) >= 200:
+            _LIVE_CHECKPOINTERS.pop(next(iter(_LIVE_CHECKPOINTERS)))
+        _LIVE_CHECKPOINTERS[run_id] = checkpointer
 
 
-def _forget_live_graph(run_id: str) -> None:
-    with _LIVE_GRAPHS_LOCK:
-        _LIVE_GRAPHS.pop(run_id, None)
+def _take_live_checkpointer(run_id: str) -> Any | None:
+    with _LIVE_CHECKPOINTERS_LOCK:
+        cp = _LIVE_CHECKPOINTERS.get(run_id)
+        return cp  # peek 语义：resume 失败时仍保留，重试可再取
+
+
+def _forget_live_checkpointer(run_id: str) -> None:
+    with _LIVE_CHECKPOINTERS_LOCK:
+        _LIVE_CHECKPOINTERS.pop(run_id, None)
 
 
 def resume_with_answer(
@@ -789,37 +790,29 @@ def resume_with_answer(
         events.append(ev)
         emit(ev)
 
-    graph = _take_live_graph(run_id)
-    if graph is None:
-        # sqlite 后端下重建 graph（checkpointer 从共享单例取，存档在盘上可找回）
+    # 续跑一律重建 graph（事件绑新流）；checkpointer 取登记实例（memory）或
+    # sqlite 共享单例——存档跟着 checkpointer 走，不跟 graph 实例走。
+    backend = (settings.checkpointer_backend or "memory").strip().lower()
+    checkpointer = _take_live_checkpointer(run_id)
+    if checkpointer is None and backend == "sqlite":
         checkpointer = get_checkpointer()
-        backend = (settings.checkpointer_backend or "memory").strip().lower()
-        probe = build_graph(
-            RunEventEmitter(run_id, run_id),
-            lambda ev: None,
-            token_pool=None,
-            checkpointer=checkpointer,
-            username=username,
+    if checkpointer is None:
+        raise ValueError(
+            f"暂停任务的存档已失效（run_id={run_id}）：memory 后端不支持跨重启续跑，"
+            "请配置 CHECKPOINTER_BACKEND=sqlite，或重新发起任务并在附件里带上补充材料。"
         )
-        probe_state = probe.get_state({"configurable": {"thread_id": run_id}})
-        if backend == "sqlite" and probe_state is not None and getattr(probe_state, "next", None):
-            graph = build_graph(
-                emitter,
-                emit2,
-                token_pool=token_pool,
-                checkpointer=checkpointer,
-                username=username,
-                user_id=user_id,
-                task_id=run_id,
-                model=model,
-                effort=effort,
-                should_cancel=None,
-            )
-        else:
-            raise ValueError(
-                f"暂停任务的存档已失效（run_id={run_id}）：memory 后端不支持跨重启续跑，"
-                "请配置 CHECKPOINTER_BACKEND=sqlite，或重新发起任务并在附件里带上补充材料。"
-            )
+    graph = build_graph(
+        emitter,
+        emit2,
+        token_pool=token_pool,
+        checkpointer=checkpointer,
+        username=username,
+        user_id=user_id,
+        task_id=run_id,
+        model=model,
+        effort=effort,
+        should_cancel=None,
+    )
     cfg = {"configurable": {"thread_id": run_id}}
     snap = graph.get_state(cfg)
     if snap is None or not getattr(snap, "next", None):
@@ -836,7 +829,7 @@ def resume_with_answer(
         ask = dict(state.get("need_input") or {})
         emit2(emitter.ask_user(**ask))
         emit2(emitter.done("paused_input", model=state.get("model") or model))
-        _register_live_graph(run_id, graph)
+        _register_live_checkpointer(run_id, checkpointer)
         return (
             {
                 "run_id": run_id,
@@ -850,7 +843,7 @@ def resume_with_answer(
             },
             events,
         )
-    _forget_live_graph(run_id)
+    _forget_live_checkpointer(run_id)
     emit2(
         emitter.done(
             route,

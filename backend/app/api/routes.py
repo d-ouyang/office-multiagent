@@ -921,6 +921,10 @@ def _resume_task_impl(task_id: str, *, operator_id: int | None = None) -> Stream
                 "message": f"当前状态（{status}）不可续跑：只有暂停或失败的任务可以继续",
             },
         )
+    # 2.1.0：quota 暂停走真断点续跑（checkpoint 已在 interrupt 时落档）；
+    # user/error 暂停无 checkpoint，仍走重跑式（观察回放式升级见 BACKLOG）。
+    if status == "paused_insufficient_quota":
+        return _stream_quota_resume(task, operator_id=operator_id)
     try:
         req = _json.loads(task.get("request_json") or "{}")
     except (ValueError, TypeError):
@@ -1091,6 +1095,108 @@ def _stream_answer(
             q.put(None)
 
     threading.Thread(target=worker, daemon=True, name="task_answer").start()
+
+    def gen():
+        while True:
+            ev = q.get()
+            if ev is None:
+                break
+            yield encode_line(ev)
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+def _stream_quota_resume(task: dict[str, Any], *, operator_id: int | None = None) -> StreamingResponse:
+    """2.1.0：quota 暂停的真断点续跑——充值后 Command(resume=True) 从 checkpoint 继续，
+    不再重跑。graph 重建绑新流（事件进得来）；完成 settle 退预扣按实际扣。"""
+    import json as _json
+    import logging
+    import queue as _queue
+    import threading
+
+    from langgraph.types import Command
+
+    from ..core import runs
+    from ..core.db import get_engine
+    from ..core.events import RunEventEmitter
+    from ..core.session_repo import SessionRepo
+    from ..core.token_pool import TokenPool
+    from ..orchestration.graph import _take_live_checkpointer, get_checkpointer
+
+    logger = logging.getLogger(__name__)
+    task_id = str(task["id"])
+    session_id = str(task["session_id"])
+    repo = SessionRepo(get_engine())
+    pool = TokenPool(get_engine())
+    owner_id = repo.task_owner_id(task_id)
+    owner_name = repo.username_of(owner_id)
+    try:
+        payload = _json.loads(task.get("pause_payload") or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    estimate = int(payload.get("estimate") or 0)
+    run_id = task_id
+    q: _queue.Queue = _queue.Queue()
+
+    def worker():
+        try:
+            runs.register(run_id, owner_id=owner_id)
+            emitter = RunEventEmitter(run_id, run_id)
+            backend = (settings.checkpointer_backend or "memory").strip().lower()
+            checkpointer = _take_live_checkpointer(run_id)
+            if checkpointer is None and backend == "sqlite":
+                checkpointer = get_checkpointer()
+            if checkpointer is None:
+                raise ValueError(
+                    "该暂停任务的断点存档已失效（memory 后端不支持跨重启续跑）。"
+                    "请改用「重新发起任务」，或配置 CHECKPOINTER_BACKEND=sqlite。"
+                )
+            from ..orchestration.graph import build_graph as _bg
+
+            graph = _bg(
+                emitter,
+                q.put,
+                token_pool=pool,
+                checkpointer=checkpointer,
+                username=owner_name,
+                user_id=owner_id,
+                task_id=run_id,
+                model=None,
+                should_cancel=None,
+            )
+            state = graph.invoke(Command(resume=True), {"configurable": {"thread_id": run_id}})
+            actual = int(state.get("tokens_used", 0) or 0)
+            pool.settle(owner_id, estimate, actual, task_id=run_id, model=state.get("model"))
+            result_text = str(state.get("result", ""))
+            try:
+                repo.append_message(session_id, "user", str(task.get("text") or ""))
+                repo.append_message(session_id, "assistant", result_text)
+                from sqlalchemy import text as _text
+
+                with get_engine().begin() as conn:
+                    conn.execute(
+                        _text(
+                            "UPDATE task SET status = 'done', result = :r, tokens_used = :tk, "
+                            "pause_reason = NULL, pause_payload = NULL WHERE id = :i"
+                        ),
+                        {"r": result_text, "tk": actual, "i": task_id},
+                    )
+            except Exception:  # noqa: BLE001
+                logger.exception("quota 续跑落库失败 task_id=%s", task_id)
+            from ..core.events import RunEventEmitter as _E
+
+            q.put(_E(run_id, run_id).done("done", tokens_used=actual))
+        except Exception as e:  # noqa: BLE001
+            logger.exception("quota 真续跑失败 task_id=%s", task_id)
+            from ..core.events import RunEventEmitter as _E
+
+            q.put(_E(run_id, run_id).error(f"续跑失败：{e}"))
+            q.put(_E(run_id, run_id).done("paused_error"))
+        finally:
+            runs.finish(run_id)
+            q.put(None)
+
+    threading.Thread(target=worker, daemon=True, name="quota_resume").start()
 
     def gen():
         while True:
@@ -1284,7 +1390,13 @@ def _stream_task(
                     repo.append_message(session_id, "user", text, trace=user_trace)
                     repo.append_message(session_id, "assistant", body, trace=trace)
                 payload = None
-                if status == "paused_input":
+                if status == "paused_insufficient_quota":
+                    ev = next((e for e in events if e.type == EventType.QUOTA_PAUSED), None)
+                    payload = _json.dumps(
+                        {**(ev.data if ev else {}), "estimate": int(result.get("estimate") or 0)},
+                        ensure_ascii=False,
+                    )
+                elif status == "paused_input":
                     # 2.1.0 P1-1：ask 载荷 + 步骤回放存 pause_payload（answer 端点续跑用）
                     payload = _json.dumps(
                         {"ask": result.get("ask") or {}, "replay": result.get("react_history") or []},

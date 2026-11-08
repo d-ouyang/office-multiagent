@@ -134,7 +134,7 @@ def test_resume_without_archive_fails_loudly(monkeypatch):
     # p5.4 铁律：无存档时 Command(resume) 会静默从头重跑——resume_with_answer 必须报错
     import pytest
 
-    monkeypatch.setattr(gmod, "_take_live_graph", lambda rid: None)
+    monkeypatch.setattr(gmod, "_take_live_checkpointer", lambda rid: None)
     monkeypatch.setattr(gmod.settings, "checkpointer_backend", "memory", raising=False)
     with pytest.raises(ValueError, match="存档已失效"):
         gmod.resume_with_answer(
