@@ -66,8 +66,9 @@ def test_ask_user_pause_then_resume_continues_from_replay(monkeypatch):
 
     # 暂停：interrupt 携带 ask_user 载荷，need_input 落 state
     assert state["__interrupt__"][0].value["type"] == "ask_user"
-    assert state["need_input"]["need_file"] is True
-    assert "销售数据" in state["need_input"]["question"]
+    qs = state["need_input"]["questions"]
+    assert len(qs) == 1 and qs[0]["need_file"] is True
+    assert "销售数据" in qs[0]["question"]
     assert state["react_history"], "已完成步骤应序列化供回放"
     ask_events = [e for e in events if e.type.value == "ask_user"]
     assert len(ask_events) == 1
@@ -127,7 +128,14 @@ def test_ask_user_tool_requires_question():
     assert "error" in out  # 空问题拒收——弹出去用户面前的话必须有内容
     out2 = tool(question="要哪个文件？", options=["a.csv", "b.xlsx"], need_file=True)
     assert out2["__ask_user__"] is True
-    assert out2["options"] == ["a.csv", "b.xlsx"]
+    assert out2["questions"][0]["options"] == ["a.csv", "b.xlsx"]
+    # 多问题：questions 列表一次带多个，前端 n/N 逐题收集
+    out3 = tool(questions=[
+        {"question": "文件格式？", "options": ["csv", "xlsx"]},
+        {"question": "关键列是哪列？"},
+    ])
+    assert len(out3["questions"]) == 2
+    assert out3["questions"][0]["options"] == ["csv", "xlsx"]
 
 
 def test_resume_without_archive_fails_loudly(monkeypatch):

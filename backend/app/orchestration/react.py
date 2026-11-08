@@ -305,12 +305,17 @@ def run_react(
             # paused_input（graph 层 interrupt 落 checkpoint）；multi 层内并行无法
             # 安全暂停，给替代观察让模型继续循环。
             if res.ok and isinstance(obs, dict) and obs.get("__ask_user__"):
-                ask = {
-                    "question": str(obs.get("question") or ""),
-                    "options": list(obs.get("options") or []),
-                    "need_file": bool(obs.get("need_file")),
-                    "file_hint": str(obs.get("file_hint") or ""),
-                }
+                questions = obs.get("questions")
+                if not isinstance(questions, list) or not questions:
+                    questions = [
+                        {
+                            "question": str(obs.get("question") or ""),
+                            "options": list(obs.get("options") or []),
+                            "need_file": bool(obs.get("need_file")),
+                            "file_hint": str(obs.get("file_hint") or ""),
+                        }
+                    ]
+                ask = {"questions": questions}
                 if not allow_ask_user:
                     unit.observation = (
                         "当前为多任务协作流程，无法中途向用户确认。"
@@ -319,7 +324,7 @@ def run_react(
                     )
                     history.append(unit)
                     continue
-                unit.observation = f"已向用户发起补充输入请求：{ask['question']}"
+                unit.observation = f"已向用户发起补充输入请求：{ask['questions'][0]['question']}"
                 history.append(unit)
                 if emitter is not None:
                     _emit(emitter.ask_user(**ask))

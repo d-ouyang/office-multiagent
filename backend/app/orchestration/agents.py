@@ -460,6 +460,19 @@ def build_default_registry(
                 },
                 "need_file": {"type": "boolean", "description": "是否需要用户上传文件"},
                 "file_hint": {"type": "string", "description": "需要什么文件（格式/内容说明）"},
+                "questions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": {"type": "string"},
+                            "options": {"type": "array", "items": {"type": "string"}},
+                            "need_file": {"type": "boolean"},
+                            "file_hint": {"type": "string"},
+                        },
+                    },
+                    "description": "一次要确认的多个问题（每项含 question/options/need_file/file_hint），最多 4 个",
+                },
             },
             ["question"],
         ),

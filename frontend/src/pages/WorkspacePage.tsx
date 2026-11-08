@@ -52,7 +52,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
   const [loadingSession, setLoadingSession] = useState(false); // p6.48：切会话拉消息期间不闪空态
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
-  const [paused, setPaused] = useState<{ taskId: string; status: string; needed: number; message: string; ask?: AskUserPayload } | null>(null);
+  const [paused, setPaused] = useState<{ taskId: string; status: string; needed: number; message: string; ask?: AskUserPayload; dismissed?: boolean } | null>(null);
   const [usage, setUsage] = useState<{ month_tokens: number; month_count: number; total_tokens: number; total_count: number } | null>(null);
   const [modelId, setModelId] = useState(() => localStorage.getItem('office_model') || 'deepseek-chat');
   const [locate, setLocate] = useState<{ taskId: string; question: string } | null>(null);
@@ -141,7 +141,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
           setSessions([{ id: sid, title: '新会话', updatedAt: Date.now() }]);
           return;
         }
-        setSessions(list.map((s) => ({ id: s.session_id, title: s.title, pinned: !!s.pinned, updatedAt: new Date(s.updated_at).getTime() || Date.now() })));
+        setSessions(list.map((s) => ({ id: s.session_id, title: s.title, pinned: !!s.pinned, updatedAt: new Date(s.updated_at).getTime() || Date.now(), hasPendingInput: !!s.has_pending_input })));
         setCurrentId(list[0].session_id);
         await selectSession(list[0].session_id);
       } catch (e) {
@@ -245,7 +245,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
       setMessages((prev) => [...prev, { role: 'assistant', events, streaming: false, createdAt: Date.now() }]);
       if (status === 'done') {
         listSessions()
-          .then((list) => setSessions(list.map((s) => ({ id: s.session_id, title: s.title, pinned: !!s.pinned, updatedAt: new Date(s.updated_at).getTime() || Date.now() }))))
+          .then((list) => setSessions(list.map((s) => ({ id: s.session_id, title: s.title, pinned: !!s.pinned, updatedAt: new Date(s.updated_at).getTime() || Date.now(), hasPendingInput: !!s.has_pending_input }))))
           .catch(() => {});
         refreshQuota();
       }
@@ -635,13 +635,28 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
         </div>
         {uploadError && <div className="banner warn">{uploadError}</div>}
         {error && <div className="banner err">{error}</div>}
-        {paused && paused.status === 'paused_input' && paused.ask && (
+        {paused && paused.status === 'paused_input' && paused.ask && !paused.dismissed && (
           <AskUserCard
             ask={paused.ask}
             uploadError={uploadError}
             onUploadFile={uploadFile}
             onSubmit={onAskSubmit}
+            onDismiss={() => setPaused((p) => (p ? { ...p, dismissed: true } : p))}
           />
+        )}
+        {paused && paused.status === 'paused_input' && paused.ask && paused.dismissed && (
+          <div className="banner warn pause-banner">
+            <span>⏸ 任务在等待你的补充输入</span>
+            <span className="pause-actions">
+              <button
+                type="button"
+                className="admin-btn"
+                onClick={() => setPaused((p) => (p ? { ...p, dismissed: false } : p))}
+              >
+                重新打开
+              </button>
+            </span>
+          </div>
         )}
         {paused && quotaBanner && (
           <div className="banner warn pause-banner">

@@ -215,8 +215,9 @@ describe('deriveAskUser（2.1.0 P1-1 HITL）', () => {
       },
     ];
     const ask = deriveAskUser(events as never[]);
-    expect(ask?.question).toBe('要哪个文件？');
-    expect(ask?.need_file).toBe(true);
+    expect(ask?.questions).toHaveLength(1);
+    expect(ask?.questions[0].question).toBe('要哪个文件？');
+    expect(ask?.questions[0].need_file).toBe(true);
     expect(deriveAskUser([])).toBeNull();
   });
 });

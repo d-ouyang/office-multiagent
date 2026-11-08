@@ -338,24 +338,41 @@ export function quotaPauseText(needed: number, balance: number | null): string |
   return `余额不足，当前余额 ${bal}。充值后重新发送即可。`;
 }
 
-export interface AskUserPayload {
+export interface AskQuestion {
   question: string;
   options: string[];
   need_file: boolean;
   file_hint: string;
 }
 
-/** 2.1.0 P1-1 HITL：取流里最后一个 ask_user 载荷（模型请求补充输入）。 */
+export interface AskUserPayload {
+  questions: AskQuestion[];
+}
+
+/** 2.1.0 P1-1 HITL：取流里最后一个 ask_user 载荷（模型请求补充输入，可能一次多个问题）。 */
 export function deriveAskUser(events: StreamEvent[]): AskUserPayload | null {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const ev = events[i];
     if (ev.type === 'ask_user') {
-      return {
-        question: String(ev.data.question ?? ''),
-        options: Array.isArray(ev.data.options) ? ev.data.options.map(String) : [],
-        need_file: !!ev.data.need_file,
-        file_hint: String(ev.data.file_hint ?? ''),
-      };
+      const raw = Array.isArray(ev.data.questions)
+        ? ev.data.questions
+        : [
+            {
+              question: ev.data.question,
+              options: ev.data.options,
+              need_file: ev.data.need_file,
+              file_hint: ev.data.file_hint,
+            },
+          ];
+      const questions = (raw as Record<string, unknown>[])
+        .map((q) => ({
+          question: String(q.question ?? ''),
+          options: Array.isArray(q.options) ? q.options.map(String) : [],
+          need_file: !!q.need_file,
+          file_hint: String(q.file_hint ?? ''),
+        }))
+        .filter((q) => q.question);
+      return questions.length ? { questions } : null;
     }
   }
   return null;

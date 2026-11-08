@@ -21,6 +21,10 @@ def engine():
     with eng.begin() as c:
         c.execute(text("CREATE TABLE session (id TEXT PRIMARY KEY, user_id INTEGER, model TEXT, title TEXT, pinned INTEGER DEFAULT 0, pinned_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, trace TEXT, feedback TEXT, feedback_tags TEXT, feedback_comment TEXT, feedback_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        # 2.1.0：list_sessions 的 has_pending_input 子查询需要 task 表
+        c.execute(text("CREATE TABLE IF NOT EXISTS task (id TEXT PRIMARY KEY, session_id TEXT, status TEXT, text TEXT, result TEXT, tokens_used INTEGER, pause_reason TEXT, pause_payload TEXT, retry_of TEXT, request_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        # 2.1.0：list_sessions 的 has_pending_input 子查询需要 task 表
+        c.execute(text("CREATE TABLE IF NOT EXISTS task (id TEXT PRIMARY KEY, session_id TEXT, status TEXT, text TEXT, result TEXT, tokens_used INTEGER, pause_reason TEXT, pause_payload TEXT, retry_of TEXT, request_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
     return eng
 
 

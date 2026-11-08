@@ -33,23 +33,45 @@ def make_ask_user_tool() -> Callable[..., dict[str, Any]]:
         options: list[str] | None = None,
         need_file: bool = False,
         file_hint: str = "",
+        questions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        q = str(question or "").strip()[:_MAX_QUESTION]
-        if not q:
-            return {
-                "error": (
-                    "ask_user 必须给出 question：缺什么、数据从哪来"
-                    "（数据库订单表 / 请上传文件 / 知识库没有）。空问题无法向用户展示。"
-                )
-            }
-        opts = [str(o).strip()[:40] for o in (options or []) if str(o).strip()][:_MAX_OPTIONS]
-        return {
-            ASK_SENTINEL_KEY: True,
-            "question": q,
-            "options": opts,
-            "need_file": bool(need_file),
-            "file_hint": str(file_hint or "").strip()[:_MAX_FILE_HINT],
-        }
+        """单问题（question 参数）与多问题（questions 列表，每项
+        {question, options?, need_file?, file_hint?}）二选一；统一归一为
+        questions 数组——前端弹窗按 n/N 逐题收集后一次性提交。"""
+        norm: list[dict[str, Any]] = []
+        for item in (questions or []):
+            if not isinstance(item, dict):
+                continue
+            q = str(item.get("question") or "").strip()[:_MAX_QUESTION]
+            if not q:
+                continue
+            norm.append(
+                {
+                    "question": q,
+                    "options": [str(o).strip()[:40] for o in (item.get("options") or []) if str(o).strip()][:_MAX_OPTIONS],
+                    "need_file": bool(item.get("need_file")),
+                    "file_hint": str(item.get("file_hint") or "").strip()[:_MAX_FILE_HINT],
+                }
+            )
+        if not norm:
+            q = str(question or "").strip()[:_MAX_QUESTION]
+            if not q:
+                return {
+                    "error": (
+                        "ask_user 必须给出 question（或 questions 列表）：缺什么、数据从哪来"
+                        "（数据库订单表 / 请上传文件 / 知识库没有）。空问题无法向用户展示。"
+                    )
+                }
+            opts = [str(o).strip()[:40] for o in (options or []) if str(o).strip()][:_MAX_OPTIONS]
+            norm.append(
+                {
+                    "question": q,
+                    "options": opts,
+                    "need_file": bool(need_file),
+                    "file_hint": str(file_hint or "").strip()[:_MAX_FILE_HINT],
+                }
+            )
+        return {ASK_SENTINEL_KEY: True, "questions": norm[:4]}
 
     ask_user.__name__ = "ask_user"
     return ask_user

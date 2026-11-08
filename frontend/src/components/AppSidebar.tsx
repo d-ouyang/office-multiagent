@@ -11,6 +11,7 @@ export interface SessionMeta {
   title: string;
   updatedAt: number; // 毫秒时间戳（后端 updated_at=最后一次问答时间）
   pinned?: boolean;
+  hasPendingInput?: boolean; // 2.1.0 P1-1：会话里有 paused_input 任务 → "待确认"徽章
 }
 
 export interface SessionUser {
@@ -157,6 +158,11 @@ export function AppSidebar(props: {
               <button type="button" className="session-open" onClick={() => props.onSelect(s.id)}>
                 {s.pinned && <span className="pin-mark" aria-hidden="true">📌</span>}
                 <SessionTitle text={s.title} scrolling={hoverId === s.id} />
+                {s.hasPendingInput && (
+                  <span className="session-pending-badge" title="该会话有等待补充输入的任务">
+                    待确认<span className="session-pending-dot" aria-hidden="true" />
+                  </span>
+                )}
               </button>
             )}
             <span className="session-time">{formatSessionTime(s.updatedAt)}</span>

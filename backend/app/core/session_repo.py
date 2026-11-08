@@ -113,7 +113,9 @@ class SessionRepo:
                     "  COALESCE(s.pinned, 0) AS pinned, "
                     "  s.created_at AS created_at, "
                     "  COALESCE((SELECT MAX(m2.created_at) FROM message m2 "
-                    "     WHERE m2.session_id = s.id), s.created_at) AS updated_at "
+                    "     WHERE m2.session_id = s.id), s.created_at) AS updated_at, "
+                    "  EXISTS(SELECT 1 FROM task t WHERE t.session_id = s.id "
+                    "     AND t.status = 'paused_input') AS has_pending_input "
                     "FROM session s WHERE s.user_id = :u "
                     "ORDER BY COALESCE(s.pinned, 0) DESC, s.pinned_at DESC, updated_at DESC LIMIT :l"
                 ),
@@ -124,6 +126,7 @@ class SessionRepo:
             d = dict(r)
             d["title"] = (d.get("title") or "新会话").strip() or "新会话"
             d["pinned"] = bool(d.get("pinned"))
+            d["has_pending_input"] = bool(d.get("has_pending_input"))  # 2.1.0 P1-1：侧栏"待确认"徽章
             d["created_at"] = _iso_utc(d.get("created_at"))
             d["updated_at"] = _iso_utc(d.get("updated_at"))
             out.append(d)

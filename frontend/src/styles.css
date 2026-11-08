@@ -2340,3 +2340,26 @@ button.ghost {
 .flow-step { fill: #334155; stroke: #fff; stroke-width: 1.5; }
 .flow-step-text { fill: #fff; font-size: 11px; font-weight: 700; }
 .chart-host { width: 100%; height: 320px; }
+
+/* ---- 2.1.0 P1-1 HITL：补充输入向导卡片（AskUserCard）---- */
+.ask-user-card { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; }
+.ask-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ask-title { font-weight: 600; line-height: 1.5; }
+.ask-nav { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.ask-progress { font-size: 12px; opacity: 0.7; min-width: 34px; text-align: center; }
+.ask-options { display: flex; flex-direction: column; gap: 6px; }
+.ask-option { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border, rgba(128,128,128,0.25)); background: transparent; color: inherit; cursor: pointer; text-align: left; font-size: 13px; transition: background 0.15s, border-color 0.15s; }
+.ask-option:hover { border-color: var(--accent, #00e0a4); }
+.ask-option.active { background: color-mix(in srgb, var(--accent, #00e0a4) 14%, transparent); border-color: var(--accent, #00e0a4); }
+.ask-option-num { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: color-mix(in srgb, var(--accent, #00e0a4) 18%, transparent); font-size: 12px; flex-shrink: 0; }
+.ask-option-text { flex: 1; }
+.ask-custom input { flex: 1; border: none; background: transparent; color: inherit; outline: none; font-size: 13px; }
+.ask-custom-toggle { opacity: 0.75; }
+.ask-file-row { display: flex; align-items: center; gap: 10px; font-size: 12px; opacity: 0.85; }
+.ask-file-hint { opacity: 0.7; }
+.ask-files { font-size: 12px; opacity: 0.8; }
+.ask-files.err { color: #d85a30; }
+.ask-foot { display: flex; justify-content: flex-end; gap: 8px; }
+.ask-hint { font-size: 11px; opacity: 0.55; }
+.session-pending-badge { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 11px; background: color-mix(in srgb, var(--accent, #00e0a4) 18%, transparent); color: var(--accent, #00e0a4); flex-shrink: 0; }
+.session-pending-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
