@@ -201,6 +201,7 @@ class LlmBrain:
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
+            "cache_hit_tokens": 0,  # 2.1.0：上下文缓存命中（deepseek），供前端展示命中率
             "calls": 0,
         }
 
@@ -208,6 +209,7 @@ class LlmBrain:
         self.usage["prompt_tokens"] += res.prompt_tokens
         self.usage["completion_tokens"] += res.completion_tokens
         self.usage["total_tokens"] += res.total_tokens
+        self.usage["cache_hit_tokens"] += int(getattr(res, "cache_hit_tokens", 0) or 0)
         self.usage["calls"] += 1
 
     def _system_prompt(self) -> str:

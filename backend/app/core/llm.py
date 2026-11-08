@@ -54,6 +54,7 @@ class LlmResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cache_hit_tokens: int = 0  # 2.1.0：deepseek 上下文缓存命中的 prompt 部分
     model: str = ""
     tool_calls: list[ToolCall] = dataclass_field(default_factory=list)
 
@@ -264,6 +265,7 @@ def _chat_once(
     return LlmResult(
         content=str(content),
         prompt_tokens=int(usage.get("prompt_tokens", 0)),
+        cache_hit_tokens=int(usage.get("prompt_cache_hit_tokens", 0) or 0),
         completion_tokens=int(usage.get("completion_tokens", 0)),
         total_tokens=int(usage.get("total_tokens", 0)),
         model=api_model,
@@ -370,6 +372,7 @@ def chat_stream(
             return LlmResult(
                 content="".join(parts),
                 prompt_tokens=int(usage.get("prompt_tokens", 0)),
+        cache_hit_tokens=int(usage.get("prompt_cache_hit_tokens", 0) or 0),
                 completion_tokens=int(usage.get("completion_tokens", 0)),
                 total_tokens=int(usage.get("total_tokens", 0)),
                 model=api_model,

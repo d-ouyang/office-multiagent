@@ -309,10 +309,20 @@ export interface ReplyMeta {
   durationMs?: number;
   endedAt?: number;
   steps?: Array<{ label: string; tokens: number }>;  // p6.45：逐步用量明细（悬浮浮窗）
+  promptTokens?: number;      // 2.1.0：prompt 总量（缓存命中率分母）
+  cacheHitTokens?: number;    // 2.1.0：上下文缓存命中 tokens
 }
 
 /** 回复行：done 事件上的用量/模型，以及首尾事件时间差。 */
 export function deriveReplyMeta(events: StreamEvent[]): ReplyMeta {
+  let promptTokens: number | undefined;
+  let cacheHitTokens: number | undefined;
+  for (const ev of events) {
+    if (ev.type === 'done') {
+      if (typeof ev.data.prompt_tokens === 'number' && ev.data.prompt_tokens > 0) promptTokens = ev.data.prompt_tokens;
+      if (typeof ev.data.cache_hit_tokens === 'number' && ev.data.cache_hit_tokens > 0) cacheHitTokens = ev.data.cache_hit_tokens;
+    }
+  }
   let tokens: number | undefined;
   let model: string | undefined;
   let steps: ReplyMeta['steps'];
@@ -333,6 +343,8 @@ export function deriveReplyMeta(events: StreamEvent[]): ReplyMeta {
     }
   }
   return {
+    promptTokens,
+    cacheHitTokens,
     tokens,
     model,
     steps,

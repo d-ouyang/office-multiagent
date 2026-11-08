@@ -362,6 +362,7 @@ def make_render_chart_tool(
             "doc_id": doc_id,
             "file_name": rel,
             "png_file": f"_out/{png_filename}",
+            "no_artifact": True,  # 2.1.0：过程已实时画图（visual），svg 不再进对话文件区；png 落盘供报告嵌图
             "display_name": f"{heading}.svg",
             "format": kind,
             "clean_id": clean_id,

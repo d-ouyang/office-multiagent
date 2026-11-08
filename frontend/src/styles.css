@@ -2377,3 +2377,25 @@ button.ghost {
 .visual-mod .visual-box { padding: 4px 0; }
 .visual-mod .visual-download { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--border, rgba(128,128,128,0.25)); background: var(--bg, rgba(0,0,0,0.35)); color: inherit; cursor: pointer; font-size: 12px; line-height: 1; }
 .visual-mod .visual-download:hover { border-color: var(--accent, #00e0a4); color: var(--accent, #00e0a4); }
+
+/* 2.1.0 P1-1o：缓存命中率（token 弹窗内进度条） */
+.cache-hit { display: flex; align-items: center; gap: 6px; width: 100%; }
+.cache-hit-bar { flex: 1; height: 5px; border-radius: 999px; background: color-mix(in srgb, currentColor 15%, transparent); overflow: hidden; }
+.cache-hit-fill { display: block; height: 100%; border-radius: 999px; background: var(--accent, #00e0a4); }
+.cache-hit-text { font-size: 11px; opacity: 0.85; white-space: nowrap; }
+
+/* 2.1.0 P1-1o：底部生成文件卡片化——单文件整行，2 个起各占 50% 自动换行 */
+.msg-attachments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.msg-attachments:has(.attach-chip:only-child) { grid-template-columns: 1fr; }
+.msg-attachments .attach-label { grid-column: 1 / -1; }
+.msg-attachments .attach-chip { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border, rgba(128,128,128,0.25)); background: color-mix(in srgb, var(--accent, #00e0a4) 7%, transparent); }
+
+/* 2.1.0 P1-1o：下载按钮 hover 化（用户定稿：hover 才出现） */
+.visual-mod .visual-download { opacity: 0; transition: opacity 0.15s; }
+.visual-mod:hover .visual-download { opacity: 1; }
+
+/* 2.1.0 P1-1o：会话 hover 高度抖动修复——time(11px) 与 ops(16px) 行高不一致，
+   hover 交换 display 时撑高行。两侧统一锁 16px 行高，占位高度恒定。 */
+.session-item .session-time { line-height: 16px; }
+.session-item .session-ops { height: 16px; align-items: center; }
+.session-item:hover .session-ops { display: flex; }

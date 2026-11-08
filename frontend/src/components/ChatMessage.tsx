@@ -390,6 +390,19 @@ export function ChatMessage({
                     ? '⏸ 任务未完结（等待你的输入/选择后从断点继续）'
                     : `共消耗 ${formatTokens(tokens)}`}
                 </span>
+                {meta.cacheHitTokens != null && meta.promptTokens != null && (
+                  <span className="cache-hit" role="note">
+                    <span className="cache-hit-bar" aria-hidden="true">
+                      <span
+                        className="cache-hit-fill"
+                        style={{ width: `${Math.min(100, Math.round((meta.cacheHitTokens / meta.promptTokens) * 100))}%` }}
+                      />
+                    </span>
+                    <span className="cache-hit-text">
+                      缓存命中 {Math.min(100, Math.round((meta.cacheHitTokens / meta.promptTokens) * 100))}%
+                    </span>
+                  </span>
+                )}
                 {meta.steps && meta.steps.length > 0 && (
                   <span className="token-pop" role="tooltip">
                     <span className="token-pop__head">逐步用量</span>

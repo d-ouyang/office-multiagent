@@ -152,6 +152,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
   }, []);
 
   const selectSession = useCallback(async (sid: string) => {
+    if (currentIdRef.current === sid) return; // 2.1.0：点当前激活会话不刷新右侧
     if (status === 'streaming') stop();
     sealedRef.current = true;
     reset();

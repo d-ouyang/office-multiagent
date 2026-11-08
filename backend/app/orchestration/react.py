@@ -370,7 +370,13 @@ def run_react(
                     steps_usage=steps_usage,
                     need_input=ask,
                 )
-            if emitter is not None and res.ok and isinstance(res.output, dict) and res.output.get("file_name"):
+            if (
+                emitter is not None
+                and res.ok
+                and isinstance(res.output, dict)
+                and res.output.get("file_name")
+                and not res.output.get("no_artifact")  # 2.1.0：过程已画图的 svg 不进文件区
+            ):
                 _emit(
                     emitter.artifact(
                         str(res.output.get("doc_id") or res.output.get("export_id") or name),

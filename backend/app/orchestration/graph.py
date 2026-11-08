@@ -718,6 +718,8 @@ def run_task(
             tokens_used=int(state.get("tokens_used", 0)),
             model=state.get("model") or model_id,
             steps=state.get("usage_steps") or None,  # p6.45：逐步用量明细
+            prompt_tokens=int(brain.usage.get("prompt_tokens", 0) or 0),
+            cache_hit_tokens=int(brain.usage.get("cache_hit_tokens", 0) or 0),  # 2.1.0：缓存命中率展示
         )
     )
     return (

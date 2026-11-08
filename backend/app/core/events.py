@@ -176,6 +176,8 @@ class RunEventEmitter:
         tokens_used: int | None = None,
         model: str | None = None,
         steps: list[dict[str, Any]] | None = None,
+        prompt_tokens: int | None = None,
+        cache_hit_tokens: int | None = None,
     ) -> Event:
         """收尾。tokens_used / model / steps（逐步用量明细）可选，供前端回复行展示；不传则不进 data。"""
         extra: dict[str, Any] = {}
@@ -185,6 +187,10 @@ class RunEventEmitter:
             extra["model"] = model
         if steps:
             extra["steps"] = steps
+        if prompt_tokens is not None and prompt_tokens > 0:
+            extra["prompt_tokens"] = int(prompt_tokens)
+        if cache_hit_tokens is not None and cache_hit_tokens > 0:
+            extra["cache_hit_tokens"] = int(cache_hit_tokens)  # 2.1.0：缓存命中率展示
         return self.emit(EventType.DONE, status=status, **extra)
 
 
