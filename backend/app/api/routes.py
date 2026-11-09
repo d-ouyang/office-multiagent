@@ -767,6 +767,64 @@ _MAX_RECHARGE = 10_000_000
 _RESUMABLE = {"paused_insufficient_quota", "paused_user", "paused_error", "failed"}
 
 
+def _build_asset_index(prior: list[dict[str, Any]]) -> str:
+    """2.1.0 P0 轻档：从会话历史 assistant trace 里提取可复用的数据副本（clean_id）索引。
+
+    追问任务（新任务）的上下文只有回答文本，模型拿不到前任务查过的数据 → 只能重查重画。
+    把 clean_id + 摘要注入追问任务上下文后，模型可以直接让 render_chart/analyze_table
+    引用已有副本（analyze 无需重查、报告组装无需重画图）。
+    只取最近 3 条 assistant trace，最多 5 条索引，解析失败静默跳过。
+    """
+    import json as _json  # 局部名；模块级没有 _json（那是 _stream_answer 的局部 import）
+    entries: dict[str, str] = {}
+    assistant_traces = [m for m in reversed(prior or []) if m.get("role") == "assistant" and m.get("trace")]
+    for m in assistant_traces[:3]:
+        try:
+            events = _json.loads(str(m["trace"]))
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(events, list):
+            continue
+        for ev in reversed(events):  # 单条 trace 内也是最新 observation 优先（cap 时保留最新的）
+            if not isinstance(ev, dict) or ev.get("type") != "observation":
+                continue
+            text = str((ev.get("data") or {}).get("text") or "")
+            if "clean_id" not in text:
+                continue
+            try:
+                out = _json.loads(text)
+            except Exception:  # noqa: BLE001
+                out = None
+            if not isinstance(out, dict):
+                # observation 文本是 Python repr（单引号 dict）而非 JSON——literal_eval 兜底
+                try:
+                    import ast as _ast
+
+                    out = _ast.literal_eval(text)
+                except Exception:  # noqa: BLE001
+                    continue
+            if not isinstance(out, dict) or not out.get("clean_id"):
+                continue
+            cid = str(out["clean_id"])
+            if cid in entries:
+                continue
+            gb = out.get("group_by") or "整表"
+            metric = out.get("metric") or "、".join(out.get("metrics") or []) or "count"
+            entries[cid] = f"- {cid}：按 {gb} 分组的 {metric} 统计（{out.get('row_count', '?')} 行）"
+            if len(entries) >= 5:
+                break
+        if len(entries) >= 5:
+            break
+    if not entries:
+        return ""
+    lines = "\n".join(entries.values())
+    return (
+        "【可复用的历史数据副本】以下是本会话此前任务落盘的聚合数据（数据本身已落盘），"
+        "可直接把 clean_id 交给 render_chart（x=grp，y=order_count 或 m_<指标>）或 analyze_table 引用，"
+        "无需重新查询；只有口径/维度变化时才发起新查询：\n" + lines
+    )
+
+
 def _pause_reason_of(status: str) -> str | None:
     """任务状态 → 暂停原因枚举（quota/user/error/input；input 预留）。"""
     if status == "paused_insufficient_quota":
@@ -1469,6 +1527,16 @@ def _stream_task(
             context_parts["memory"] = block[: settings.user_memory_inject_chars]
     except Exception:  # noqa: BLE001 - 记忆注入失败不阻断任务
         logging.getLogger(__name__).exception("长期记忆注入失败（忽略）")
+
+    # 2.1.0 P0 轻档：前任务产物索引注入——追问任务直接引用已有 clean_id，
+    # 不再重查重画（数据本身已落盘；口径/维度变化才新查询）。
+    try:
+        asset_index = _build_asset_index(prior)
+        if asset_index:
+            effective_text = f"{effective_text}\n\n{asset_index}"
+            context_parts["assets"] = asset_index[: settings.user_memory_inject_chars]
+    except Exception:  # noqa: BLE001 - 索引构建失败不阻断任务
+        logging.getLogger(__name__).exception("产物索引注入失败（忽略）")
 
     q: _queue.Queue = _queue.Queue()
     run_id = new_run_id()
