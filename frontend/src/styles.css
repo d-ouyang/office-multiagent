@@ -2436,3 +2436,19 @@ button.ghost {
   word-break: break-all;
   line-height: 1.5;
 }
+
+/* 2.1.0-p1.9c：Token 消耗明细浮窗（参照 rag-qa 样式：输入/命中/未命中/输出 + 命中率双色条） */
+.token-pop__head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; margin-bottom: 4px; }
+.token-pop__head--sub { font-weight: 600; opacity: 0.75; margin-top: 8px; }
+.token-pop__total { font-weight: 600; font-variant-numeric: tabular-nums; }
+.token-pop__sub .token-pop__label { padding-left: 14px; opacity: 0.8; }
+.tok-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 1px; }
+.tok-dot--in { background: #4c8dff; }
+.tok-dot--hit { background: #2fbf71; }
+.tok-dot--miss { background: #f2545b; }
+.token-pop__rate { display: flex; justify-content: space-between; align-items: baseline; margin: 6px 0 4px; font-weight: 600; }
+.token-pop__rate-num { color: #2fbf71; font-variant-numeric: tabular-nums; }
+.token-pop__bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: rgba(128,128,128,0.15); }
+.token-pop__bar-hit { background: #2fbf71; }
+.token-pop__bar-miss { background: #f2545b; }
+.token-pop__legend { display: flex; gap: 14px; font-size: 11px; opacity: 0.7; margin-top: 4px; }

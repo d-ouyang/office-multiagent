@@ -261,6 +261,9 @@ export function ChatMessage({
   const content = process ? process.result : (msg.content ?? '');
   const failure = events ? deriveFailure(events) : null;
   const meta = events ? deriveReplyMeta(events) : {};
+  // 2.1.0-p1.9c：缓存命中率（参照 rag-qa token 明细样式）
+  const hitPct =
+    meta.cacheHitTokens != null && meta.promptTokens ? Math.min(100, Math.round((meta.cacheHitTokens / meta.promptTokens) * 100)) : null;
   const modelId = meta.model || msg.model;
   const tokens = meta.tokens ?? msg.tokens;
   const clock = formatClock(msg.createdAt || meta.endedAt);
@@ -390,22 +393,43 @@ export function ChatMessage({
                     ? '⏸ 任务未完结（等待你的输入/选择后从断点继续）'
                     : `共消耗 ${formatTokens(tokens)}`}
                 </span>
-                {meta.cacheHitTokens != null && meta.promptTokens != null && (
-                  <span className="cache-hit" role="note">
-                    <span className="cache-hit-bar" aria-hidden="true">
-                      <span
-                        className="cache-hit-fill"
-                        style={{ width: `${Math.min(100, Math.round((meta.cacheHitTokens / meta.promptTokens) * 100))}%` }}
-                      />
-                    </span>
-                    <span className="cache-hit-text">
-                      缓存命中 {Math.min(100, Math.round((meta.cacheHitTokens / meta.promptTokens) * 100))}%
-                    </span>
-                  </span>
-                )}
                 {meta.steps && meta.steps.length > 0 && (
                   <span className="token-pop" role="tooltip">
-                    <span className="token-pop__head">逐步用量</span>
+                    <span className="token-pop__head">
+                      Token 消耗明细
+                      <span className="token-pop__total">总计 {formatTokens(tokens)}</span>
+                    </span>
+                    {meta.promptTokens != null && (
+                      <span className="token-pop__row">
+                        <span className="token-pop__label"><span className="tok-dot tok-dot--in" /> 输入</span>
+                        <span className="token-pop__num">{formatTokens(meta.promptTokens)}</span>
+                      </span>
+                    )}
+                    {meta.cacheHitTokens != null && meta.promptTokens != null && (
+                      <>
+                        <span className="token-pop__row token-pop__sub">
+                          <span className="token-pop__label"><span className="tok-dot tok-dot--hit" /> 缓存命中</span>
+                          <span className="token-pop__num">{formatTokens(meta.cacheHitTokens)}</span>
+                        </span>
+                        <span className="token-pop__row token-pop__sub">
+                          <span className="token-pop__label"><span className="tok-dot tok-dot--miss" /> 缓存未命中</span>
+                          <span className="token-pop__num">{formatTokens(Math.max(0, meta.promptTokens - meta.cacheHitTokens))}</span>
+                        </span>
+                        <span className="token-pop__rate">
+                          <span className="token-pop__rate-label">⚡ 缓存命中率</span>
+                          <span className="token-pop__rate-num">{hitPct}%</span>
+                        </span>
+                        <span className="token-pop__bar" aria-hidden="true">
+                          <span className="token-pop__bar-hit" style={{ width: `${hitPct}%` }} />
+                          <span className="token-pop__bar-miss" style={{ width: `${100 - (hitPct ?? 0)}%` }} />
+                        </span>
+                        <span className="token-pop__legend">
+                          <span><span className="tok-dot tok-dot--hit" /> 命中</span>
+                          <span><span className="tok-dot tok-dot--miss" /> 未命中</span>
+                        </span>
+                      </>
+                    )}
+                    <span className="token-pop__head token-pop__head--sub">逐步用量</span>
                     {meta.steps.map((s, i) => (
                       <span key={i} className="token-pop__row">
                         <span className="token-pop__label">{s.label}</span>
