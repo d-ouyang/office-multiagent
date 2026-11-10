@@ -335,7 +335,7 @@ def build_default_registry(
             {
                 "title": {"type": "string", "description": "文档标题"},
                 "content": {"type": "string", "description": "正文，数字必须来自此前工具结果"},
-                "format": {"type": "string", "enum": ["md", "docx", "pdf", "pptx"]},
+                "format": {"type": "string", "enum": ["md", "docx", "pdf", "pptx"], "description": "必须与用户明确选择的格式一致（用户在补充输入里选了 Markdown（.md）就传 md）——不要自作主张把用户要的 md 升级成 pdf"},
                 "clean_id": {"type": "string", "description": "结论来自清洗表时传，用于文末标注来源"},
                 "image_file": {"type": "string", "description": "render_chart 返回的 png_file，嵌入文档"},
             },
@@ -461,6 +461,8 @@ def build_default_registry(
             "需要文件时设 need_file=true 并在 file_hint 写清格式即可，上传控件由界面提供，"
             "文件解析由读取工具自动完成，不区分格式。"
             "有多个独立信息缺口（如日期口径+指标+输出格式）时，用 questions 一次问全（≤4 个），"
+            "【选项纪律】①options 里禁止出现'自定义/我来补充/请输入'类选项——界面有'其他补充'输入框兜底，这类选项只会造成二次交互；"
+            "②输出格式类选项的文案必须带文件类型（如'Markdown 文档（.md）'），并给该题 key='format'——用户的选择是硬约束，write_document 的 format 必须与之一致；"
             "不要挤在一个 question 里。能从数据库或知识库拿到的数据不要问。"
             "【严禁重复提问】回放历史里你已经问过的问题，用户已回答过——绝不再问第二遍；"
             "继续任务时直接使用已确认的口径。"
@@ -486,7 +488,11 @@ def build_default_registry(
                             "file_hint": {"type": "string"},
                             "expects_text": {
                                 "type": "boolean",
-                                "description": "该题需要用户填写文本补充（如'自定义时间区间'类选项——选了必须给出具体值，否则等于没回答）。设 true 时界面会强制展开输入框",
+                                "description": "该题需要用户填写文本补充。设 true 时界面会强制展开输入框，选选项后必须输入具体值",
+                            },
+                            "key": {
+                                "type": "string",
+                                "description": "该题的语义键（如 format、metric）——用户的选择会以【用户已定】key=答案 形式注入后续上下文，生成文档/图表时必须遵守",
                             },
                         },
                     },

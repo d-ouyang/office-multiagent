@@ -32,9 +32,7 @@ export default function AskUserCard({
 
   const q: AskQuestion = qs[Math.min(idx, total - 1)];
   const answer = answers[idx] ?? null;
-  const answered = (i: number) => answers[i] !== null;
   const last = idx === total - 1;
-  const canSubmitCurrent = Boolean(answer) || Boolean((custom[idx] ?? '').trim()) || (files[idx]?.length ?? 0) > 0;
 
   // 2.1.0 定稿交互：单问题/最后一题答完【自动进入续跑】（无确认按钮）；
   // 多题中间跳过/选择即翻页并记住（（跳过）会如实告知模型）。
@@ -124,15 +122,17 @@ export default function AskUserCard({
 
       {q.options.length > 0 && (
         <div className="ask-options" role="group" aria-label="候选选项">
-          {q.options.map((opt, i) => (
+          {/* 2.1.0-p1.10：模型仍生成"自定义/我来补充"类选项时界面过滤——"其他补充"输入框已承担该功能，避免二次交互 */}
+          {q.options
+            .filter((opt, _i, arr) => !/^(自定义|请输入|我来补充|我来填)/.test(opt.trim()) || arr.every((o) => /^(自定义|请输入|我来补充|我来填)/.test(o.trim())))
+            .map((opt, i) => (
             <button
               key={opt}
               type="button"
               className={`ask-option${answer === opt ? ' active' : ''}`}
               aria-pressed={answer === opt}
               onClick={() => {
-                const needsText = q.expects_text || /自定义|我来补充|我来填|补充具体|其他范围/.test(opt);
-                if (needsText) {
+                if (q.expects_text) {
                   // 2.1.0：该题需要文本补充（如"自定义时间区间"）——选选项只预选，
                   // 强制展开输入框，填了具体值才 record 进入下一题（实测踩过：
                   // 选完直接过，日期缺失，模型等于没收到答案又问一遍）
