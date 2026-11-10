@@ -363,8 +363,16 @@ class LlmBrain:
             {"role": "user", "content": f"任务：{task}"},
         ]
         for i, st in enumerate(history, 1):
-            if st.action is None or st.observation is None:
-                continue  # 终答步不会出现在续跑历史里；防御性跳过
+            if st.action is None:
+                # 2.1.0 P1-1n hotfix：无工具调用的观察步（HITL 续跑 seed"用户已补充输入：…"）
+                # 以 user 消息进入——生产实测该 Step 被跳过导致模型永远收不到用户回答，
+                # 在 ask_user 后直接给终答。seed 是用户说的话，走 user 消息语义正确；
+                # 工具观察仍只走 role=tool（红线不变）。
+                if st.observation:
+                    messages.append({"role": "user", "content": st.observation})
+                continue
+            if st.observation is None:
+                continue
             call_id = st.call_id or f"call_{i}"
             messages.append({
                 "role": "assistant",

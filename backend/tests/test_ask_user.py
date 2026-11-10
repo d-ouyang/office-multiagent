@@ -151,3 +151,26 @@ def test_resume_without_archive_fails_loudly(monkeypatch):
             emitter=gmod.RunEventEmitter("t-no-archive", "t-no-archive"),
             emit=lambda ev: None,
         )
+
+
+def test_seed_reaches_tool_calls_messages():
+    """2.1.0 P1-1n hotfix 回归：tool_calls 协议下 seed 必须以 user 消息进入模型消息。
+
+    生产实测：seed Step 无 action → _messages_for_tool_calls 跳过 → 模型收不到
+    用户回答，在 ask_user 后直接给终答（"等你确认后就能直接开跑"）。"""
+    from app.orchestration.brain import LlmBrain
+    from app.orchestration.react import Step
+
+    brain = LlmBrain.__new__(LlmBrain)  # 只测消息构建，不走 __init__
+    messages = LlmBrain._messages_for_tool_calls(
+        "任务",
+        [
+            Step(thought="需要确认", action="ask_user", action_input={"questions": []}, observation="已向用户发起补充输入请求"),
+            Step(thought="", observation="用户已补充输入：选 A；已上传文件：sales.csv"),
+        ],
+    )
+    user_msgs = [m for m in messages if m["role"] == "user"]
+    assert any("选 A" in m["content"] and "sales.csv" in m["content"] for m in user_msgs)
+    # ask_user 的占位观察仍走 role=tool（红线：工具观察不进 user 文本）
+    tool_msgs = [m for m in messages if m["role"] == "tool"]
+    assert any("已向用户发起补充输入请求" in m["content"] for m in tool_msgs)
