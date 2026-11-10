@@ -222,6 +222,13 @@ def _cjk_font() -> str:
     )
 
 
+from reportlab.lib.colors import HexColor
+
+REPORTLAB_ACCENT = HexColor("#00B383")
+REPORTLAB_DARK = HexColor("#262626")
+REPORTLAB_MUTED = HexColor("#8C8C8C")
+
+
 def _write_pdf(path: Path, title: str, content: str, note: str, image: Path | None) -> None:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
@@ -230,12 +237,15 @@ def _write_pdf(path: Path, title: str, content: str, note: str, image: Path | No
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
     font = _cjk_font()
+    # 2.1.0-p1.11：品牌色版式——封面大标题（品牌绿）、正文分色
     styles = {
-        "h1": ParagraphStyle("h1", fontName=font, fontSize=18, leading=24, spaceAfter=8),
-        "h2": ParagraphStyle("h2", fontName=font, fontSize=14, leading=20, spaceBefore=8, spaceAfter=4),
-        "h3": ParagraphStyle("h3", fontName=font, fontSize=12, leading=18, spaceBefore=6, spaceAfter=4),
-        "p": ParagraphStyle("p", fontName=font, fontSize=11, leading=16, spaceAfter=4),
-        "li": ParagraphStyle("li", fontName=font, fontSize=11, leading=16, leftIndent=12, spaceAfter=2),
+        "cover_title": ParagraphStyle("cover_title", fontName=font, fontSize=26, leading=34, textColor=REPORTLAB_ACCENT, spaceAfter=6),
+        "cover_sub": ParagraphStyle("cover_sub", fontName=font, fontSize=11, leading=16, textColor=REPORTLAB_MUTED, spaceAfter=2),
+        "h1": ParagraphStyle("h1", fontName=font, fontSize=17, leading=24, spaceBefore=14, spaceAfter=8, textColor=REPORTLAB_ACCENT),
+        "h2": ParagraphStyle("h2", fontName=font, fontSize=14, leading=20, spaceBefore=10, spaceAfter=4, textColor=REPORTLAB_DARK),
+        "h3": ParagraphStyle("h3", fontName=font, fontSize=12, leading=18, spaceBefore=6, spaceAfter=4, textColor=REPORTLAB_DARK),
+        "p": ParagraphStyle("p", fontName=font, fontSize=11, leading=17, spaceAfter=4, textColor=REPORTLAB_DARK),
+        "li": ParagraphStyle("li", fontName=font, fontSize=11, leading=17, leftIndent=12, spaceAfter=2, textColor=REPORTLAB_DARK),
     }
     # 2.1.0：标题去重——模型常把标题同时写进 title 参数与正文首行 H1，
     # 无条件加 title 会渲染两个相同标题（生产实测）。首行 H1 与 title 同名则剥掉首行。
@@ -245,7 +255,10 @@ def _write_pdf(path: Path, title: str, content: str, note: str, image: Path | No
         idx = body_lines.index(first)
         body_lines = body_lines[idx + 1:]
         content = "\n".join(body_lines)
-    story = [Paragraph(_xml(title), styles["h1"])]
+    story = [
+        Paragraph(_xml(title), styles["cover_title"]),
+        Paragraph(_xml("由办公助手生成 · 数字来自已查证数据"), styles["cover_sub"]),
+    ]
     for kind, text in _blocks(content):
         shown = "• " + text if kind == "li" else text
         story.append(Paragraph(_xml(shown), styles.get(kind, styles["p"])))
@@ -273,7 +286,7 @@ def _xml(text: str) -> str:
 
 def _write_pptx(path: Path, title: str, content: str, note: str, image: Path | None) -> None:
     from pptx import Presentation
-    from pptx.util import Inches, Pt
+    from pptx.util import Inches, Pt, Pt
 
     pres = Presentation()
     pres.slide_width = Inches(13.333)
@@ -310,7 +323,49 @@ def _write_pptx(path: Path, title: str, content: str, note: str, image: Path | N
     pres.save(str(path))
 
 
-def _add_bullet_slide(pres: Any, title: str, lines: list[str]) -> None:
+def _ppt_font(run: Any, size: int, *, bold: bool = False, color: str = "262626") -> None:
+    from pptx.util import Pt
+
+    run.font.size = Pt(size)
+    run.font.bold = bold
+    run.font.name = "微软雅黑"
+    from pptx.dml.color import RGBColor
+
+    run.font.color.rgb = RGBColor.from_string(color)
+
+
+def _ppt_deco_bar(slide: Any, left: float, top: float, width: float = 2.2, color: str = "00B383") -> None:
+    from pptx.util import Inches
+
+    shape = slide.shapes.add_shape(1, Inches(left), Inches(top), Inches(width), Inches(0.07))  # 1=矩形
+    shape.fill.solid()
+    from pptx.dml.color import RGBColor
+
+    shape.fill.fore_color.rgb = RGBColor.from_string(color)
+    shape.line.fill.background()
+
+
+def _ppt_page_title(slide: Any, text: str) -> None:
+    """内容页顶部：标题 + 品牌绿短条。"""
+    from pptx.util import Inches
+
+    box = slide.shapes.add_textbox(Inches(0.7), Inches(0.45), Inches(11.9), Inches(0.9))
+    frame = box.text_frame
+    frame.text = text[:40]
+    _ppt_font(frame.paragraphs[0].runs[0], 26, bold=True)
+    _ppt_deco_bar(slide, 0.72, 1.22, width=1.1)
+
+
+def _ppt_page_no(slide: Any, idx: int) -> None:
+    from pptx.util import Inches
+
+    box = slide.shapes.add_textbox(Inches(12.3), Inches(7.0), Inches(0.8), Inches(0.4))
+    box.text_frame.text = str(idx)
+    _ppt_font(box.text_frame.paragraphs[0].runs[0], 11, color="8C8C8C")
+
+
+def _add_bullet_slide(pres: Any, title: str, lines: list[str]) -> None:  # noqa: ARG001 - 兼容旧调用（已弃用）
+    """保留签名兼容旧测试；新 _write_pptx 不再使用。"""
     from pptx.util import Pt
 
     slide = pres.slides.add_slide(pres.slide_layouts[1])
