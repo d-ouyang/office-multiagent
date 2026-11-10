@@ -371,6 +371,7 @@ export interface AskQuestion {
   options: string[];
   need_file: boolean;
   file_hint: string;
+  expects_text?: boolean; // 2.1.0：该题需要文本补充（选选项后强制展开输入框，有内容才算作答）
 }
 
 export interface AskUserPayload {
@@ -402,6 +403,7 @@ export function normalizeAsk(raw: unknown): AskUserPayload | null {
       options: Array.isArray(q.options) ? q.options.map(String) : [],
       need_file: !!q.need_file,
       file_hint: String(q.file_hint ?? ''),
+      expects_text: !!q.expects_text,
     }))
     .filter((q) => q.question);
   return questions.length ? { questions } : null;

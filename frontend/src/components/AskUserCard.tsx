@@ -26,6 +26,7 @@ export default function AskUserCard({
   const [answers, setAnswers] = useState<(string | null)[]>(() => qs.map(() => null));
   const [custom, setCustom] = useState<{ [k: number]: string }>({});
   const [customMode, setCustomMode] = useState<{ [k: number]: boolean }>({});
+  const [pendingOpt, setPendingOpt] = useState<{ [k: number]: string }>({}); // 2.1.0：expects_text 题的预选选项
   const [files, setFiles] = useState<{ [k: number]: string[] }>({});
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -129,7 +130,17 @@ export default function AskUserCard({
               type="button"
               className={`ask-option${answer === opt ? ' active' : ''}`}
               aria-pressed={answer === opt}
-              onClick={() => record(opt)}
+              onClick={() => {
+                if (q.expects_text) {
+                  // 2.1.0：该题需要文本补充（如"自定义时间区间"）——选选项只预选，
+                  // 强制展开输入框，填了具体值才 record 进入下一题（实测踩过：
+                  // 选完直接过，日期缺失，模型等于没收到答案又问一遍）
+                  setPendingOpt((prev) => ({ ...prev, [idx]: opt }));
+                  setCustomMode((prev) => ({ ...prev, [idx]: true }));
+                  return;
+                }
+                record(opt);
+              }}
             >
               <span className="ask-option-num">{i + 1}</span>
               <span className="ask-option-text">{opt}</span>
@@ -147,13 +158,14 @@ export default function AskUserCard({
             type="text"
             autoFocus
             value={custom[idx] ?? ''}
-            placeholder="输入你的回答…"
+            placeholder={pendingOpt[idx] ? `${pendingOpt[idx]}：请补充具体内容（必填）` : '输入你的回答…'}
             aria-label="其他补充"
             onChange={(e) => setCustom((prev) => ({ ...prev, [idx]: e.target.value }))}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (custom[idx] ?? '').trim()) {
                 e.preventDefault();
-                record((custom[idx] ?? '').trim());
+                const pre = pendingOpt[idx] ? `${pendingOpt[idx]}：` : '';
+                record(pre + (custom[idx] ?? '').trim());
               }
             }}
           />
@@ -161,7 +173,10 @@ export default function AskUserCard({
             type="button"
             className="admin-btn"
             disabled={!(custom[idx] ?? '').trim()}
-            onClick={() => record((custom[idx] ?? '').trim())}
+            onClick={() => {
+              const pre = pendingOpt[idx] ? `${pendingOpt[idx]}：` : '';
+              record(pre + (custom[idx] ?? '').trim());
+            }}
             aria-label="确认补充"
           >
             →

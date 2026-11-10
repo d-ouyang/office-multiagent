@@ -265,7 +265,11 @@ def _chat_once(
     return LlmResult(
         content=str(content),
         prompt_tokens=int(usage.get("prompt_tokens", 0)),
-        cache_hit_tokens=int(usage.get("prompt_cache_hit_tokens", 0) or 0),
+        cache_hit_tokens=int(
+            usage.get("prompt_cache_hit_tokens", 0)
+            or ((usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0)  # 硅基流动/OpenAI 风格
+            or 0
+        ),
         completion_tokens=int(usage.get("completion_tokens", 0)),
         total_tokens=int(usage.get("total_tokens", 0)),
         model=api_model,
@@ -372,7 +376,11 @@ def chat_stream(
             return LlmResult(
                 content="".join(parts),
                 prompt_tokens=int(usage.get("prompt_tokens", 0)),
-        cache_hit_tokens=int(usage.get("prompt_cache_hit_tokens", 0) or 0),
+        cache_hit_tokens=int(
+            usage.get("prompt_cache_hit_tokens", 0)
+            or ((usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0)  # 硅基流动/OpenAI 风格
+            or 0
+        ),
                 completion_tokens=int(usage.get("completion_tokens", 0)),
                 total_tokens=int(usage.get("total_tokens", 0)),
                 model=api_model,
