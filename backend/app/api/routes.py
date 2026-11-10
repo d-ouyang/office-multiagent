@@ -764,7 +764,7 @@ class RechargeRequest(BaseModel):
 _MAX_RECHARGE = 10_000_000
 
 #: 可续跑/重试的暂停状态（p7.1）
-_RESUMABLE = {"paused_insufficient_quota", "paused_user", "paused_error", "failed"}
+_RESUMABLE = {"paused_insufficient_quota", "paused_user", "paused_error", "failed", "paused_budget"}  # 2.1.0：paused_budget 走真断点续跑（重置预算）
 
 
 def _build_asset_index(prior: list[dict[str, Any]]) -> str:

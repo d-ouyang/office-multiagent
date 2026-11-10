@@ -58,3 +58,21 @@ def test_metrics_list_format():
     prior = [_msg([{"type": "observation", "data": {"tool_id": "t", "text": obs}}])]
     idx = _build_asset_index(prior)
     assert "count、sum_pay" in idx
+
+
+def test_paused_budget_in_resumable_whitelist():
+    """2.1.0-p1.4 生产 hotfix 回归：paused_budget 必须在 /resume 白名单（漏加导致点继续报 NOT_RESUMABLE）。"""
+    from app.api.routes import _RESUMABLE
+
+    assert "paused_budget" in _RESUMABLE
+    # paused_input 走 /answer 端点，不在 /resume 白名单是有意设计
+    assert "paused_input" not in _RESUMABLE
+
+
+def test_paused_budget_in_resumable_whitelist():
+    """2.1.0-p1.4 生产 hotfix 回归：paused_budget 必须在 /resume 白名单（漏加导致点继续报 NOT_RESUMABLE）。"""
+    from app.api.routes import _RESUMABLE
+
+    assert "paused_budget" in _RESUMABLE
+    # paused_input 走 /answer 端点，不在 /resume 白名单是有意设计
+    assert "paused_input" not in _RESUMABLE
