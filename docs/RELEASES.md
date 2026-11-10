@@ -9,6 +9,18 @@
 
 ---
 
+## v2.1.0-p1.1 — HITL 任务中补充输入 + 查询优化（2026-11-10）
+
+分支 `feature/2.1.0-hitl`（18 commits，P1-1a~r），pytest 488 / vitest 117。详见 `docs/iterations/v2.1.0-p1.1-hitl.md`。
+
+- **HITL**：ask_user（缺失型+需求确认型，≤4 题）→ paused_input 挂起（checkpoint 落档）→ 多问题向导答完自动续跑；侧栏「待确认●」徽章；挂起/二次挂起落库消息（刷新对话不丢）。
+- **预算暂停**：token 上限 → paused_budget（继续=重置预算续跑 / 放弃本轮）。
+- **查询**：query_orders metrics 多指标宽表 + 结果缓存（同参数 cached=true，TTL 600s）+ 产物索引注入（追问直接引用 clean_id）。
+- **展示**：图表/流程图实时渲染在过程时间线（hover ⬇ 下载），文件区只放文件级产物；缓存命中率进度条（token 弹窗）。
+- ⚠️ **部署必做**：`/opt/office/.env` 加 `CHECKPOINTER_BACKEND=sqlite`（见顶部标注）。
+
+---
+
 ## v2.0.0 — 2.0.0 大版本收官（2026-11-08）
 
 **类型**：版本收官（编排协议重写 + 反馈闭环 + 布局改版 + 可靠性加固 + 路由健壮化）
