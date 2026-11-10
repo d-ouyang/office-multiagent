@@ -367,7 +367,7 @@ def build_default_registry(
                 "y": {"type": ["string", "array"], "items": {"type": "string"}, "description": "数值列，可一个或列表"},
                 "series": {"type": "string", "description": "分组列，与多个 y 互斥"},
                 "agg": {"type": "string", "enum": ["sum", "mean", "count", "min", "max"]},
-                "title": {"type": "string"},
+                "title": {"type": "string", "description": "图表标题——必须用中文业务名称（如'各门店实付金额对比'），禁止工具名/字段名/英文（如 query_orders、sum_pay）"},
                 "filters": {"type": "array", "items": _ORDER_FILTER_SCHEMA},
                 "top_n": {"type": "integer", "minimum": 1},
                 "bins": {"type": "integer", "minimum": 2},
