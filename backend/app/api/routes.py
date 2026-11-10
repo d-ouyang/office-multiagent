@@ -825,6 +825,19 @@ def _build_asset_index(prior: list[dict[str, Any]]) -> str:
     )
 
 
+@router.delete("/sessions/{session_id}")
+def delete_session_endpoint(session_id: str, authorization: str | None = Header(default=None)):
+    """删除会话（级联消息与任务）。之前前端调 DELETE 一直 404，删除只发生在前端本地 state——刷新又回来（假删除）。"""
+    user = _current_user(authorization)
+    from ..core.session_repo import SessionRepo
+
+    repo = SessionRepo()
+    if not repo.session_belongs_to(session_id, user["id"]):
+        raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"})
+    repo.delete_session(session_id)
+    return {"ok": True}
+
+
 def _pause_reason_of(status: str) -> str | None:
     """任务状态 → 暂停原因枚举（quota/user/error/input；input 预留）。"""
     if status == "paused_insufficient_quota":

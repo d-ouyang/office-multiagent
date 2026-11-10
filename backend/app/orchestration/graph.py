@@ -884,6 +884,8 @@ def resume_with_answer(
             tokens_used=actual,
             model=state.get("model") or model,
             steps=state.get("usage_steps") or None,
+            prompt_tokens=int(state.get("prompt_tokens", 0) or 0),
+            cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0),  # 2.1.0：resume 流也要带缓存命中率
         )
     )
     return (

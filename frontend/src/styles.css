@@ -2399,3 +2399,12 @@ button.ghost {
 .session-item .session-time { line-height: 16px; }
 .session-item .session-ops { height: 16px; align-items: center; }
 .session-item:hover .session-ops { display: flex; }
+
+/* 2.1.0-p1.5：向导卡片对齐终审——banner 组合类的 flex 继承链复杂（pause-banner 的
+   space-between + banner.warn 无 text-align），用强覆盖锁死左对齐，不再依赖层叠顺序。 */
+.ask-user-card .ask-title { text-align: left !important; }
+.ask-user-card .ask-head { justify-content: flex-start !important; }
+.ask-user-card .ask-foot { justify-content: flex-end !important; }
+.ask-user-card .ask-hint { text-align: left !important; }
+.composer-wrap .prompt-bar__field input,
+.composer-wrap .prompt-bar__field textarea { text-align: left !important; }
