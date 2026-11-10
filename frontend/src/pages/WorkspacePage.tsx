@@ -643,6 +643,9 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
           ))}
           </div>
         </div>
+        {/* 2.1.0-p1.9：暂停/弹窗区块包进 chat-column——与消息列表/输入框同列左缘对齐
+            （此前弹窗在 chat-main 直接子级，全宽贴最左，与居中的列表/输入框错位） */}
+        <div className="chat-column">
         {uploadError && <div className="banner warn">{uploadError}</div>}
         {error && <div className="banner err">{error}</div>}
         {paused && paused.status === 'paused_budget' && (
@@ -706,6 +709,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
             </span>
           </div>
         )}
+        </div>
         <div
           className={`composer-wrap${dragOver ? ' drag' : ''}`}
           onDragOver={(e) => {
