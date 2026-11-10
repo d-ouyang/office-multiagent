@@ -222,7 +222,9 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
           status: String(t.status),
           needed: Number(payload.needed ?? 0),
           message: pauseText(String(t.status), payload),
-          ask: normalizeAsk(payload.ask) ?? undefined,
+          // 2.1.0-p1.9 兼容两种 pause_payload 格式：新 {"ask": {...}} 与旧 {"questions": [...]} 直接平铺——
+          // 旧格式会话刷新后 payload.ask 为 undefined，弹窗消失（实测踩过）
+          ask: normalizeAsk(payload.ask ?? payload) ?? undefined,
         });
       }
     } catch {
