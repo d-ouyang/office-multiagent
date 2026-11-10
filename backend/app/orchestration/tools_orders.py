@@ -360,14 +360,24 @@ def make_query_orders_tool(
         params = built["params"]
         applied = built["applied"]
 
-        group_by = _text(raw.get("group_by"))
-        if group_by and group_by not in _GROUPABLE:
+        # 2.1.0-p1.13：group_by 多列复合分组（数组/逗号分隔，≤2 列）——一次查询解决
+        # 交叉维度（如 ['store_name','month']：门店×月份矩阵，曲线图 series 直接画）。
+        gb_raw = raw.get("group_by")
+        if isinstance(gb_raw, (list, tuple)):
+            group_cols = [_text(g) for g in gb_raw if _text(g)]
+        else:
+            group_cols = _as_list(gb_raw)  # str 或 None：逗号分隔多列也收
+        group_cols = [g for g in group_cols if g][:2]
+        bad_gb = [g for g in group_cols if g not in _GROUPABLE]
+        if bad_gb:
             return {
                 "error": (
-                    f"不能按 {group_by} 分组。可以用 month、city，"
+                    f"不能按 {bad_gb} 分组。可以用 month、city，"
                     "或订单表里除手机号、真实姓名、收货地址以外的字段。"
                 )
             }
+        group_by = ",".join(group_cols)  # 兼容旧逻辑（单列时与原值一致）
+        multi_group = len(group_cols) > 1
         metric = _text(raw.get("metric")) or ("sum_pay" if group_by else "")
         if metric and metric not in _METRICS:
             return {"error": f"metric 只能是 {'、'.join(_METRICS)}"}
@@ -390,12 +400,26 @@ def make_query_orders_tool(
         dialect = engine.dialect.name
         hint = "/*+ MAX_EXECUTION_TIME(3000) */ " if dialect == "mysql" else ""
         if group_by or (metric and "order_no" not in applied):
-            if group_by == "city":
+            # 多列：各自取表达式；输出列名用维度原名（store_name/month）——语义化，
+            # render_chart 的 x/series 可直接引用且中文映射可用
+            if multi_group:
+                labels = [
+                    city_expr(dialect) if g == "city" else (_month_expr(dialect) if g == "month" else g)
+                    for g in group_cols
+                ]
+                out_cols = group_cols
+            elif group_by == "city":
                 label = city_expr(dialect)
+                labels = [label]
+                out_cols = ["grp"]
             elif group_by == "month":
                 label = _month_expr(dialect)
+                labels = [label]
+                out_cols = ["grp"]
             else:
                 label = group_by
+                labels = [label]
+                out_cols = ["grp"]
             # 单值 metric（兼容路径）沿用 metric_value 列名——compare_orders/旧测试/旧 clean 依赖它；
             # 显式 metrics 数组（新用法）才用 m_<指标> 前缀。
             single = bool(not raw.get("metrics") and metric)
@@ -409,7 +433,14 @@ def make_query_orders_tool(
                 metric_cols = ""
                 first = "order_count"
             sel = f"COUNT(*) AS order_count{(', ' + metric_cols) if metric_cols else ''}"
-            if group_by:
+            if multi_group:
+                # 多列复合分组：SELECT 维度原名 × 指标，GROUP BY 多列（矩阵宽表）
+                sel_parts = ", ".join(labels)
+                sql = (
+                    f"SELECT {hint}{sel_parts}, {sel} "
+                    f"FROM guoquan_orders{where} GROUP BY {sel_parts} ORDER BY {first} DESC LIMIT {limit}"
+                )
+            elif group_by:
                 sql = (
                     f"SELECT {hint}{label} AS grp, {sel} "
                     f"FROM guoquan_orders{where} GROUP BY {label} ORDER BY {first} DESC LIMIT {limit}"
@@ -424,11 +455,12 @@ def make_query_orders_tool(
                 try:
                     from .tools_table import _write_clean
 
-                    cols = (
-                        ["grp", "order_count", "metric_value"]
-                        if single
-                        else ["grp", "order_count", *[f"m_{m}" for m in metrics]]
-                    )
+                    if multi_group:
+                        cols = [*out_cols, "order_count", *[f"m_{m}" for m in metrics]] if metrics else [*out_cols, "order_count"]
+                    elif single:
+                        cols = ["grp", "order_count", "metric_value"]
+                    else:
+                        cols = ["grp", "order_count", *[f"m_{m}" for m in metrics]]
                     chart_id = _write_clean(
                         Path(base_dir),
                         cols,
@@ -448,6 +480,7 @@ def make_query_orders_tool(
             return {
                 "filters": applied,
                 "group_by": group_by or None,
+                "group_cols": group_cols or None,
                 "metric": metric or "count",
                 "metrics": metrics,  # 2.1.0：本次聚合的指标清单（列名 m_<metric>）
                 "scope": "全部已入库订单" if not applied else "按筛选汇总",

@@ -1266,7 +1266,23 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
                 task_id=run_id,
                 should_cancel=None,
             )
-            state = graph.invoke(Command(resume="continue"), {"configurable": {"thread_id": run_id}})
+            # 2.1.0-p1.13：重置预算续跑前注入已完成步骤（interrupt payload 里的 replay 落过库）——
+            # LangGraph interrupt 是 node 级重跑：不注入回放，single_node 会整个 ReAct 从头重跑
+            # （实测：用户点继续后全部重走一遍、token 重复扣、效果更差）。
+            try:
+                payload_raw = task.get("pause_payload")
+                payload = (
+                    _json.loads(str(payload_raw))
+                    if isinstance(payload_raw, str) and str(payload_raw).strip()
+                    else (payload_raw if isinstance(payload_raw, dict) else {})
+                )
+                replay = (payload or {}).get("replay") or []
+            except Exception:  # noqa: BLE001
+                replay = []
+            cfg = {"configurable": {"thread_id": run_id}}
+            if replay:
+                graph.update_state(cfg, {"budget_replay": replay})
+            state = graph.invoke(Command(resume="continue"), cfg)
             actual = int(state.get("tokens_used", 0) or 0)
             pool.settle(owner_id, 0, actual, task_id=run_id, model=state.get("model"))
             result_text = str(state.get("result", ""))

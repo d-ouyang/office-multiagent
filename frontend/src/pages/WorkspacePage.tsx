@@ -353,8 +353,28 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     [paused?.taskId, start, onLogout],
   );
 
+  // 2.1.0-p1.13：流式期间的自动滚动改为 sticky 模式——用户向上滚就不再抢滚动条；
+  // 用户滚回底部（距底 <120px）恢复跟随；流结束（非 streaming）也回一次底部。
+  const stickToBottomRef = useRef(true);
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    const el = scrollRef.current;
+    if (!el) return;
+    const onUserScroll = () => {
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      stickToBottomRef.current = nearBottom;
+    };
+    el.addEventListener('wheel', onUserScroll, { passive: true });
+    el.addEventListener('touchmove', onUserScroll, { passive: true });
+    return () => {
+      el.removeEventListener('wheel', onUserScroll);
+      el.removeEventListener('touchmove', onUserScroll);
+    };
+  }, []);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (status === 'streaming' && !stickToBottomRef.current) return; // 用户在看历史，不打扰
+    el.scrollTo({ top: el.scrollHeight });
   }, [messages.length, events.length, status]);
 
   const dispatchTask = async (text: string, paths: string[], modelId?: string, force = false, effort?: string) => {

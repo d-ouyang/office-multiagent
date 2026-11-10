@@ -67,6 +67,7 @@ class TaskState(TypedDict, total=False):
     need_input: dict | None         # 2.1.0 P1-1：ask_user 载荷（question/options/need_file/file_hint）
     react_history: list             # 2.1.0 P1-1：已完成步骤回放（thought/action/input/observation）
     user_answer: str | None         # 2.1.0 P1-1：resume 注入的用户补充
+    budget_replay: list             # 2.1.0-p1.13：budget 续跑注入的已完成步骤（回放不重跑）
     ask_count: int                  # 2.1.0 P1-1：ask_user 已触发次数（≥3 不再允许，防循环）
 
 
@@ -349,6 +350,24 @@ def build_graph(
         ask_count = int(state.get("ask_count") or 0)
         prior_steps = _deserialize_react_history(state.get("react_history") or [])
         seed = str(state.get("user_answer") or "").strip() or None
+        # 2.1.0-p1.13：budget 重置续跑——回放已完成步骤（interrupt payload 落库→update_state 注入），
+        # 不再整个 ReAct 从头重跑；有 user_answer 的 HITL 续跑不受影响（seed 优先）。
+        budget_replay_steps = None
+        if not seed:
+            raw_replay = state.get("budget_replay")
+            if isinstance(raw_replay, list) and raw_replay:
+                from .react import Step
+
+                budget_replay_steps = [
+                    Step(
+                        thought=str(item.get("thought") or ""),
+                        action=str(item.get("action") or "") or None,
+                        action_input=item.get("action_input") or {},
+                        observation=str(item.get("observation") or "") or None,
+                    )
+                    for item in raw_replay
+                    if item.get("action") and item.get("observation")
+                ]
         # 2.1.0：token 上限触达 → interrupt 暂停（用户可继续=预算重置 / 放弃本轮）。
         # 无 checkpointer 时不可暂停（中断后无法恢复=假挂起），回落收尾终答。
         budget_interrupt_fn = None
@@ -364,7 +383,7 @@ def build_graph(
             emit=emit,
             should_cancel=should_cancel,
             token_budget=token_budget,
-            prior_steps=prior_steps,
+            prior_steps=prior_steps or budget_replay_steps,
             seed_observation=seed,
             allow_ask_user=ask_count < 3,
             budget_interrupt=budget_interrupt_fn,
@@ -643,7 +662,7 @@ def run_task(
         payload = state["__interrupt__"][0].value if state["__interrupt__"] else {}
         if payload.get("type") == "budget_paused":
             # 2.1.0：token 上限暂停——用户可继续（预算重置）或放弃本轮
-            ask_payload = {k: v for k, v in payload.items() if k != "type"}
+            ask_payload = {k: v for k, v in payload.items() if k not in ("type", "replay")}
             emit(emitter.observation("budget_paused", f"已达单任务 token 上限 {payload.get('limit')}，已暂停等待你的选择"))
             emit(emitter.done("paused_budget", model=model_id))
             if token_pool is not None and user_id is not None:
@@ -656,7 +675,7 @@ def run_task(
                     "status": "paused_budget",
                     "route": state.get("route"),
                     "result": "",
-                    "pause_payload": {"budget": ask_payload, "replay": state.get("react_history") or []},
+                    "pause_payload": {"budget": ask_payload, "replay": payload.get("replay") or []},
                     "estimate": estimate,
                     "tokens_used": int(state.get("tokens_used", 0) or 0),
                 },

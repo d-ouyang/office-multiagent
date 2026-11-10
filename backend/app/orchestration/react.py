@@ -117,6 +117,20 @@ class StubBrain:
         return Step(thought=f"理解任务：{task[:40]}", final=self.answer)
 
 
+def _serialize_steps(steps: list["Step"]) -> list[dict[str, Any]]:
+    """已完成步骤 → 可回放 dict（thought/action/action_input/observation）。"""
+    return [
+        {
+            "thought": st.thought or "",
+            "action": st.action,
+            "action_input": st.action_input,
+            "observation": st.observation,
+        }
+        for st in steps
+        if getattr(st, "action", None) and getattr(st, "observation", None)
+    ]
+
+
 def run_react(
     task: str,
     brain: Brain,
@@ -191,6 +205,9 @@ def run_react(
                         "used": int(getattr(token_budget, "used", 0) or 0),
                         "limit": int(token_budget.limit if token_budget else 0),
                         "done_steps": len(done_steps),
+                        # 2.1.0-p1.13：携带已完成步骤（含观察）——重置预算续跑时回放，
+                        # 不再整个 ReAct 重跑（实测：重跑且效果更差、token 重复扣）
+                        "replay": _serialize_steps(done_steps),
                     }
                 )
                 if choice == "continue":

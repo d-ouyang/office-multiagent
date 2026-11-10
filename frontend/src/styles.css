@@ -2452,3 +2452,7 @@ button.ghost {
 .token-pop__bar-hit { background: #2fbf71; }
 .token-pop__bar-miss { background: #f2545b; }
 .token-pop__legend { display: flex; gap: 14px; font-size: 11px; opacity: 0.7; margin-top: 4px; }
+
+/* 2.1.0-p1.13：交互图表图例与图区拉开间距（用户反馈叠在一块） */
+.chart-card .echart-visual { margin-bottom: 10px; }
+.chart-visual + .chart-visual { margin-top: 8px; }

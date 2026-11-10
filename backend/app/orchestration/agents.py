@@ -120,6 +120,9 @@ def build_default_registry(
         "query_orders",
         make_query_orders_tool(engine, max_rows=settings.db_query_max_rows, base_dir=str(doc_base)),
         description=(
+            "【指标映射纪律】用户说'销售/销售额/金额'→ metric 用 sum_pay；'订单量/单量/订单数'→ count；'客单价'→ avg_pay。"
+            "按用户原话映射指标，不要自作主张换成订单数；确实不明确就先 ask_user 让用户选（销售金额还是订单数量）。"
+
             "查询已入库的锅圈食汇订单。不要写 SQL，也不要读订单 CSV。"
             "至少要带一个条件：date_from、date_to（YYYY-MM-DD，按下单时间）、"
             "order_no、store_name（包含匹配）、city、order_status、order_channel、"
@@ -460,10 +463,6 @@ def build_default_registry(
             "【禁止】把上传动作做成选项（如'上传 csv 文件'/'上传 excel 文件'分开罗列）——"
             "需要文件时设 need_file=true 并在 file_hint 写清格式即可，上传控件由界面提供，"
             "文件解析由读取工具自动完成，不区分格式。"
-            "有多个独立信息缺口（如日期口径+指标+输出格式）时，用 questions 一次问全（≤4 个），"
-            "【选项纪律】①options 里禁止出现'自定义/我来补充/请输入'类选项——界面有'其他补充'输入框兜底，这类选项只会造成二次交互；"
-            "②输出格式类选项的文案必须带文件类型（如'Markdown 文档（.md）'），并给该题 key='format'——用户的选择是硬约束，write_document 的 format 必须与之一致；"
-            "不要挤在一个 question 里。能从数据库或知识库拿到的数据不要问。"
             "【严禁重复提问】回放历史里你已经问过的问题，用户已回答过——绝不再问第二遍；"
             "继续任务时直接使用已确认的口径。"
         ),
