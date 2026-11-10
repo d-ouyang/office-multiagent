@@ -237,6 +237,14 @@ def _write_pdf(path: Path, title: str, content: str, note: str, image: Path | No
         "p": ParagraphStyle("p", fontName=font, fontSize=11, leading=16, spaceAfter=4),
         "li": ParagraphStyle("li", fontName=font, fontSize=11, leading=16, leftIndent=12, spaceAfter=2),
     }
+    # 2.1.0：标题去重——模型常把标题同时写进 title 参数与正文首行 H1，
+    # 无条件加 title 会渲染两个相同标题（生产实测）。首行 H1 与 title 同名则剥掉首行。
+    body_lines = content.splitlines()
+    first = next((ln for ln in body_lines if ln.strip()), "")
+    if first.strip().startswith("# ") and first.strip()[2:].strip() == title.strip():
+        idx = body_lines.index(first)
+        body_lines = body_lines[idx + 1:]
+        content = "\n".join(body_lines)
     story = [Paragraph(_xml(title), styles["h1"])]
     for kind, text in _blocks(content):
         shown = "• " + text if kind == "li" else text

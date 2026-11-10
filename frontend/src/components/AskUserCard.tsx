@@ -143,7 +143,10 @@ export default function AskUserCard({
               }}
             >
               <span className="ask-option-num">{i + 1}</span>
-              <span className="ask-option-text">{opt}</span>
+              <span className="ask-option-text">
+                {/* 提示词禁令的界面兜底：剥掉英文标识符括号技术注释（"销售额（sum_pay）"→"销售额"），保留"（推荐）"等中文 */}
+                {opt.replace(/（[a-zA-Z_][a-zA-Z0-9_.]*）/g, '').replace(/\([^)]*[a-zA-Z_][a-zA-Z0-9_]*\)/g, '').trim()}
+              </span>
             </button>
           ))}
         </div>

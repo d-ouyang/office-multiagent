@@ -949,7 +949,8 @@ button.account-link:hover {
 }
 .chat-column {
   width: min(1200px, 100%);
-  margin-inline: auto;
+  /* 2.1.0-p1.6：用户定稿对话列贴左（弹窗/步骤列表/输入框统一左对齐，不再居中） */
+  margin-inline: 0;
 }
 .chat-header {
   display: flex;
