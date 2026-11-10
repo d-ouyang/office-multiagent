@@ -131,7 +131,8 @@ export default function AskUserCard({
               className={`ask-option${answer === opt ? ' active' : ''}`}
               aria-pressed={answer === opt}
               onClick={() => {
-                if (q.expects_text) {
+                const needsText = q.expects_text || /自定义|我来补充|我来填|补充具体|其他范围/.test(opt);
+                if (needsText) {
                   // 2.1.0：该题需要文本补充（如"自定义时间区间"）——选选项只预选，
                   // 强制展开输入框，填了具体值才 record 进入下一题（实测踩过：
                   // 选完直接过，日期缺失，模型等于没收到答案又问一遍）
@@ -147,6 +148,9 @@ export default function AskUserCard({
                 {/* 提示词禁令的界面兜底：剥掉英文标识符括号技术注释（"销售额（sum_pay）"→"销售额"），保留"（推荐）"等中文 */}
                 {opt.replace(/（[a-zA-Z_][a-zA-Z0-9_.]*）/g, '').replace(/\([^)]*[a-zA-Z_][a-zA-Z0-9_]*\)/g, '').trim()}
               </span>
+              {q.expects_text && answer === opt && (
+                <span className="ask-option-need" aria-label="该选项需要补充文本">需补充</span>
+              )}
             </button>
           ))}
         </div>
@@ -226,13 +230,8 @@ export default function AskUserCard({
         >
           跳过此题
         </button>
-        {!last && (answered(idx) || canSubmitCurrent) && (
-          <button type="button" className="admin-btn ghost" onClick={() => record((custom[idx] ?? '').trim() || answer)}>
-            下一题
-          </button>
-        )}
       </div>
-      <div className="ask-hint">全部回答完成后一次性提交，任务从断点继续（已完成步骤不重跑）。</div>
+      <div className="ask-hint">每题答完自动进入下一题；全部答完后任务自动从断点继续（已完成步骤不重跑）。</div>
     </div>
   );
 }

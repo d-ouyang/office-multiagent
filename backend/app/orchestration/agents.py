@@ -364,7 +364,7 @@ def build_default_registry(
                 "clean_id": {"type": "string", "description": "clean_id（c- 开头）或 export_id（e- 开头）"},
                 "chart": {"type": "string", "enum": ["bar", "barh", "line", "area", "pie", "scatter", "heatmap", "hist"]},
                 "x": {"type": "string", "description": "分类列"},
-                "y": {"type": ["string", "array"], "items": {"type": "string"}, "description": "数值列，可一个或列表"},
+                "y": {"type": ["string", "array"], "items": {"type": "string"}, "description": "数值列——必须用数据表的实际列名（看上一步 query_orders/产物索引给出的列，如 grp、order_count、m_sum_pay、metric_value），禁止编造列名"},
                 "series": {"type": "string", "description": "分组列，与多个 y 互斥"},
                 "agg": {"type": "string", "enum": ["sum", "mean", "count", "min", "max"]},
                 "title": {"type": "string", "description": "图表标题——必须用中文业务名称（如'各门店实付金额对比'），禁止工具名/字段名/英文（如 query_orders、sum_pay）"},

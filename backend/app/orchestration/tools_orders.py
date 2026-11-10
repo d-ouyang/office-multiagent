@@ -437,8 +437,10 @@ def make_query_orders_tool(
                             "source": "query_orders",
                             "group_by": group_by,
                             "metric": metric or "count",
+                            "metrics": metrics,
                             "filters": applied,
                             "rows": len(rows),
+                            "columns": cols,  # 产物索引用：模型直接知道实际列名，不猜
                         },
                     )
                 except Exception:  # noqa: BLE001 - 存副本失败不影响查询本身
