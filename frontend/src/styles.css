@@ -2409,3 +2409,31 @@ button.ghost {
 .ask-user-card .ask-hint { text-align: left !important; }
 .composer-wrap .prompt-bar__field input,
 .composer-wrap .prompt-bar__field textarea { text-align: left !important; }
+
+/* 2.1.0-p1.7：底部生成文件卡片——文件名完整可换行显示，不再因固定宽度截断。
+   grid 卡片覆盖 chip 的胶囊截断样式（max-width/nowrap/ellipsis 只该用于输入框预览 chip）。 */
+.msg-attachments .attach-chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  align-items: flex-start;
+}
+.msg-attachments .attach-chip > span:not(.attach-remove):not(:first-child) {
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+/* 2.1.0-p1.7：底部生成文件卡片——文件名完整可换行显示，不再因固定宽度截断。
+   grid 卡片覆盖 chip 的胶囊截断样式（max-width/nowrap/ellipsis 只该用于输入框预览 chip）。 */
+.msg-attachments .attach-chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  align-items: flex-start;
+}
+.msg-attachments .attach-chip > span:not(.attach-remove):not(:first-child) {
+  word-break: break-all;
+  line-height: 1.5;
+}

@@ -309,6 +309,8 @@ def make_read_document_tool(
             raise ValueError(f"文档内容为空：{file_name}")
         return {
             "file_name": file_name,
+            "no_artifact": True,  # 2.1.0-p1.7：读的是用户上传的输入文件，不是生成产物——
+            # 不发 artifact（此前被误当"生成文件"进对话文件区，模型也跟着说"已生成文件"）
             "total_chars": len(content),
             "content": content[:max_chars],
             "truncated": len(content) > max_chars,
