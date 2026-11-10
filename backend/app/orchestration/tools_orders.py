@@ -403,10 +403,17 @@ def make_query_orders_tool(
             # 多列：各自取表达式；输出列名用维度原名（store_name/month）——语义化，
             # render_chart 的 x/series 可直接引用且中文映射可用
             if multi_group:
-                labels = [
-                    city_expr(dialect) if g == "city" else (_month_expr(dialect) if g == "month" else g)
-                    for g in group_cols
-                ]
+                # 多列：输出列名用维度原名（派生列加 AS 别名）——语义化，
+                # render_chart 的 x/series 可直接引用且中文映射可用
+                labels = []
+                for g in group_cols:
+                    if g == "city":
+                        labels.append(f"{city_expr(dialect)} AS city")
+                    elif g == "month":
+                        labels.append(f"{_month_expr(dialect)} AS month")
+                    else:
+                        labels.append(g)
+                group_exprs = [e.rsplit(" AS ", 1)[0] if " AS " in e else e for e in labels]
                 out_cols = group_cols
             elif group_by == "city":
                 label = city_expr(dialect)
@@ -434,11 +441,12 @@ def make_query_orders_tool(
                 first = "order_count"
             sel = f"COUNT(*) AS order_count{(', ' + metric_cols) if metric_cols else ''}"
             if multi_group:
-                # 多列复合分组：SELECT 维度原名 × 指标，GROUP BY 多列（矩阵宽表）
+                # 多列复合分组：SELECT 维度（带别名）× 指标，GROUP BY 表达式（矩阵宽表）
                 sel_parts = ", ".join(labels)
+                group_parts = ", ".join(group_exprs)
                 sql = (
                     f"SELECT {hint}{sel_parts}, {sel} "
-                    f"FROM guoquan_orders{where} GROUP BY {sel_parts} ORDER BY {first} DESC LIMIT {limit}"
+                    f"FROM guoquan_orders{where} GROUP BY {group_parts} ORDER BY {first} DESC LIMIT {limit}"
                 )
             elif group_by:
                 sql = (
