@@ -60,15 +60,6 @@ export function AccountPanel(props: {
           <div className="account-name">{props.user.username}</div>
           <div className="account-sub">{role}</div>
         </div>
-        <button
-          type="button"
-          className="account-logout-icon"
-          aria-label="退出当前账号"
-          title="退出登录"
-          onClick={() => setConfirmLogout(true)}
-        >
-          <LogOut size={16} />
-        </button>
       </div>
       <div className="account-card">
         <div className="account-row"><span>登录名</span><b>{props.user.username}</b></div>

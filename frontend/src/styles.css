@@ -578,6 +578,34 @@ button.attach-chip:hover,
   margin-bottom: 10px;
 }
 .account-id { min-width: 0; flex: 1; }
+/* 底栏用户行：个人信息 + 右侧退出 icon */
+.sidebar-user-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.sidebar-user-row .user-chip {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+.user-logout-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.user-logout-icon:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
 .account-name {
   font-size: 15px;
   font-weight: 600;

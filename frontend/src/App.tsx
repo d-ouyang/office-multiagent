@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import AdminApp from './AdminApp';
 import LoginPage from './pages/LoginPage';
 import WorkspacePage from './pages/WorkspacePage';
-import { checkSession, type LoginUser } from './lib/api';
+import { checkSession, clearToken, type LoginUser } from './lib/api';
 
 type View = 'workspace' | 'admin';
 
@@ -59,6 +59,8 @@ export default function App() {
     <WorkspacePage
       user={user}
       onLogout={() => {
+        // 退出必须清掉本地 token：否则刷新后 checkSession() 会拿残留 token 静默自动登录。
+        clearToken();
         setUser(null);
         window.history.replaceState({}, '', '/');
       }}

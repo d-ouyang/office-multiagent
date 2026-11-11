@@ -165,4 +165,18 @@ describe('侧栏简介与版本', () => {
     });
     expect(loggedOut).toBe(1);
   });
+
+  it('底栏个人信息右侧的退出 icon：不开个人中心也能确认退出', () => {
+    let loggedOut = 0;
+    render(<AppSidebar sessions={[]} currentId="" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => { loggedOut += 1; }} />);
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: '退出当前账号' }));
+    });
+    expect(loggedOut).toBe(0);
+    expect(screen.getByText('确定退出登录？')).toBeInTheDocument();
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: '退出' }));
+    });
+    expect(loggedOut).toBe(1);
+  });
 });
