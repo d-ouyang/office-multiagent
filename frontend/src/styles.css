@@ -73,6 +73,46 @@ body {
 .login-form input:focus {
   border-color: var(--accent);
 }
+/* 密码框：右侧眼睛 icon 切换明文/密文 */
+.login-form .password-field {
+  position: relative;
+  display: block;
+}
+.login-form .password-field input {
+  width: 100%;
+  padding-right: 44px;
+}
+.login-form .pwd-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.login-form .pwd-toggle:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+.login-form .pwd-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.login-form .pwd-toggle svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
 .login-form button {
   padding: 10px;
   border-radius: 10px;
@@ -538,22 +578,6 @@ button.attach-chip:hover,
   margin-bottom: 10px;
 }
 .account-id { min-width: 0; flex: 1; }
-.account-logout-icon {
-  margin-left: auto;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-}
-.account-logout-icon:hover {
-  color: #e7a3a0;
-  background: rgba(231, 163, 160, 0.16);
-}
 .account-name {
   font-size: 15px;
   font-weight: 600;
