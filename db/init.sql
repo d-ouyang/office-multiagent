@@ -233,9 +233,10 @@ INSERT IGNORE INTO `pool_model` (`pool_id`, `model_name`) VALUES
   (2, 'deepseek-chat'), (2, 'qwen-plus'), (2, 'glm-4'), (2, 'deepseek-reasoner'),
   (3, 'deepseek-chat'), (3, 'qwen-plus'), (3, 'glm-4'), (3, 'kimi'), (3, 'deepseek-reasoner');
 
--- dev 种子：密码 Office@2026（bcrypt cost12，仅本地开发；生产改密/换 hash）
+-- dev 种子（bcrypt cost12）：明文密码不落仓库，见团队密库/交接文档；既有环境请用
+-- POST /api/v1/auth/change-password 或直接 UPDATE user.password_hash 轮换。
 INSERT IGNORE INTO `user` (`id`, `employee_id`, `username`, `password_hash`, `role`, `model_pool_id`) VALUES
-  (1, 'EMP001', 'dev', '$2b$12$bKWdpuPQGPIxCXoWyzhHaeVlvkE3eRXiiuH2Gqp6VOJDrFcVwrJrS', 'admin', 3);
+  (1, 'EMP001', 'dev', '$2b$12$OaNJ3Eiz2QNU/QE5vvrAtOoXhomVbe5U9Bwo4EFLgxwS/DUoosu1O', 'admin', 3);
 
 -- token 池种子（p6.4）：dev 用户初始额度 100000（生产按需调整）
 INSERT IGNORE INTO `wallet` (`user_id`, `balance`) VALUES (1, 100000);
