@@ -20,7 +20,7 @@ import yaml
 from sqlalchemy.engine import Engine
 
 from ..core.config import settings
-from .tools import ToolRegistry
+from .tools import ToolRegistry, ToolSpec
 from .tools_db import make_db_query_tool
 from .tools_compare import make_compare_orders_tool
 from .tools_export import make_export_orders_tool
@@ -501,7 +501,41 @@ def build_default_registry(
             ["question"],
         ),
     )
+    _apply_tool_specs(reg)
     return reg
+
+
+# --------------------------------------------------------------------------- #
+# v2.2.0-p1.1（Phase A2）：ToolSpec 集中批注表——全部工具的横切元数据一处声明。
+# 可审计、diff 小；漏标注由 test_tool_spec 的 unannotated()==[] 判据抓红，
+# 且运行期兜底是悲观档（side_effect=True / idempotent=False）。
+# 消费方：Phase C1 幂等去重、C2 分级超时、B3 权限网关。
+# --------------------------------------------------------------------------- #
+_TOOL_SPECS: dict[str, ToolSpec] = {
+    # 只读查询类（无副作用，同参重放安全）
+    "query_orders": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=10, permission="db:read"),
+    "compare_orders": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=10, permission="db:read"),
+    "sales_report": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=10, permission="db:read"),
+    "db_query": ToolSpec(risk_level="medium", side_effect=False, idempotent=True, timeout=3, permission="db:read"),
+    "analyze_table": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=30, permission="fs:read"),
+    "read_document": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=30, permission="fs:read"),
+    "rag_retrieve": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=60, permission="rag:query"),
+    # 写文件类（副作用=写产物；同名覆盖语义，同参重放结果一致）
+    "clean_table": ToolSpec(risk_level="medium", side_effect=True, idempotent=True, timeout=60, permission="fs:write"),
+    "export_orders": ToolSpec(risk_level="medium", side_effect=True, idempotent=True, timeout=60, permission="fs:write"),
+    "render_chart": ToolSpec(risk_level="medium", side_effect=True, idempotent=True, timeout=30, permission="fs:write"),
+    "render_flow": ToolSpec(risk_level="medium", side_effect=True, idempotent=True, timeout=30, permission="fs:write"),
+    # 生成式写（LLM 生成内容，重试=重烧钱+内容漂移）：非幂等，Phase C1 幂等键是唯一护栏
+    "write_document": ToolSpec(risk_level="medium", side_effect=True, idempotent=False, timeout=120, permission="fs:write"),
+    # HITL：挂起状态落库（副作用）；重复挂起=二次挂起语义，幂等
+    "ask_user": ToolSpec(risk_level="low", side_effect=True, idempotent=True, timeout=None, permission="hitl:ask"),
+}
+
+
+def _apply_tool_specs(reg: ToolRegistry) -> None:
+    for name, spec in _TOOL_SPECS.items():
+        if reg.has(name):
+            reg.set_spec(name, spec)
 
 
 def build_registry_for_spec(spec: AgentSpec, base: ToolRegistry) -> ToolRegistry:

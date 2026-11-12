@@ -19,6 +19,16 @@
 
 ---
 
+## v2.2.0-p1.1 — ToolSpec 契约（Phase A2）（2026-11-12）
+
+分支 `feature/2.2.0-harness`，pytest 507 / 3 skipped。详见 `docs/iterations/v2.2.0-p1.1-tool-spec.md`。
+
+- `orchestration/tools.py`：ToolSpec（risk_level/side_effect/idempotent/timeout/permission）+ registry 批注/导出 API；13 工具集中批注（agents.py `_TOOL_SPECS`）；漏标注测试抓红 + 悲观兜底。
+- 唯一行为增量：**非幂等副作用工具重试时 WARNING**（write_document 等生成式写；幂等键去重 Phase C1 落）。无部署必做项。
+- 附注：p1.0 首次部署遇 runner 会话静默失效（queued→cancelled），已按铁律重启恢复并 `workflow_dispatch` 重触发；runner 健康监控记入 backlog 观察。
+
+---
+
 ## v2.1.0-p1.1 — HITL 任务中补充输入 + 查询优化（2026-11-10）
 
 分支 `feature/2.1.0-hitl`（18 commits，P1-1a~r），pytest 488 / vitest 117。详见 `docs/iterations/v2.1.0-p1.1-hitl.md`。

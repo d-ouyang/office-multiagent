@@ -9,7 +9,7 @@
 ## Phase A 契约层（p1.x）— M1：换实现不改调用点
 
 - [x] **A1 ModelAdapter 契约**（p1.0，2026-11-11）：`core/model_adapter.py`（Protocol + OpenAICompatAdapter + FakeModelAdapter + set/get/reset）；llm.chat/chat_stream 变门面转发。判据达成：Fake 注入跑通 run_react 全链路，调用点零改动。pytest 497。
-- [ ] **A2 ToolSpec 契约**（p1.1）：扩展 `skills/base.py` 补 risk_level/side_effect/idempotency_key/timeout/permission；tools_*.py 登记进 registry；brain 调用只走 registry。判据：registry 枚举全部工具及权限/幂等属性，grep 无绕过直调。
+- [x] **A2 ToolSpec 契约**（p1.1，2026-11-12）：`ToolSpec` 落在真实注册表 `orchestration/tools.py`（非 skills 层，运行时零引用）；13 工具集中批注表（agents.py `_TOOL_SPECS`）；非幂等副作用重试 WARNING。判据达成：unannotated()==[] + 白名单裁剪不丢 spec。pytest 507。
 - [ ] **A3 Event 契约 v1**（p1.2）：`core/events.py` 补 trace_id/tenant_id/payload；run_trace 同步读写；前端兼容。判据：vitest 流式回归全绿。
 - [ ] **A4 Policy / StateSnapshot / EvalCase**（p1.3）：quota_policy/kb_acl/runtime_settings 判定收口为接口；checkpoints/runs 抽 StateSnapshot 字段；validator/feedback 数据结构化 EvalCase。判据：接口文档+单测（只立契约不迁移实现）。
 
