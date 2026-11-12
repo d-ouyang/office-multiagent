@@ -19,6 +19,15 @@
 
 ---
 
+## v2.2.0-p1.3 — Policy/StateSnapshot/EvalCase 三契约（Phase A4 收官）（2026-11-12）
+
+分支 `feature/2.2.0-harness`，pytest 523 / 3 skipped。详见 `docs/iterations/v2.2.0-p1.3-contracts.md`。
+
+- `core/contracts.py`：PolicyDecision+PolicyEngine（B3 判定收口的输出契约）、StateSnapshot（C2 lease / C3 恢复 / D1 回放消费；version 对齐事件流 seq）、EvalCase+Verdict（E1 golden set 入口，to_dict 即文件格式）。
+- **Phase A 完结：六契约全落地**（ModelAdapter/ToolSpec/Event/Policy/StateSnapshot/EvalCase），全程等价重构、零行为变化。纯新增，无部署必做项。
+
+---
+
 ## v2.2.0-p1.2 — Event 契约 v1（Phase A3）（2026-11-12）
 
 分支 `feature/2.2.0-harness`，pytest 513 / vitest 123。详见 `docs/iterations/v2.2.0-p1.2-event-contract.md`。
