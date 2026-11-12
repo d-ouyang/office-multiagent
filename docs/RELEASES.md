@@ -9,6 +9,16 @@
 
 ---
 
+## v2.2.0-p1.0 — ModelAdapter 契约（Phase A1）（2026-11-11）
+
+分支 `feature/2.2.0-harness`（新开，自 feature/2.1.0-hitl 切出），pytest 497 / 3 skipped。详见 `docs/iterations/v2.2.0-p1.0-model-adapter.md`、总路线 `docs/PLAN-2.2.0.md`。
+
+- **等价重构**：`core/model_adapter.py` 新增 ModelAdapter 契约（chat/chat_stream 双通道）；`llm.chat/chat_stream` 变门面转发，签名与行为零变化，brain/react 调用点零改动。
+- **测试注入**：FakeModelAdapter 脚本化（LlmResult/str/callable，耗尽即 AssertionError 防循环）；A1 判据用例=Fake 注入跑通 run_react 全链路（不出网、无 MockTransport）。
+- 将来接 LiteLLM（Phase B1）只需注册新 adapter。**无部署必做项**（行为等价）。
+
+---
+
 ## v2.1.0-p1.1 — HITL 任务中补充输入 + 查询优化（2026-11-10）
 
 分支 `feature/2.1.0-hitl`（18 commits，P1-1a~r），pytest 488 / vitest 117。详见 `docs/iterations/v2.1.0-p1.1-hitl.md`。

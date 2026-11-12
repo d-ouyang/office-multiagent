@@ -20,6 +20,7 @@ from typing import Any
 import httpx
 
 from .config import settings
+from .model_adapter import get_adapter
 from .model_registry import load_registry
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,37 @@ def resolve_model(model_id: str) -> tuple[str, str, str]:
 
 
 def chat(
+    model_id: str,
+    messages: list[dict[str, str]],
+    *,
+    timeout: float | None = None,
+    temperature: float = 0.2,
+    reasoning_effort: str | None = None,
+    max_tokens: int | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> LlmResult:
+    """调一次 /chat/completions（v2.2.0-p1.0 起为契约门面，转发当前 ModelAdapter）。
+
+    签名与行为不变（等价重构）：缺省 adapter = OpenAI 兼容直连（含网络类失败重试）。
+    测试可用 `model_adapter.set_adapter(FakeModelAdapter([...]))` 注入假模型，
+    无需 MockTransport。任何失败抛 LlmError（含 LlmNotConfigured）。
+    """
+    return get_adapter().chat(
+        model_id,
+        messages,
+        timeout=timeout,
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
+        max_tokens=max_tokens,
+        tools=tools,
+        tool_choice=tool_choice,
+        transport=transport,
+    )
+
+
+def _chat_impl(
     model_id: str,
     messages: list[dict[str, str]],
     *,
@@ -278,6 +310,42 @@ def _chat_once(
 
 
 def chat_stream(
+    model_id: str,
+    messages: list[dict[str, str]],
+    *,
+    on_chunk: Callable[[str], None] | None = None,
+    on_thought: Callable[[str], None] | None = None,
+    timeout: float | None = None,
+    temperature: float = 0.2,
+    reasoning_effort: str | None = None,
+    max_tokens: int | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    on_tool_call: Callable[[ToolCall], None] | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> LlmResult:
+    """流式 /chat/completions（v2.2.0-p1.0 起为契约门面，转发当前 ModelAdapter）。
+
+    签名与行为不变（等价重构）。流式语义（首块前重试、已出字不重试、
+    tool_calls 增量、usage 末块结算）由 OpenAICompatAdapter 委托的 `_chat_stream_impl` 保证。
+    """
+    return get_adapter().chat_stream(
+        model_id,
+        messages,
+        on_chunk=on_chunk,
+        on_thought=on_thought,
+        timeout=timeout,
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
+        max_tokens=max_tokens,
+        tools=tools,
+        tool_choice=tool_choice,
+        on_tool_call=on_tool_call,
+        transport=transport,
+    )
+
+
+def _chat_stream_impl(
     model_id: str,
     messages: list[dict[str, str]],
     *,
