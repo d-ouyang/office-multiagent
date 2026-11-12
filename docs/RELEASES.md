@@ -19,6 +19,15 @@
 
 ---
 
+## v2.2.0-p1.2 — Event 契约 v1（Phase A3）（2026-11-12）
+
+分支 `feature/2.2.0-harness`，pytest 513 / vitest 123。详见 `docs/iterations/v2.2.0-p1.2-event-contract.md`。
+
+- `core/events.py`：Event 信封补 `trace_id/tenant_id/payload`（契约 8/8 字段，payload=横切元数据层与 data 业务体分工）；RunEventEmitter 构造注入（Phase B2 网关入口将填充）。
+- 向后兼容双面验证：老 NDJSON 行解析自动补缺省；前端流式渲染 vitest 全绿。无部署必做项。
+
+---
+
 ## v2.2.0-p1.1 — ToolSpec 契约（Phase A2）（2026-11-12）
 
 分支 `feature/2.2.0-harness`，pytest 507 / 3 skipped。详见 `docs/iterations/v2.2.0-p1.1-tool-spec.md`。

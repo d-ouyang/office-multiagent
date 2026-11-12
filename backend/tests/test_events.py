@@ -134,3 +134,54 @@ def test_event_sequence_thread_safe_no_duplicates():
     assert len(collected) == 1600
     assert len(set(collected)) == 1600          # 无重复
     assert sorted(collected) == list(range(1, 1601))  # 无跳号无重号
+
+
+# --------------------------------------------------------------------------- #
+# v2.2.0-p1.2（Phase A3）：Event 契约 v1——补 trace_id / tenant_id / payload
+# --------------------------------------------------------------------------- #
+
+
+def test_event_contract_defaults_are_backward_compatible():
+    """新字段全缺省：老构造路径（无 trace/tenant）行为不变。"""
+    em = RunEventEmitter("r", "t")
+    ev = em.content_delta("hi")
+    assert ev.trace_id == "" and ev.tenant_id == "" and ev.payload == {}
+
+
+def test_emitter_injects_trace_and_tenant_into_every_event():
+    em = RunEventEmitter("r", "t", trace_id="tr-1", tenant_id="tn-1")
+    evs = [em.status("agent", "start"), em.content_delta("x"), em.done()]
+    for ev in evs:
+        assert ev.trace_id == "tr-1" and ev.tenant_id == "tn-1"
+
+
+def test_emitter_default_payload_carried_and_not_shared():
+    em = RunEventEmitter("r", "t", payload={"feature": "chat", "step_id": "s-0"})
+    ev1, ev2 = em.observation("t1", "o"), em.observation("t2", "o")
+    assert ev1.payload == ev2.payload == {"feature": "chat", "step_id": "s-0"}
+    ev1.payload["mutated"] = True  # 浅拷贝：单事件突变不污染其他事件
+    assert "mutated" not in ev2.payload
+
+
+def test_roundtrip_keeps_contract_fields():
+    em = RunEventEmitter("r", "t", trace_id="tr-9", tenant_id="tn-9", payload={"k": "v"})
+    ev = em.done(status="done", tokens_used=5)
+    back = parse_line(encode_line(ev))
+    assert back.trace_id == "tr-9" and back.tenant_id == "tn-9"
+    assert back.payload == {"k": "v"}
+
+
+def test_old_ndjson_line_without_new_fields_still_parses():
+    """向后兼容判据：v2.1.0 时代的事件行（无 trace_id/payload 键）能解析回 Event。"""
+    legacy = '{"type":"content_delta","run_id":"r","turn_id":"t","seq":3,"ts":1790000000000,"data":{"delta":"x"}}'
+    ev = parse_line(legacy)
+    assert ev.type.value == "content_delta" and ev.data["delta"] == "x"
+    assert ev.trace_id == "" and ev.payload == {}
+
+
+def test_visual_data_payload_unchanged():
+    """visual 的 data.payload（业务键）不因信封 payload 出现而漂移。"""
+    em = RunEventEmitter("r", "t", payload={"attribution": "gateway"})
+    ev = em.visual("chart", {"x": [1, 2]})
+    assert ev.data["kind"] == "chart" and ev.data["payload"] == {"x": [1, 2]}
+    assert ev.payload == {"attribution": "gateway"}  # 同名不同层

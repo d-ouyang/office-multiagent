@@ -48,13 +48,26 @@ class EventType(str, Enum):
 
 
 class Event(BaseModel):
-    """事件信封。seq 由 EventSequence 自增；ts 为毫秒时间戳。"""
+    """事件信封。seq 由 EventSequence 自增；ts 为毫秒时间戳。
+
+    v2.2.0-p1.2（Phase A3 / Event 契约 v1）：补 trace_id / tenant_id / payload 三字段，
+    成为两项目共用的事件契约（8/8 字段齐）：
+    - `trace_id`：跨 run / 跨服务的链路追踪 ID（Phase B2 网关入口注入，缺省空）；
+    - `tenant_id`：租户标识（当前单租户预留，Phase B2 注入）；
+    - `payload`：**横切元数据载荷**（归因 / 计量 / step_id 等），与 `data` 的分工——
+      data=业务体（前端消费），payload=横切层（事件流合并与审计消费），互不混放。
+    三字段全缺省（空串/空 dict）：老 NDJSON 行解析回来自动补缺省（向后兼容），
+    新事件序列化会带上空缺省值（前端按未知字段忽略，协议显式化）。
+    """
 
     type: EventType
     run_id: str
     turn_id: str
     seq: int
     ts: int = Field(default_factory=lambda: int(time.time() * 1000))
+    trace_id: str = ""
+    tenant_id: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
     data: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -76,11 +89,29 @@ class EventSequence:
 
 
 class RunEventEmitter:
-    """一次 run 的事件发射器：自动填 run_id/turn_id/seq，产出 Event。"""
+    """一次 run 的事件发射器：自动填 run_id/turn_id/seq，产出 Event。
 
-    def __init__(self, run_id: str, turn_id: str, seq: EventSequence | None = None) -> None:
+    v2.2.0-p1.2：构造可带 trace_id / tenant_id / payload（横切元数据，入口注入
+    一次、全事件携带，Phase B2 网关注入时用）；也可运行期补设属性。
+    不给 emit() 开 per-event payload 传参口——「payload」与 visual 等构造器的
+    data 业务键撞名，且归因元数据本来就是 run 级一致，统一走 emitter 注入。
+    """
+
+    def __init__(
+        self,
+        run_id: str,
+        turn_id: str,
+        seq: EventSequence | None = None,
+        *,
+        trace_id: str = "",
+        tenant_id: str = "",
+        payload: dict[str, Any] | None = None,
+    ) -> None:
         self.run_id = run_id
         self.turn_id = turn_id
+        self.trace_id = trace_id
+        self.tenant_id = tenant_id
+        self.default_payload: dict[str, Any] = dict(payload or {})
         self._seq = seq or EventSequence()
 
     # ---- 基础发射 ----
@@ -90,6 +121,9 @@ class RunEventEmitter:
             run_id=self.run_id,
             turn_id=self.turn_id,
             seq=self._seq.next(),
+            trace_id=self.trace_id,
+            tenant_id=self.tenant_id,
+            payload=dict(self.default_payload),
             data=data,
         )
 
@@ -163,7 +197,11 @@ class RunEventEmitter:
         return self.emit(EventType.CONTEXT_USAGE, window=window, used=used, items=items)
 
     def visual(self, kind: str, payload: dict[str, Any]) -> Event:
-        """前端绘制用的结构。kind=flow 是流程图，kind=chart 是 ECharts 数据。"""
+        """前端绘制用的结构。kind=flow 是流程图，kind=chart 是 ECharts 数据。
+
+        注意：这里的 payload 是 **data 业务键**（进 data.payload），与信封层的
+        横切 payload（Event.payload）同名不同层，勿混。
+        """
         return self.emit(EventType.VISUAL, kind=kind, payload=payload)
 
     def task_summary(self, artifacts: list[dict[str, Any]], sources: list[dict[str, Any]]) -> Event:

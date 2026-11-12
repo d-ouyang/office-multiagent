@@ -10,7 +10,7 @@
 
 - [x] **A1 ModelAdapter 契约**（p1.0，2026-11-11）：`core/model_adapter.py`（Protocol + OpenAICompatAdapter + FakeModelAdapter + set/get/reset）；llm.chat/chat_stream 变门面转发。判据达成：Fake 注入跑通 run_react 全链路，调用点零改动。pytest 497。
 - [x] **A2 ToolSpec 契约**（p1.1，2026-11-12）：`ToolSpec` 落在真实注册表 `orchestration/tools.py`（非 skills 层，运行时零引用）；13 工具集中批注表（agents.py `_TOOL_SPECS`）；非幂等副作用重试 WARNING。判据达成：unannotated()==[] + 白名单裁剪不丢 spec。pytest 507。
-- [ ] **A3 Event 契约 v1**（p1.2）：`core/events.py` 补 trace_id/tenant_id/payload；run_trace 同步读写；前端兼容。判据：vitest 流式回归全绿。
+- [x] **A3 Event 契约 v1**（p1.2，2026-11-12）：`core/events.py` Event 补 trace_id/tenant_id/payload（8/8 字段）；emitter 构造注入；run_trace 透明兼容。判据达成：pytest 513 + **vitest 123 全绿**，老 NDJSON 行解析向后兼容。
 - [ ] **A4 Policy / StateSnapshot / EvalCase**（p1.3）：quota_policy/kb_acl/runtime_settings 判定收口为接口；checkpoints/runs 抽 StateSnapshot 字段；validator/feedback 数据结构化 EvalCase。判据：接口文档+单测（只立契约不迁移实现）。
 
 ## Phase B 模型收口与预算（p2.x）— M2：绕过网关的调用在 CI 被拦截
