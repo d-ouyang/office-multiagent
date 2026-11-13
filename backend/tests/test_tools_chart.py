@@ -65,3 +65,54 @@ def test_scatter_hist_and_asset_row(tmp_path):
     assert len(rows) == 2
     assert rows[0][1] == 7
     assert str(rows[0][2]).startswith("_out/g-")
+
+
+def test_time_axis_labels_sorted_chronologically_and_not_truncated(tmp_path):
+    """p6.48 hotfix：时间语义标签一律按时间先后排序且不按 top_n 截断。
+
+    线上实测：柱状图"9月排第一"（值降序所致）、折线图"标题 2025-01~2026-09
+    却断在 2026-01"（top_n=13 把 21 个月砍剩 13 个）。
+    """
+    from app.orchestration.tools_chart import _ordered_labels, _time_key
+
+    # 柱状图：YYYY-MM 全时间轴按时间排，不按值排
+    labels = ["2025-09", "2025-01", "2026-01", "2025-12"]
+    totals = {"2025-09": 9, "2025-01": 1, "2026-01": 8, "2025-12": 5}
+    assert _ordered_labels(labels, totals, "bar", 3) == ["2025-01", "2025-09", "2025-12", "2026-01"]
+
+    # 折线图：21 个月不受 top_n=13 截断
+    months = [f"2025-{m:02d}" for m in range(1, 13)] + [f"2026-{m:02d}" for m in range(1, 10)]
+    full = _ordered_labels(months, {m: 1 for m in months}, "line", 13)
+    assert full == months  # 2025-01 → 2026-09 完整时间序
+
+    # 季度轴按时间排（2025Q1 < 2025Q3 < 2026Q1）
+    assert _ordered_labels(
+        ["2026Q1", "2025Q3", "2025Q1"], {l: 1 for l in ["2026Q1", "2025Q3", "2025Q1"]}, "bar", 12
+    ) == ["2025Q1", "2025Q3", "2026Q1"]
+
+    # 月份序号 1~12（query_orders 副本 month 列）按 1→12 排，不按值排
+    assert _ordered_labels(["12", "1", "2"], {"12": 9, "1": 5, "2": 7}, "bar", 12) == ["1", "2", "12"]
+
+    # 非时间标签保持原行为：柱状按值降序取 top_n
+    assert _ordered_labels(["门店A", "门店B", "门店C"], {"门店A": 1, "门店B": 9, "门店C": 5}, "bar", 2) == ["门店B", "门店C"]
+
+    # 单标签不成时间轴（无法判断），维持原行为
+    assert _time_key("门店A") is None
+    assert _time_key("2025-01") == (2025, 1, 0)
+    assert _time_key("9月") == (0, 9, 0)
+
+
+def test_render_chart_full_year_line_not_truncated(tmp_path):
+    """p6.48 hotfix：跨年逐月数据画折线，visual labels 必须覆盖全部月份。"""
+    rows = "\n".join(
+        [f"年月,金额\n2025-{m:02d},{m}" for m in range(1, 13)]
+        + [f"2026-{m:02d},{m + 12}" for m in range(1, 10)]
+    )
+    (tmp_path / "月销.csv").write_text(rows + "\n", encoding="utf-8")
+    clean_id = make_clean_table_tool(base_dir=str(tmp_path))("月销.csv")["clean_id"]
+    tool = make_render_chart_tool(base_dir=str(tmp_path))
+    result = tool(clean_id, "line", x="年月", y="金额", title="2025年1月至2026年9月的逐月销售走势")
+    visual = result["visual"]
+    assert len(visual["labels"]) == 21
+    assert visual["labels"][0] == "2025-01"
+    assert visual["labels"][-1] == "2026-09"

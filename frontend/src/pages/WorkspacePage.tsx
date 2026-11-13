@@ -258,10 +258,44 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
           .then((list) => setSessions(list.map((s) => ({ id: s.session_id, title: s.title, pinned: !!s.pinned, updatedAt: new Date(s.updated_at).getTime() || Date.now(), hasPendingInput: !!s.has_pending_input }))))
           .catch(() => {});
         refreshQuota();
+        // p6.48 hotfix：密封的 live 消息没有服务端 id，点赞/点踩按钮出不来
+        // （ChatMessage 的 canFeedback 要求 msg.id）。后端 append_message 与 done
+        // 事件存在竞态（消息可能稍后才落库），所以做两次补偿拉取（300ms / 2s），
+        // 把最新 assistant 消息的 id / model / tokens 回填到刚密封的这条消息上。
+        if (currentId && !doneStatus.startsWith('paused') && doneStatus !== 'failed') {
+          const backfill = (attempt: number): void => {
+            window.setTimeout(() => {
+              void getMessages(currentId)
+                .then((rows) => {
+                  const lastAssistant = [...rows].reverse().find((m) => m.role === 'assistant');
+                  if (!lastAssistant) {
+                    if (attempt < 2) backfill(attempt + 1);
+                    return;
+                  }
+                  setMessages((prev) => {
+                    const index = prev.map((m) => m.role).lastIndexOf('assistant');
+                    if (index < 0 || prev[index].id) return prev;
+                    const target = prev[index];
+                    const next = [...prev];
+                    next[index] = {
+                      ...target,
+                      id: lastAssistant.id,
+                      model: target.model ?? lastAssistant.model ?? undefined,
+                      tokens: target.tokens ?? lastAssistant.tokens ?? undefined,
+                      feedback: lastAssistant.feedback ?? null,
+                    };
+                    return next;
+                  });
+                })
+                .catch(() => {});
+            }, attempt === 0 ? 300 : 2000);
+          };
+          backfill(0);
+        }
       }
       reset();
     }
-  }, [status, events, reset, refreshQuota]);
+  }, [status, events, reset, refreshQuota, currentId]);
 
   // v2.0.0-p2.2：消息反馈闭环（提交/覆盖/取消；错误原样抛给弹窗显示）。
   // p2.8：成功后把服务端回执写回 messages（msg.feedback）——子组件的乐观态
