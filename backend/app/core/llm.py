@@ -124,17 +124,30 @@ def load_api_key(api_key_env: str) -> str:
 
 
 def resolve_model(model_id: str) -> tuple[str, str, str]:
-    """model_id → (base_url, api_key, api_model)。未就绪抛 LlmNotConfigured。"""
+    """model_id → (base_url, api_key, api_model)。未就绪抛 LlmNotConfigured。
+
+    v2.2.0-p1.4（B1）：`settings.llm_gateway_url` 非空时收口到 LLM 网关——
+    base_url 重写为网关地址、key 重写为 INTERNAL_SHARED_SECRET（服务间密钥，
+    网关侧再替换真实 provider key）。models.yaml 保持直连定义不变：
+    切流量/回退都是改一个环境变量 + restart backend（秒级，不碰代码）。
+    """
     registry = load_registry()
     entry = next((m for m in registry.get("models", []) if m.id == model_id), None)
     if entry is None:
         raise LlmNotConfigured(f"模型 {model_id} 不在注册表中（config/models.yaml）")
+    api_model = str(entry.api_model or model_id)
+    gateway_url = str(settings.llm_gateway_url or "").strip()
+    if gateway_url:
+        secret = str(settings.internal_shared_secret or "")
+        if not secret:
+            # fail-closed：网关开着却没有服务间密钥，等于裸奔——响亮失败而不是静默直连
+            raise LlmNotConfigured("LLM 网关已启用（llm_gateway_url）但 INTERNAL_SHARED_SECRET 未配置")
+        return gateway_url.rstrip("/"), secret, api_model
     provider = registry.get("providers", {}).get(entry.provider)
     base_url = str(provider.base_url) if provider else ""
     api_key = load_api_key(
         str(getattr(entry, "api_key_env", "") or getattr(provider, "api_key_env", "") or "")
     )
-    api_model = str(entry.api_model or model_id)
     if not base_url or not api_key:
         raise LlmNotConfigured(
             f"模型 {model_id} 未就绪：base_url={'有' if base_url else '缺'}，key 缺（见注册表 api_key_env）"

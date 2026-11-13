@@ -27,6 +27,10 @@ jobs:
             --exclude "backend/data" \
             ./ /opt/office/
 
+      # v2.2.0-p1.4（B1）：LLM 收口检查——绕过网关的调用存在则阻止部署
+      - name: LLM 收口检查（禁止绕过网关）
+        run: python3 backend/scripts/check_llm_gateway_isolation.py
+
       - name: 构建镜像
         working-directory: /opt/office
         run: docker compose -f docker-compose.prod.yml build

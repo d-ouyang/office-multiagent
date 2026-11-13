@@ -19,6 +19,17 @@
 
 ---
 
+## v2.2.0-p1.4 — LLM 网关收口（Phase B1 · gateway 内置代理）（2026-11-13，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 526 / gateway jest 52 / 冒烟 5/5。详见 `docs/iterations/v2.2.0-p1.4-llm-gateway.md`。
+
+- **方案修正（已与用户对齐）**：服务器 swap 打满，放弃 LiteLLM 容器 → gateway 内置 LLM 代理路由（`POST /llm/v1/chat/completions`，按 model 路由 14 模型 × 2 provider，流式透传，服务间密钥校验）。
+- backend 侧 `settings.llm_gateway_url` 开关：非空时全部模型调用重写 base_url=网关、key=服务间密钥；**models.yaml 保持直连定义**，切流量/回退=改 env + restart（秒级）。fail-closed：网关开着但密钥缺 → 响亮失败。
+- B1 判据落地：CI 收口检查（`check_llm_gateway_isolation.py`，裸 SDK/直连域名 → 阻止部署，已挂 deploy workflow）。
+- ⚠️ **尚未部署生产**：部署清单见迭代文档（分两步：.env 加开关 → 打 tag 部署 → 服务器冒烟；回退=删 env + up -d）。
+
+---
+
 ## v2.2.0-p1.3 — Policy/StateSnapshot/EvalCase 三契约（Phase A4 收官）（2026-11-12）
 
 分支 `feature/2.2.0-harness`，pytest 523 / 3 skipped。详见 `docs/iterations/v2.2.0-p1.3-contracts.md`。

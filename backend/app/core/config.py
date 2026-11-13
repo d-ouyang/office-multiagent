@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     llm_max_retries: int = 2
     llm_retry_backoff: float = 0.8        # 网络/5xx 退避基数：sleep = 基数 × (attempt+1)
     llm_retry_backoff_429: float = 2.0    # 限流退避基数：429 需要等更久，与网络抖动不同量级
+    # v2.2.0-p1.4（B1）：LLM 网关收口开关。非空时【全部】模型调用的 base_url 重写为
+    # 该地址、api_key 重写为 INTERNAL_SHARED_SECRET（服务间密钥）——models.yaml 保持
+    # 直连定义不变（测试稳定），切流量/回退都是改这一个环境变量 + restart backend。
+    # 容器网络地址（如 http://gateway:3000/llm/v1）；留空 = 直连（B1 之前的现状）。
+    llm_gateway_url: str = ""
     # v2.0.0-p5.3：工具级重试退避基数。此前 ToolRegistry.call 缺省 backoff=0.0，
     # 重试是「立即再打一次」，对 DB/网络瞬时抖动几乎无效。只改间隔、不改重试次数，
     # 因此不引入新的副作用风险（非幂等工具的重试次数与现状完全一致）。

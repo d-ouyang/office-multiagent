@@ -12,6 +12,10 @@ upstreams:
       - { path: 'api/v1/health', public: true }
       - { path: 'api/v1/models', public: true }
       - { path: 'api/v1/demo/stream', public: true }
+      # v2.2.0-p1.4（B1）：LLM 代理免 JWT（调用方是 backend 服务，带服务间密钥；
+      # LlmProxyController 自校验 Authorization=Bearer ${INTERNAL_SHARED_SECRET}）。
+      # 精确路由注册在通配代理之前，这里 public 只放行全局 JWT 守卫。
+      - { path: 'llm', public: true }
       - { path: 'api/v1', public: false }
 
   - name: rag

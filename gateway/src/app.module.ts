@@ -5,6 +5,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { HealthModule } from './health/health.module';
 import { InternalModule } from './internal/internal.module';
+import { LlmProxyModule } from './llmproxy/llm-proxy.module';
 import { ProxyModule } from './proxy/proxy.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RequestIdMiddleware } from './common/middlewares/request-id.middleware';
@@ -21,6 +22,9 @@ import { gatewayConfig } from './config/configuration';
     AuthModule,
     HealthModule,
     InternalModule,
+    // LLM 代理在通配代理之前：精确路由 /llm/v1/* 必须先注册（Nest 按 imports
+    // 顺序注册路由，见下方 ProxyModule 的顺序注释）。鉴权由控制器自校验服务间密钥。
+    LlmProxyModule,
     // 代理模块放最后：Nest 按 imports 顺序注册路由，通配路由最后注册才不会抢在前面。
     ProxyModule,
   ],
