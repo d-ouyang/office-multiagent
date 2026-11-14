@@ -93,3 +93,59 @@ def test_react_same_run_replay_executes_once():
     # 第二轮被 react 的重复提示层接管（把上次观察重新喂给模型）——内含缓存观察。
     # 三层防线：react 重复提示（prior>=1）→ react 硬拦（prior>=2）→ 幂等缓存（执行前）。
     assert "已导出 上海" in res.steps[1].observation
+
+
+def test_dict_output_cached_and_restored():
+    """dict 结果（query_orders 类）：序列化存储、命中还原为 dict（下游类型一致）。"""
+    eng = _eng()
+    calls: list[int] = []
+
+    def query_tool(q: str) -> dict:
+        calls.append(1)
+        return {"rows": [["9 月", 32]], "clean_id": "c-1"}
+
+    reg = ToolRegistry()
+    reg.register("query_orders", query_tool)
+
+    def guard(tool_name: str, args: dict):
+        from app.orchestration.tools import ToolResult
+
+        cached = lookup(eng, "run-d", tool_name, args)
+        if cached is not None:
+            import json as _json
+
+            return ToolResult(ok=True, output=_json.loads(cached))
+        return None
+
+    def recorder(tool_name: str, args: dict, observation: str) -> None:
+        record(eng, "run-d", tool_name, args, observation)
+
+    guard.record = recorder
+
+    # 两次 run_react 共享同一 Fake 实例：第一次 2 轮 + 第二次 2 轮 = 4 项
+    script = [
+        '{"thought":"查","action":"query_orders","action_input":{"q":"总量"}}',
+        '{"thought":"完成","final":"总量如下"}',
+        '{"thought":"查","action":"query_orders","action_input":{"q":"总量"}}',
+        '{"thought":"完成","final":"总量如下（缓存）"}',
+    ]
+    from app.core import model_adapter
+    from app.core.events import RunEventEmitter
+
+    model_adapter.set_adapter(model_adapter.FakeModelAdapter(script))
+    try:
+        # 第一次：真执行 + 登记（dict 被序列化存储）
+        run_react("统计订单", __import__("app.orchestration.brain", fromlist=["LlmBrain"]).LlmBrain(
+            model_id="deepseek-chat", tools=reg
+        ), reg, emitter=RunEventEmitter("run-d", "t1"), invocation_guard=guard)
+        calls.clear()
+        # 第二次（模拟重投）：命中缓存 → fn 不执行、output 还原为 dict
+        res = run_react("统计订单", __import__("app.orchestration.brain", fromlist=["LlmBrain"]).LlmBrain(
+            model_id="deepseek-chat", tools=reg
+        ), reg, emitter=RunEventEmitter("run-d", "t2"), invocation_guard=guard)
+    finally:
+        model_adapter.reset_adapter()
+
+    assert len(calls) == 0, "重投后副作用应为 0（缓存命中，fn 未执行）"
+    # observation 入 history 时被摘要化为字符串（既有行为）——缓存内容应可追溯
+    assert any("c-1" in str(s.observation) for s in res.steps), "重投轮的观察应来自缓存内容"

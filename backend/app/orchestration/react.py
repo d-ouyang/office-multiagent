@@ -354,12 +354,18 @@ def run_react(
             guarded = invocation_guard(name, unit.action_input) if invocation_guard else None
             res = guarded if guarded is not None else tools.call(name, **unit.action_input)
             obs = res.output if res.ok else (res.error or "工具调用失败")
-            # C1：真执行（非缓存命中）且结果为普通文本时登记进幂等表（ask_user 等
-            # dict 哨兵不缓存——它们不是可重放的副作用结果）。登记失败由 repo 静默降级。
-            if guarded is None and invocation_guard is not None and res.ok and not isinstance(obs, dict):
+            # C1：真执行（非缓存命中）且非 ask_user 哨兵时登记进幂等表。dict 结果
+            # （query_orders 等）序列化为 JSON 存储、命中后还原为 dict——与原执行
+            # 的下游行为一致。登记失败由 repo 静默降级。
+            if guarded is None and invocation_guard is not None and res.ok and not (
+                isinstance(obs, dict) and obs.get("__ask_user__")
+            ):
                 _record = getattr(invocation_guard, "record", None)
                 if _record is not None:
-                    _record(name, unit.action_input, str(obs))
+                    _record(
+                        name, unit.action_input,
+                        json.dumps(obs, ensure_ascii=False) if isinstance(obs, dict) else str(obs),
+                    )
             # 2.1.0 P1-1（HITL）：ask_user sentinel——模型请求用户补充输入。
             # single（allow_ask_user=True）→ 发 ask_user 事件并终止本轮，任务转
             # paused_input（graph 层 interrupt 落 checkpoint）；multi 层内并行无法

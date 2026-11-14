@@ -584,11 +584,18 @@ def _invocation_guard(run_id: str):
     from ..core.invocation_repo import lookup, record
 
     def guard(tool_name: str, action_input: dict) -> "ToolResult | None":
+        import json
+
         from .tools import ToolResult
 
         cached = lookup(get_engine(), run_id, tool_name, action_input)
         if cached is not None:
-            return ToolResult(ok=True, output=cached)
+            # dict 结果以 JSON 存储、命中时还原——下游对 output 的类型预期与原执行一致
+            try:
+                restored = json.loads(cached)
+            except (ValueError, TypeError):
+                restored = cached
+            return ToolResult(ok=True, output=restored)
         return None
 
     def recorder(tool_name: str, action_input: dict, observation: str) -> None:
