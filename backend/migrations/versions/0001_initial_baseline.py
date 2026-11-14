@@ -17,9 +17,14 @@ depends_on = None
 
 
 def upgrade() -> None:
+    """v2.2.0-p1.9（C3）：原为单个多语句 op.execute——MySQL 单次 execute 不允许
+    多语句，纯 alembic 全新装必炸（生产绕过：init.sql 灌库 + stamp 0001）。
+    拆为逐语句后 `alembic upgrade head` 可从空库直接建全库（建库流程闭环）。
+    语句与 db/init.sql 保持一致（test_migrations 护栏防漂移）；已 stamp 的生产库
+    不受影响（0001 不会重跑）。"""
     op.execute(
         """
-        CREATE TABLE IF NOT EXISTS `user` (
+CREATE TABLE IF NOT EXISTS `user` (
           `id`              BIGINT       NOT NULL AUTO_INCREMENT,
           `username`        VARCHAR(64)  NOT NULL,
           `password_hash`   VARCHAR(255) NOT NULL,
@@ -29,21 +34,30 @@ def upgrade() -> None:
           PRIMARY KEY (`id`),
           UNIQUE KEY `uk_username` (`username`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        CREATE TABLE IF NOT EXISTS `model_pool` (
+        """
+    )
+    op.execute(
+        """
+CREATE TABLE IF NOT EXISTS `model_pool` (
           `id`   BIGINT      NOT NULL AUTO_INCREMENT,
           `name` VARCHAR(64) NOT NULL,
           PRIMARY KEY (`id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        CREATE TABLE IF NOT EXISTS `pool_model` (
+        """
+    )
+    op.execute(
+        """
+CREATE TABLE IF NOT EXISTS `pool_model` (
           `pool_id`    BIGINT      NOT NULL,
           `model_name` VARCHAR(128) NOT NULL,
           `enabled`    TINYINT     NOT NULL DEFAULT 1,
           PRIMARY KEY (`pool_id`, `model_name`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        CREATE TABLE IF NOT EXISTS `session` (
+        """
+    )
+    op.execute(
+        """
+CREATE TABLE IF NOT EXISTS `session` (
           `id`         VARCHAR(64)  NOT NULL,
           `user_id`    BIGINT       NULL,
           `model`      VARCHAR(128) NULL,
@@ -51,8 +65,11 @@ def upgrade() -> None:
           PRIMARY KEY (`id`),
           KEY `idx_session_user` (`user_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        CREATE TABLE IF NOT EXISTS `task` (
+        """
+    )
+    op.execute(
+        """
+CREATE TABLE IF NOT EXISTS `task` (
           `id`          VARCHAR(64) NOT NULL,
           `session_id`  VARCHAR(64) NOT NULL,
           `complexity`  TINYINT     NULL,
@@ -61,8 +78,11 @@ def upgrade() -> None:
           PRIMARY KEY (`id`),
           KEY `idx_task_session` (`session_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        CREATE TABLE IF NOT EXISTS `subtask` (
+        """
+    )
+    op.execute(
+        """
+CREATE TABLE IF NOT EXISTS `subtask` (
           `id`          VARCHAR(64) NOT NULL,
           `task_id`     VARCHAR(64) NOT NULL,
           `agent_type`  VARCHAR(64) NULL,
@@ -72,8 +92,11 @@ def upgrade() -> None:
           PRIMARY KEY (`id`),
           KEY `idx_subtask_task` (`task_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        CREATE TABLE IF NOT EXISTS `agent_run` (
+        """
+    )
+    op.execute(
+        """
+CREATE TABLE IF NOT EXISTS `agent_run` (
           `id`           VARCHAR(64) NOT NULL,
           `subtask_id`   VARCHAR(64) NULL,
           `iterations`   INT         NULL,
@@ -82,8 +105,11 @@ def upgrade() -> None:
           PRIMARY KEY (`id`),
           KEY `idx_agent_run_subtask` (`subtask_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        CREATE TABLE IF NOT EXISTS `tool_call_log` (
+        """
+    )
+    op.execute(
+        """
+CREATE TABLE IF NOT EXISTS `tool_call_log` (
           `id`           VARCHAR(64) NOT NULL,
           `agent_run_id` VARCHAR(64) NULL,
           `tool`         VARCHAR(128) NULL,
@@ -93,8 +119,11 @@ def upgrade() -> None:
           PRIMARY KEY (`id`),
           KEY `idx_tool_call_run` (`agent_run_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        CREATE TABLE IF NOT EXISTS `asset` (
+        """
+    )
+    op.execute(
+        """
+CREATE TABLE IF NOT EXISTS `asset` (
           `id`          VARCHAR(64) NOT NULL,
           `task_id`     VARCHAR(64) NULL,
           `type`        VARCHAR(32) NULL,
@@ -102,8 +131,11 @@ def upgrade() -> None:
           `created_at`  DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
           PRIMARY KEY (`id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        CREATE TABLE IF NOT EXISTS `task_source` (
+        """
+    )
+    op.execute(
+        """
+CREATE TABLE IF NOT EXISTS `task_source` (
           `id`         VARCHAR(64) NOT NULL,
           `task_id`    VARCHAR(64) NULL,
           `type`       VARCHAR(32) NULL,
@@ -112,14 +144,20 @@ def upgrade() -> None:
           `url`        TEXT        NULL,
           PRIMARY KEY (`id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        CREATE TABLE IF NOT EXISTS `wallet` (
+        """
+    )
+    op.execute(
+        """
+CREATE TABLE IF NOT EXISTS `wallet` (
           `user_id`  BIGINT NOT NULL,
           `balance`  BIGINT NOT NULL DEFAULT 0,
           PRIMARY KEY (`user_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        CREATE TABLE IF NOT EXISTS `token_ledger` (
+        """
+    )
+    op.execute(
+        """
+CREATE TABLE IF NOT EXISTS `token_ledger` (
           `id`            BIGINT      NOT NULL AUTO_INCREMENT,
           `user_id`       BIGINT      NOT NULL,
           `task_id`       VARCHAR(64) NULL,
@@ -134,16 +172,25 @@ def upgrade() -> None:
           PRIMARY KEY (`id`),
           KEY `idx_ledger_user` (`user_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-        INSERT IGNORE INTO `model_pool` (`id`, `name`) VALUES
+        """
+    )
+    op.execute(
+        """
+INSERT IGNORE INTO `model_pool` (`id`, `name`) VALUES
           (1, 'default'), (2, 'staff'), (3, 'admin');
-
-        INSERT IGNORE INTO `pool_model` (`pool_id`, `model_name`) VALUES
+        """
+    )
+    op.execute(
+        """
+INSERT IGNORE INTO `pool_model` (`pool_id`, `model_name`) VALUES
           (1, 'deepseek-chat'), (1, 'qwen-plus'),
           (2, 'deepseek-chat'), (2, 'qwen-plus'), (2, 'glm-4'), (2, 'deepseek-reasoner'),
           (3, 'deepseek-chat'), (3, 'qwen-plus'), (3, 'glm-4'), (3, 'kimi'), (3, 'deepseek-reasoner');
-
-        INSERT IGNORE INTO `user` (`id`, `username`, `password_hash`, `kb_role`, `model_pool_id`) VALUES
+        """
+    )
+    op.execute(
+        """
+INSERT IGNORE INTO `user` (`id`, `username`, `password_hash`, `kb_role`, `model_pool_id`) VALUES
           (1, 'dev', '__CHANGE_ME__', 'superadmin', 3);
         """
     )

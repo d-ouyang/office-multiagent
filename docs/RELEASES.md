@@ -19,6 +19,15 @@
 
 ---
 
+## v2.2.0-p1.9 — 0001 迁移修复（Phase C3 收官）（2026-11-14，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 548。详见 `docs/iterations/v2.2.0-p1.9-migration-fix.md`。
+
+- 0001 多语句 op.execute 拆为 15 个逐语句（静态护栏 test_0001_single_statement_per_execute 防回潮）；**端到端验证**：临时空库 alembic upgrade head 全链 14 迁移 / 20 表 / version=0014——纯 alembic 建库闭环。
+- step 级进度落库核实已被 C1 实质覆盖，跳过（记录于迭代文档）。⚠️ 未部署（与 p1.6/p1.7/p1.8 一起）。
+
+---
+
 ## v2.2.0-p1.8 — lease / run 硬超时 / 死信（Phase C2）（2026-11-14，未部署）
 
 分支 `feature/2.2.0-harness`，pytest 547。详见 `docs/iterations/v2.2.0-p1.8-lease-timeout-deadletter.md`。

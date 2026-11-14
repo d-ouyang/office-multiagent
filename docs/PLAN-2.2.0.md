@@ -23,7 +23,7 @@
 
 - [x] **C1 幂等键**（p1.7，2026-11-14）：tool_invocation 表 UNIQUE(run_id,tool_name,args_hash)（迁移 0014+init.sql 同步）；react 加 invocation_guard（lookup 命中复用观察 / record 登记），三层防线（重复提示→硬拦→幂等缓存）。判据达成：同 run 重投副作用恰好 1 次。pytest 543。⚠️ 未部署（含迁移 0014，代码对表缺失已降级）。
 - [ ] C2 run_id lease（MySQL GET_LOCK）+ 分级超时 + 重试计入预算 + 死信。
-- [ ] C3 durable 加固（sync checkpointer + 副作用幂等包装 + step 级进度落库收窄重跑范围）。融合：0001 迁移多语句修复。
+- [x] **C3 迁移修复（Phase C 收官）**（p1.9，2026-11-14）：0001 多语句拆为 15 个逐语句 execute（护栏测试防回潮）+ **端到端验证**（本地临时空库 alembic upgrade head → 14 迁移全链 / 20 表 / version=0014）——纯 alembic 建库从必炸变可用，建库流程闭环。step 级进度落库核实已被 C1 实质覆盖（副作用零重复 + prior_steps 回放），LLM 决策重烧为理论损失，跳过（记录于迭代文档）。pytest 548。⚠️ 未部署。
 
 ## Phase D 事件流与上下文（p4.x）— M4：run_id 全轨迹回放
 
