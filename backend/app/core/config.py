@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     task_token_hard_limit: int = 50000
     # v2.2.0-p1.6（B3）：循环护栏的 ReAct 步数上限（runtime_settings 可覆盖，见 catalog）。
     agent_max_iterations: int = 10
+    # v2.2.0-p1.8（C2）：run 级硬超时（秒）——worker 启动 watchdog 定时器，到点置位
+    # 取消事件，编排走协作取消收尾（paused_user + settle），防任务挂死占住线程。
+    run_hard_timeout_seconds: int = 900
     # DAG 层内最大并行子任务数（p4.3c；防 LLM 渠道限流，1=串行回落基线）
     dag_max_concurrency: int = 3
 

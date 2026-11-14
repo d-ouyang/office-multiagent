@@ -19,6 +19,15 @@
 
 ---
 
+## v2.2.0-p1.8 — lease / run 硬超时 / 死信（Phase C2）（2026-11-14，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 547。详见 `docs/iterations/v2.2.0-p1.8-lease-timeout-deadletter.md`。
+
+- run_id lease：同 run 并发第二实例 409/error 事件（单机内存表即真锁，GET_LOCK 注释为多副本 TODO）；run 级 watchdog 900s 到点走协作取消收尾；死信 = error 事件 + 审计 run.dead_letter（不再静默断流）。
+- 重试计入预算核实为已正确（provider usage 天然含）。⚠️ 未部署。
+
+---
+
 ## v2.2.0-p1.7 — 幂等键贯穿（Phase C1）（2026-11-14，未部署）
 
 分支 `feature/2.2.0-harness`，pytest 543。详见 `docs/iterations/v2.2.0-p1.7-invocation-idempotency.md`。

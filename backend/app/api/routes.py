@@ -1170,7 +1170,13 @@ def _stream_answer(
 
     def worker():
         try:
-            runs.register(run_id, owner_id=int(user["id"]))
+            if runs.register(run_id, owner_id=int(user["id"])) is None:
+                _err = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office").error(
+                    "任务正在执行中，请勿重复发起（lease 冲突）", code="LEASE_CONFLICT"
+                )
+                q.put(_err)
+                q.put(None)
+                return
             emitter = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office")  # B2 归因注入
             result, events = resume_with_answer(
                 run_id,
@@ -1277,7 +1283,13 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
 
     def worker():
         try:
-            runs.register(run_id, owner_id=owner_id)
+            if runs.register(run_id, owner_id=owner_id) is None:
+                _err = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office").error(
+                    "任务正在执行中，请勿重复续跑（lease 冲突）", code="LEASE_CONFLICT"
+                )
+                q.put(_err)
+                q.put(None)
+                return
             emitter = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office")  # B2 归因注入
             backend = (settings.checkpointer_backend or "memory").strip().lower()
             checkpointer = _take_live_checkpointer(run_id)
@@ -1474,7 +1486,13 @@ def _stream_quota_resume(task: dict[str, Any], *, operator_id: int | None = None
 
     def worker():
         try:
-            runs.register(run_id, owner_id=owner_id)
+            if runs.register(run_id, owner_id=owner_id) is None:
+                _err = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office").error(
+                    "任务正在执行中，请勿重复续跑（lease 冲突）", code="LEASE_CONFLICT"
+                )
+                q.put(_err)
+                q.put(None)
+                return
             emitter = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office")  # B2 归因注入
             backend = (settings.checkpointer_backend or "memory").strip().lower()
             checkpointer = _take_live_checkpointer(run_id)
@@ -1742,7 +1760,14 @@ def _stream_task(
 
     q: _queue.Queue = _queue.Queue()
     run_id = new_run_id()
+    # v2.2.0-p1.8（C2）：lease 预检——同 run 已在跑（双击/重试赛跑）→ 409 拒绝，
+    # 双跑会双份副作用 + 双份扣费（幂等表挡工具，挡不住 LLM 调用与预算）。
     cancel_ev = runs.register(run_id, user["id"])
+    if cancel_ev is None:
+        raise HTTPException(
+            409,
+            detail={"code": "LEASE_CONFLICT", "message": "该任务正在执行中，请等待完成或暂停后再操作"},
+        )
 
     def worker() -> None:
         try:
@@ -1875,11 +1900,36 @@ def _stream_task(
                 )
             except Exception:  # noqa: BLE001 - 落库失败：ERROR 级记录，流照常结束
                 logger.exception("会话落库失败 session_id=%s（任务结果已推给用户，但历史将缺失）", session_id)
-        except Exception:  # noqa: BLE001 - worker 兜底：流以 None 收尾，异常进日志
+        except Exception as e:  # noqa: BLE001 - worker 兜底：死信登记 + 流以 None 收尾
             logger.exception("run_task worker 异常")
+            # v2.2.0-p1.8（C2）：死信——异常未被暂停/完成语义接住时，给用户一条
+            # error 事件（不再静默断流），并落审计（管理端可查；失败原因截断）。
+            try:
+                q.put(
+                    RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office").error(
+                        "任务执行出现异常，已中止（未产生完整结论）。可重试。", code="RUN_DEAD_LETTER"
+                    )
+                )
+                from ..core.audit_repo import record as _audit
+
+                _audit(
+                    actor_user_id=user["id"], actor_username=str(user["username"]),
+                    actor_role=str(user.get("role") or ""), action="run.dead_letter",
+                    target_type="task", target_id=run_id,
+                    detail={"error": str(e)[:500]},
+                )
+            except Exception:  # noqa: BLE001 - 死信登记失败不影响流收尾
+                logger.exception("死信登记失败 run_id=%s", run_id)
         finally:
+            _watchdog.cancel()
             runs.finish(run_id)
             q.put(None)  # 哨兵：流结束
+
+    # v2.2.0-p1.8（C2）：run 级硬超时 watchdog——到点置位取消事件，编排走协作取消
+    # 收尾（paused_user + settle），防任务挂死占住 worker 线程；正常完成则提前取消定时器。
+    _watchdog = threading.Timer(settings.run_hard_timeout_seconds, cancel_ev.set)
+    _watchdog.daemon = True
+    _watchdog.start()
 
     threading.Thread(target=worker, daemon=True, name="run_task").start()
 
