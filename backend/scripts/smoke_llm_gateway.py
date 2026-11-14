@@ -111,9 +111,14 @@ def main() -> int:
         print("缺 DEEPSEEK_API_KEY 或 INTERNAL_SHARED_SECRET 环境变量")
         return 2
 
+    # 网关地址可覆盖：容器内跑时用容器网络地址。
+    # ⚠️ 生产必须用【容器名】office-gateway——backend 同时挂在 office-net/rag-net，
+    # 服务名 gateway 会在 office-gateway 与 rag-gateway 之间 DNS 轮询（约一半 404），
+    # 与「服务名必须带 office- 前缀」铁律同源（p6.43）。
+    gw_base = os.environ.get("LLM_GATEWAY_BASE", "http://127.0.0.1:3001/llm/v1")
     suites = [
         ("直连", "https://api.deepseek.com/v1", ds_key),
-        ("网关", "http://127.0.0.1:3001/llm/v1", internal),
+        ("网关", gw_base, internal),
     ]
     checks: list[tuple[str, bool, str]] = []
 
