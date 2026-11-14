@@ -148,6 +148,21 @@ class TokenPool:
             )
             return ReserveResult(ok=True, balance=int(row[0]) if row else None)
 
+    def daily_billed(self) -> int:
+        """当日（UTC 日，对齐 ledger created_at 时区口径）全部任务结算量之和。
+
+        v2.2.0-p1.6（B3）：tenant 级日预算的数据源——kind='task' 的 settle 列
+        即 B2 的 billed 口径（含 cache 折扣），与钱包实际扣费一致。
+        """
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT COALESCE(SUM(settle), 0) FROM token_ledger "
+                    "WHERE kind = 'task' AND DATE(created_at) = CURRENT_DATE"
+                )
+            ).first()
+            return int(row[0] or 0)
+
     def settle(
         self,
         user_id: int,

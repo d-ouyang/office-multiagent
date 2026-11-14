@@ -248,6 +248,7 @@ def build_graph(
                 ),
                 brain,
                 spec_tools,
+                max_iterations=_max_iterations(),
                 emitter=emitter,
                 emit=emit,
                 synthesize=_synthesize,
@@ -379,6 +380,7 @@ def build_graph(
             state["text"],
             brain,
             spec_tools,
+            max_iterations=_max_iterations(),
             emitter=emitter,
             emit=emit,
             should_cancel=should_cancel,
@@ -555,6 +557,18 @@ def build_graph(
         g.set_entry_point("planner")
 
     return g.compile(checkpointer=checkpointer)
+
+
+
+def _max_iterations() -> int:
+    """循环护栏开关化（v2.2.0-p1.6 / B3）：步数上限从 runtime_settings 读取——
+    管理端改完下一个任务生效，不再是代码常量/Prompt 叮嘱（防跑飞的硬约束）。"""
+    from ..core import runtime_settings
+
+    try:
+        return max(3, int(runtime_settings.effective("agent_max_iterations") or 10))
+    except Exception:  # noqa: BLE001 - 读取失败回落代码缺省（护栏宁紧勿松）
+        return 10
 
 
 def run_task(

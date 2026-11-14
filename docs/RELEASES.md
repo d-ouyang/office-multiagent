@@ -19,6 +19,16 @@
 
 ---
 
+## v2.2.0-p1.6 — 三级硬预算 + 循环护栏开关化（Phase B3 收官）（2026-11-14，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 539。详见 `docs/iterations/v2.2.0-p1.6-budget-guard.md`。
+
+- per-user：POST /tasks 入口 429 短路（余额 < 预估不启动编排）；per-tenant：全站当日 token 预算（runtime_settings `tenant_daily_token_budget`，0=关）达限 429；软告警 webhook（80% 当日去重，`BUDGET_ALERT_WEBHOOK_URL` 配置）。
+- 循环护栏：`agent_max_iterations` 开关化（管理端可改，run_react 从 runtime_settings 读取，不再代码常量）。
+- 钱包 settle 下限保护（原 backlog）已在 p6.11 达成。⚠️ 未部署：含入口 429 行为变化。
+
+---
+
 ## v2.2.0-p1.5 — 归因贯穿 + cache 折扣计价（Phase B2）（2026-11-14，未部署）
 
 分支 `feature/2.2.0-harness`，pytest 532。详见 `docs/iterations/v2.2.0-p1.5-attribution-pricing.md`。

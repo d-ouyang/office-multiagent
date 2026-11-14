@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     # DeepSeek hit/miss 价比（¥0.5/M vs ¥2/M 量级）；1.0 = 全价（B2 之前行为）。
     # 生效点：TokenPool.settle 的 billed 计算，钱包按折扣价扣费、ledger 记 billed。
     llm_cache_price_ratio: float = 0.25
+    # v2.2.0-p1.6（B3）：软告警 webhook（企业微信/钉钉/Slack 兼容 JSON POST）。
+    # 预算触达告警比例时 fire-and-forget（5s 超时、失败仅日志）；空 = 关闭。
+    budget_alert_webhook_url: str = ""
+    budget_alert_ratio: float = 0.8  # 日预算用量达到该比例时告警一次（当日去重）
     # v2.0.0-p5.3：工具级重试退避基数。此前 ToolRegistry.call 缺省 backoff=0.0，
     # 重试是「立即再打一次」，对 DB/网络瞬时抖动几乎无效。只改间隔、不改重试次数，
     # 因此不引入新的副作用风险（非幂等工具的重试次数与现状完全一致）。
@@ -106,6 +110,8 @@ class Settings(BaseSettings):
     token_estimate_default: int = 2000
     # 单任务全局硬上限：与钱包余额无关，对所有用户生效。0 表示关闭。
     task_token_hard_limit: int = 50000
+    # v2.2.0-p1.6（B3）：循环护栏的 ReAct 步数上限（runtime_settings 可覆盖，见 catalog）。
+    agent_max_iterations: int = 10
     # DAG 层内最大并行子任务数（p4.3c；防 LLM 渠道限流，1=串行回落基线）
     dag_max_concurrency: int = 3
 

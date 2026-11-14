@@ -39,6 +39,25 @@ def _catalog() -> dict[str, dict[str, Any]]:
             "scope": "system",
             "default": bool(settings.result_validation),
         },
+        # v2.2.0-p1.6（B3）：三级硬预算的 tenant 级 + 循环护栏开关
+        "tenant_daily_token_budget": {
+            "label": "全站当日 token 预算",
+            "description": "所有用户当日（UTC 日）结算量之和的上限。达到后新任务在入口直接拒绝（429），明日自动恢复；0 表示不设限。软告警在用量达预算 80% 时发一次 webhook（如已配置）。",
+            "value_type": "int",
+            "scope": "system",
+            "min": 0,
+            "max": 100_000_000,
+            "default": 0,
+        },
+        "agent_max_iterations": {
+            "label": "Agent 循环步数上限",
+            "description": "单 Agent ReAct 循环最多执行多少步，超限强制基于已有观察收尾（防跑飞烧钱）。3~50。",
+            "value_type": "int",
+            "scope": "system",
+            "min": 3,
+            "max": 50,
+            "default": int(settings.agent_max_iterations),
+        },
     }
 
 

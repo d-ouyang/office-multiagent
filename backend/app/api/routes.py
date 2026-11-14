@@ -12,6 +12,8 @@ from ..core import chroma_client, db, redis_client
 from ..core.config import settings
 from ..core.events import EventType, RunEventEmitter, encode_line, iter_ndjson, new_run_id
 from ..core.internal_auth import require_internal
+from ..core import runtime_settings
+from ..core.budget_alert import fire_budget_alert
 from ..core.decomposer import decompose
 from ..core.model_registry import get_dialogue_models
 from ..core.planner import plan as make_plan
@@ -893,6 +895,34 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
         raise HTTPException(400, detail={"code": "BAD_EFFORT", "message": f"未知力度：{body.effort}"})
     # p6.12：随消息附件——fail-closed 校验（自己目录内且存在），以 prompt 前缀注入任务文本
     validated_attachments = _validate_attachments(body.attachments, str(user["username"]))
+
+    # v2.2.0-p1.6（B3）：入口硬预算短路——不够扣的任务不启动编排（429，省算力省预扣）。
+    # per-user 余额检查 + per-tenant 当日总预算；graph 内的 quota_node 保留（续跑/并发窗口兜底）。
+    from ..core.token_pool import TokenPool
+
+    _estimate = int(body.estimate or settings.token_estimate_default)
+    pool = TokenPool(get_engine())
+    _balance = pool.balance(int(user["id"]))
+    if _balance < _estimate:
+        raise HTTPException(
+            429,
+            detail={"code": "BALANCE_INSUFFICIENT", "message": f"钱包余额不足：余额 {_balance}，本次预估 {_estimate}，请充值后重试"},
+        )
+    _daily_budget = int(runtime_settings.effective("tenant_daily_token_budget") or 0)
+    if _daily_budget > 0:
+        _used = pool.daily_billed()
+        if _used >= _daily_budget:
+            raise HTTPException(
+                429,
+                detail={"code": "TENANT_BUDGET_EXCEEDED", "message": f"全站当日 token 预算已用尽（{_used}/{_daily_budget}），明日自动恢复"},
+            )
+        # 软告警：用量达预算比例（缺省 80%）时 webhook 提示一次（当日去重；未配置则静默）
+        if _used + _estimate >= _daily_budget * float(settings.budget_alert_ratio):
+            fire_budget_alert(
+                "tenant_daily_budget",
+                {"used": _used, "budget": _daily_budget, "ratio": settings.budget_alert_ratio},
+            )
+
     return _stream_task(
         user=user,
         session_id=session_id,
