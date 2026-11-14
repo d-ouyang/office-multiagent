@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # 直连定义不变（测试稳定），切流量/回退都是改这一个环境变量 + restart backend。
     # 容器网络地址（如 http://gateway:3000/llm/v1）；留空 = 直连（B1 之前的现状）。
     llm_gateway_url: str = ""
+    # v2.2.0-p1.5（B2）：prompt cache 命中部分的计价折扣（0~1）。缺省 0.25 对齐
+    # DeepSeek hit/miss 价比（¥0.5/M vs ¥2/M 量级）；1.0 = 全价（B2 之前行为）。
+    # 生效点：TokenPool.settle 的 billed 计算，钱包按折扣价扣费、ledger 记 billed。
+    llm_cache_price_ratio: float = 0.25
     # v2.0.0-p5.3：工具级重试退避基数。此前 ToolRegistry.call 缺省 backoff=0.0，
     # 重试是「立即再打一次」，对 DB/网络瞬时抖动几乎无效。只改间隔、不改重试次数，
     # 因此不引入新的副作用风险（非幂等工具的重试次数与现状完全一致）。

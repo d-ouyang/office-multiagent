@@ -583,7 +583,9 @@ def run_task(
     """
     rid = run_id or new_run_id()
     turn_id = new_run_id()
-    emitter = RunEventEmitter(rid, turn_id)
+    # v2.2.0-p1.5（B2）：归因注入——trace_id 复用 run_id（跨服务续跑同 id 可聚合），
+    # tenant_id 单租户占位（B3 多租户时改为入口注入）。
+    emitter = RunEventEmitter(rid, turn_id, trace_id=rid, tenant_id="office")
     model_id = model or settings.llm_brain_model
     events: list[Event] = []
 
@@ -734,6 +736,7 @@ def run_task(
         token_pool.settle(
             user_id, estimate, actual, task_id=rid,
             model=state.get("model") or settings.llm_brain_model,  # p6.4/p6.5：落账记实际模型
+            cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0),  # B2：cache 折扣计价
         )
     emit(
         emitter.done(
@@ -875,7 +878,7 @@ def resume_with_answer(
     state = graph.invoke(Command(resume=str(answer or "").strip()), cfg)
     actual = int(state.get("tokens_used", 0) or 0)
     if token_pool is not None and user_id is not None:
-        token_pool.settle(user_id, 0, actual, task_id=run_id, model=state.get("model") or model)
+        token_pool.settle(user_id, 0, actual, task_id=run_id, model=state.get("model") or model, cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0))
     route = state.get("route", "single")
     if state.get("need_input"):
         # 续跑后模型又发起了一轮 ask_user——保持 paused_input，graph 重新登记

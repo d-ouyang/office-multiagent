@@ -19,6 +19,16 @@
 
 ---
 
+## v2.2.0-p1.5 — 归因贯穿 + cache 折扣计价（Phase B2）（2026-11-14，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 532。详见 `docs/iterations/v2.2.0-p1.5-attribution-pricing.md`。
+
+- 事件归因：trace_id（=run_id）/tenant_id 注入 5 处 emitter，全部 NDJSON 事件可归因（判据用例断言）。
+- 计价：settle 补 cache_hit_tokens 折扣（billed = actual − hit + ceil(hit×ratio)，ratio 缺省 0.25 对齐 DeepSeek 价比；1.0=全价旧行为）。ledger 记 billed 口径。
+- ⚠️ 未部署：含计价行为变化（用户少扣费方向），部署前确认。
+
+---
+
 ## v2.2.0-p1.4 — LLM 网关收口（Phase B1 · gateway 内置代理）（2026-11-13，未部署）
 
 分支 `feature/2.2.0-harness`，pytest 526 / gateway jest 52 / 冒烟 5/5。详见 `docs/iterations/v2.2.0-p1.4-llm-gateway.md`。

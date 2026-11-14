@@ -75,3 +75,32 @@ def test_tasks_endpoint_streams_ndjson(monkeypatch):
     assert events and events[-1].type == EventType.DONE
     seqs = [e.seq for e in events]
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
+
+
+# --------------------------------------------------------------------------- #
+# v2.2.0-p1.5（B2）：事件归因贯穿——trace_id/tenant_id 从入口注入全部事件
+# --------------------------------------------------------------------------- #
+
+
+def test_run_task_events_carry_trace_attribution(monkeypatch):
+    """B2 判据：run_task 产出的每个事件信封带 trace_id（=run_id）与 tenant_id。"""
+    from app.core import model_adapter
+    from app.core.config import settings
+    from app.orchestration.graph import run_task as _run_task
+
+    # planner 拿到非预期 JSON → 回落规则路由；brain 拿到 final JSON → 单步完成
+    def decide(model_id, messages, **kwargs):
+        return '{"thought":"完成","final":"好的，这是一句话介绍"}'
+
+    model_adapter.set_adapter(model_adapter.FakeModelAdapter([decide, decide, decide]))
+    monkeypatch.setattr(settings, "llm_gateway_url", "")  # 确保不走网关 env
+    run_id = "trace-attribution-run"
+    try:
+        _result, events = _run_task("用一句话介绍你自己", run_id=run_id)
+    finally:
+        model_adapter.reset_adapter()
+
+    assert events, "应产出事件流"
+    assert events[-1].type == EventType.DONE
+    assert all(e.trace_id == run_id for e in events), "每个事件都应携带 trace_id=run_id"
+    assert all(e.tenant_id == "office" for e in events)

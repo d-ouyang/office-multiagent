@@ -1141,7 +1141,7 @@ def _stream_answer(
     def worker():
         try:
             runs.register(run_id, owner_id=int(user["id"]))
-            emitter = RunEventEmitter(run_id, run_id)
+            emitter = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office")  # B2 归因注入
             result, events = resume_with_answer(
                 run_id,
                 user_answer,
@@ -1248,7 +1248,7 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
     def worker():
         try:
             runs.register(run_id, owner_id=owner_id)
-            emitter = RunEventEmitter(run_id, run_id)
+            emitter = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office")  # B2 归因注入
             backend = (settings.checkpointer_backend or "memory").strip().lower()
             checkpointer = _take_live_checkpointer(run_id)
             if checkpointer is None and backend == "sqlite":
@@ -1321,7 +1321,7 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
                         )
                     )
                     q.put(emitter.done("paused_budget", model=state.get("model")))
-                    pool.settle(owner_id, 0, actual, task_id=run_id, model=state.get("model"))
+                    pool.settle(owner_id, 0, actual, task_id=run_id, model=state.get("model"), cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0))
                     _register_live_checkpointer(run_id, checkpointer)
                     try:
                         repo.append_message(session_id, "user", "【继续】完成上一轮未完成的任务")
@@ -1351,7 +1351,7 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
                         logger.exception("budget 续跑二次暂停落库失败 task_id=%s", task_id)
                     return
 
-            pool.settle(owner_id, 0, actual, task_id=run_id, model=state.get("model"))
+            pool.settle(owner_id, 0, actual, task_id=run_id, model=state.get("model"), cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0))
             result_text = str(state.get("result", ""))
             try:
                 repo.append_message(session_id, "user", "【继续】完成上一轮未完成的任务")
@@ -1445,7 +1445,7 @@ def _stream_quota_resume(task: dict[str, Any], *, operator_id: int | None = None
     def worker():
         try:
             runs.register(run_id, owner_id=owner_id)
-            emitter = RunEventEmitter(run_id, run_id)
+            emitter = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office")  # B2 归因注入
             backend = (settings.checkpointer_backend or "memory").strip().lower()
             checkpointer = _take_live_checkpointer(run_id)
             if checkpointer is None and backend == "sqlite":

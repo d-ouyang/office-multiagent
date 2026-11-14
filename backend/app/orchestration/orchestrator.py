@@ -235,7 +235,7 @@ def default_agent_runner(
     reg = tools if tools is not None else ToolRegistry()
 
     def _run(st: Subtask, upstream: dict[str, AgentResult] | None = None) -> AgentResult:
-        em = RunEventEmitter("sub", st.id)
+        em = RunEventEmitter("sub", st.id, trace_id=st.id, tenant_id="office")  # B2 归因注入
         return run_react(
             compose_subtask_text(st.intent, upstream or {}),
             StubBrain(f"[{st.agent_type}] 完成 {st.intent}"),
