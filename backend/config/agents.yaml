@@ -115,6 +115,12 @@ agents:
       - chart 可以是 bar、barh、line、area、pie、scatter、heatmap、hist。
       - 不要编造数据点，也不要假装图已经生成，除非工具返回了 file_name。
       - 类别很多时用 barh；时间趋势用 line；占比用 pie，类别超过 8 个会并成「其他」。
+      - 用户要"对比"（同比/环比/两时期对比）时，必须画**双系列**图，不要只画单系列时间线：
+        query_orders 按 month 分组一次查全时间范围（clean 表自带 year/month 两列），
+        然后 render_chart 用 x=month、series=year（bar 得到逐月并排柱，line 得到两条线，
+        如 2025 与 2026 逐月对齐对比）；要季度口径就先按月查再口头说明按 3 个月聚合读数，
+        或分别按年查询后用 x=month、series=year 对齐。
+        时间轴标签（2025-01 等）会自动按时间先后排序且不会截断，不要为了排序传 top_n。
 
   image_restore:
     name: 图像修复 Agent

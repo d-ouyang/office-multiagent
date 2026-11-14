@@ -1229,7 +1229,11 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
     from ..core.events import RunEventEmitter
     from ..core.session_repo import SessionRepo
     from ..core.token_pool import TokenPool
-    from ..orchestration.graph import _take_live_checkpointer, get_checkpointer
+    from ..orchestration.graph import (
+        _register_live_checkpointer,
+        _take_live_checkpointer,
+        get_checkpointer,
+    )
 
     logger = logging.getLogger(__name__)
     task_id = str(task["id"])
@@ -1256,9 +1260,18 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
                 )
             from ..orchestration.graph import build_graph as _bg
 
+            # p6.48 hotfix：sink 包一层收集事件——trace 要随消息落库，
+            # 否则续答轮的图表/过程明细刷新后全部丢失（线上实锤）。
+            events: list = []
+
+            def _sink(ev):
+                if ev is not None:
+                    events.append(ev)
+                    q.put(ev)
+
             graph = _bg(
                 emitter,
-                q.put,
+                _sink,
                 token_pool=pool,
                 checkpointer=checkpointer,
                 username=owner_name,
@@ -1284,12 +1297,65 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
                 graph.update_state(cfg, {"budget_replay": replay})
             state = graph.invoke(Command(resume="continue"), cfg)
             actual = int(state.get("tokens_used", 0) or 0)
+
+            def _trace_json() -> str:
+                return _json.dumps(
+                    [_json.loads(ev.model_dump_json()) for ev in events], ensure_ascii=False
+                )
+
+            from sqlalchemy import text as _text
+
+            # p6.48 hotfix：resume 是**整节点重入**——续跑本身仍可能触限并抛出
+            # 第二次 __interrupt__。原实现不检查，直接把任务误标 done、result
+            # 置空、settle(0,0)（线上实锤：会话 s-67cdb3bc 的续答"卡住没有结果"、
+            # tokens_used=0）。这里对齐 run_task 的暂停处理：回到 paused_budget，
+            # 保留 checkpoint 与 pause_payload，用户可再次「继续」。
+            if "__interrupt__" in state:
+                payload = state["__interrupt__"][0].value if state["__interrupt__"] else {}
+                if payload.get("type") == "budget_paused":
+                    ask_payload = {k: v for k, v in payload.items() if k != "type"}
+                    q.put(
+                        emitter.observation(
+                            "budget_paused",
+                            "任务续跑后再次达到单任务 token 上限，已再次暂停。",
+                        )
+                    )
+                    q.put(emitter.done("paused_budget", model=state.get("model")))
+                    pool.settle(owner_id, 0, actual, task_id=run_id, model=state.get("model"))
+                    _register_live_checkpointer(run_id, checkpointer)
+                    try:
+                        repo.append_message(session_id, "user", "【继续】完成上一轮未完成的任务")
+                        repo.append_message(
+                            session_id,
+                            "assistant",
+                            "任务续跑后再次达到单任务 token 上限，已再次暂停。点击「继续」可接着完成。",
+                            trace=_trace_json(),
+                        )
+                        with get_engine().begin() as conn:
+                            conn.execute(
+                                _text(
+                                    "UPDATE task SET status = 'paused_budget', "
+                                    "tokens_used = tokens_used + :tk, pause_reason = 'budget', "
+                                    "pause_payload = :pp WHERE id = :i"
+                                ),
+                                {
+                                    "tk": actual,
+                                    "pp": _json.dumps(
+                                        {"budget": ask_payload, "replay": []},
+                                        ensure_ascii=False,
+                                    ),
+                                    "i": task_id,
+                                },
+                            )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("budget 续跑二次暂停落库失败 task_id=%s", task_id)
+                    return
+
             pool.settle(owner_id, 0, actual, task_id=run_id, model=state.get("model"))
             result_text = str(state.get("result", ""))
             try:
                 repo.append_message(session_id, "user", "【继续】完成上一轮未完成的任务")
-                repo.append_message(session_id, "assistant", result_text)
-                from sqlalchemy import text as _text
+                repo.append_message(session_id, "assistant", result_text, trace=_trace_json())
 
                 with get_engine().begin() as conn:
                     conn.execute(
@@ -1301,9 +1367,19 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
                     )
             except Exception:  # noqa: BLE001
                 logger.exception("budget 续跑落库失败 task_id=%s", task_id)
-            from ..core.events import RunEventEmitter as _E
-
-            q.put(_E(run_id, run_id).done("done", tokens_used=actual))
+            # p6.48 hotfix：done 事件带全量字段（对齐 run_task 正常完成）——
+            # steps/prompt_tokens/cache_hit_tokens 缺失会让前端拿不到逐步用量、
+            # 缓存命中条与模型名（线上实锤：ReplyMeta 只剩 tokens+耗时）。
+            q.put(
+                emitter.done(
+                    "done",
+                    tokens_used=actual,
+                    model=state.get("model"),
+                    steps=state.get("usage_steps") or None,
+                    prompt_tokens=int(state.get("prompt_tokens", 0) or 0),
+                    cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0),
+                )
+            )
         except Exception as e:  # noqa: BLE001
             logger.exception("budget 真续跑失败 task_id=%s", task_id)
             from ..core.events import RunEventEmitter as _E
@@ -1345,7 +1421,11 @@ def _stream_quota_resume(task: dict[str, Any], *, operator_id: int | None = None
     from ..core.events import RunEventEmitter
     from ..core.session_repo import SessionRepo
     from ..core.token_pool import TokenPool
-    from ..orchestration.graph import _take_live_checkpointer, get_checkpointer
+    from ..orchestration.graph import (
+        _register_live_checkpointer,
+        _take_live_checkpointer,
+        get_checkpointer,
+    )
 
     logger = logging.getLogger(__name__)
     task_id = str(task["id"])
@@ -1377,9 +1457,18 @@ def _stream_quota_resume(task: dict[str, Any], *, operator_id: int | None = None
                 )
             from ..orchestration.graph import build_graph as _bg
 
+            # p6.48 hotfix：与 budget 续跑同口径——sink 收事件落 trace、
+            # 二次 __interrupt__ 回到暂停态、done 事件带全量字段。
+            events: list = []
+
+            def _sink(ev):
+                if ev is not None:
+                    events.append(ev)
+                    q.put(ev)
+
             graph = _bg(
                 emitter,
-                q.put,
+                _sink,
                 token_pool=pool,
                 checkpointer=checkpointer,
                 username=owner_name,
@@ -1389,13 +1478,60 @@ def _stream_quota_resume(task: dict[str, Any], *, operator_id: int | None = None
             )
             state = graph.invoke(Command(resume=True), {"configurable": {"thread_id": run_id}})
             actual = int(state.get("tokens_used", 0) or 0)
+
+            def _trace_json() -> str:
+                return _json.dumps(
+                    [_json.loads(ev.model_dump_json()) for ev in events], ensure_ascii=False
+                )
+
+            from sqlalchemy import text as _text
+
+            if "__interrupt__" in state:
+                payload = state["__interrupt__"][0].value if state["__interrupt__"] else {}
+                if payload.get("type") == "budget_paused":
+                    ask_payload = {k: v for k, v in payload.items() if k != "type"}
+                    q.put(
+                        emitter.observation(
+                            "budget_paused",
+                            "任务续跑后再次达到单任务 token 上限，已再次暂停。",
+                        )
+                    )
+                    q.put(emitter.done("paused_budget", model=state.get("model")))
+                    pool.settle(owner_id, estimate, actual, task_id=run_id, model=state.get("model"))
+                    _register_live_checkpointer(run_id, checkpointer)
+                    try:
+                        repo.append_message(session_id, "user", str(task.get("text") or ""))
+                        repo.append_message(
+                            session_id,
+                            "assistant",
+                            "任务续跑后再次达到单任务 token 上限，已再次暂停。点击「继续」可接着完成。",
+                            trace=_trace_json(),
+                        )
+                        with get_engine().begin() as conn:
+                            conn.execute(
+                                _text(
+                                    "UPDATE task SET status = 'paused_budget', "
+                                    "tokens_used = :tk, pause_reason = 'budget', "
+                                    "pause_payload = :pp WHERE id = :i"
+                                ),
+                                {
+                                    "tk": actual,
+                                    "pp": _json.dumps(
+                                        {"budget": ask_payload, "replay": []},
+                                        ensure_ascii=False,
+                                    ),
+                                    "i": task_id,
+                                },
+                            )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("quota 续跑二次暂停落库失败 task_id=%s", task_id)
+                    return
+
             pool.settle(owner_id, estimate, actual, task_id=run_id, model=state.get("model"))
             result_text = str(state.get("result", ""))
             try:
                 repo.append_message(session_id, "user", str(task.get("text") or ""))
-                repo.append_message(session_id, "assistant", result_text)
-                from sqlalchemy import text as _text
-
+                repo.append_message(session_id, "assistant", result_text, trace=_trace_json())
                 with get_engine().begin() as conn:
                     conn.execute(
                         _text(
@@ -1406,9 +1542,16 @@ def _stream_quota_resume(task: dict[str, Any], *, operator_id: int | None = None
                     )
             except Exception:  # noqa: BLE001
                 logger.exception("quota 续跑落库失败 task_id=%s", task_id)
-            from ..core.events import RunEventEmitter as _E
-
-            q.put(_E(run_id, run_id).done("done", tokens_used=actual))
+            q.put(
+                emitter.done(
+                    "done",
+                    tokens_used=actual,
+                    model=state.get("model"),
+                    steps=state.get("usage_steps") or None,
+                    prompt_tokens=int(state.get("prompt_tokens", 0) or 0),
+                    cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0),
+                )
+            )
         except Exception as e:  # noqa: BLE001
             logger.exception("quota 真续跑失败 task_id=%s", task_id)
             from ..core.events import RunEventEmitter as _E

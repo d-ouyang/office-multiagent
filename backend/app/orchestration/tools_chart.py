@@ -16,11 +16,47 @@ from .orders_seed import COLUMN_LABELS
 from .tools_store import finish_output, new_output_id, output_file
 from .tools_table import _as_list, _load_clean, _match_filter, _parse_number
 
-_EXPORT_ID_RE = __import__("re").compile(r"^e-[0-9a-f]{16}$")
+_EXPORT_ID_RE = re.compile(r"^e-[0-9a-f]{16}$")
 
 _CHARTS = ("bar", "barh", "line", "area", "pie", "scatter", "heatmap", "hist")
 _AGGS = ("sum", "mean", "count", "min", "max")
 _COLORS = ("#4C78A8", "#F58518", "#54A24B", "#E45756", "#72B7B2", "#B279A2", "#FF9DA6", "#9D755D")
+
+# p6.48 hotfix：时间轴识别。标签全部命中同一套时间语义时按时间先后排序、
+# 不再按汇总值排序/截断（线上实测：柱状图"9月排第一"=值降序所致；
+# 折线图"标题到 2026-09、图到 2026-01 就断"=top_n=13 把 21 个月砍剩 13 个）。
+_TIME_PATTERNS = (
+    re.compile(r"^(\d{4})[-/年](\d{1,2})(?:月)?(?:[-/](\d{1,2})日?)?$"),  # 2025-01 / 2025/1 / 2025年1月 / 2025-01-15
+    re.compile(r"^(\d{4})[-季年]?(?:Q|第)\s*([1-4])\s*(?:季度)?$"),        # 2025Q1 / 2025-Q1 / 2025年第1季度
+)
+_YEAR_RE = re.compile(r"^(\d{4})$")     # 2025（年）
+_MONTH_RE = re.compile(r"^([1-9]|1[0-2])月$")  # 1月~12月
+_TIME_AXIS_MAX = 60  # 时间轴不截断，但保留一个防失控上限（超过按时间取末段）
+
+
+def _time_key(label: str) -> tuple[int, int, int] | None:
+    """把时间语义的标签解析成可排序的 (年, 月, 日) 元组；非时间标签返回 None。
+
+    纯整数 1~12 亦视为月份序号（query_orders 月份分组副本的 month 列就是 "1".."12"，
+    同比对比图 x=month 需要按 1→12 排序而不是按值排序）。
+    """
+    s = str(label).strip()
+    if re.fullmatch(r"[1-9]|1[0-2]", s):
+        return (0, int(s), 0)
+    m = _TIME_PATTERNS[0].match(s)
+    if m:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+    m = _TIME_PATTERNS[1].match(s)
+    if m:
+        return (int(m.group(1)), int(m.group(2)) * 3, 0)
+    m = _YEAR_RE.match(s)
+    if m:
+        return (int(m.group(1)), 0, 0)
+    m = _MONTH_RE.match(s)
+    if m:
+        # 月份单独成轴（如 "9月"）：年位填 0，排在所有完整年月之前
+        return (0, int(m.group(1)), 0)
+    return None
 
 
 def _columns(value: Any) -> list[str]:
@@ -66,6 +102,14 @@ def _numeric_bucket(rows: list[dict[str, str]], column: str, agg: str) -> tuple[
 
 
 def _ordered_labels(labels: list[str], totals: dict[str, float], chart: str, top_n: int) -> list[str]:
+    # p6.48 hotfix：全部标签都是时间语义（含纯月份序号 1~12）时一律按时间先后，
+    # 且不按 top_n 截断——柱状不再"销售额最高的月份排第一"，折线不再被 top_n 砍断。
+    keys = {label: _time_key(label) for label in labels}
+    if len(labels) > 1 and all(keys[label] is not None for label in labels):
+        ordered = sorted(labels, key=lambda label: keys[label])
+        if len(ordered) > _TIME_AXIS_MAX:
+            ordered = ordered[-_TIME_AXIS_MAX:]
+        return ordered
     if chart in {"line", "area"}:
         def key(label: str) -> tuple:
             number = _parse_number(label)

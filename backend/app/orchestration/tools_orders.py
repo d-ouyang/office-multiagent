@@ -461,18 +461,39 @@ def make_query_orders_tool(
             chart_id = None
             if group_by and rows and base_dir:
                 try:
+                    import re as _re
+
                     from .tools_table import _write_clean
 
                     if multi_group:
                         cols = [*out_cols, "order_count", *[f"m_{m}" for m in metrics]] if metrics else [*out_cols, "order_count"]
-                    elif single:
-                        cols = ["grp", "order_count", "metric_value"]
+                        chart_rows = [[str(r.get(c, "")) for c in cols] for r in rows]
                     else:
-                        cols = ["grp", "order_count", *[f"m_{m}" for m in metrics]]
+                        # p6.48（hot1）：单列 month 分组的 clean 副本补 year/month 两列——
+                        # 同比对比 series=year、x=month 画双系列（两条线/并排柱），
+                        # 不再只能画单系列时间线；p1.13b 的语义化列名只在多列分组用。
+                        base_cols = (
+                            ["grp", "order_count", "metric_value"]
+                            if single
+                            else ["grp", "order_count", *[f"m_{m}" for m in metrics]]
+                        )
+                        if group_by == "month":
+                            cols = ["grp", "year", "month", *base_cols[1:]]
+                            chart_rows = []
+                            for r in rows:
+                                m = _re.match(r"^(\d{4})-(\d{1,2})$", str(r.get("grp", "")))
+                                year, month = (m.group(1), str(int(m.group(2)))) if m else ("", "")
+                                chart_rows.append(
+                                    [str(r.get("grp", "")), year, month]
+                                    + [str(r.get(c, "")) for c in base_cols[1:]]
+                                )
+                        else:
+                            cols = base_cols
+                            chart_rows = [[str(r.get(c, "")) for c in cols] for r in rows]
                     chart_id = _write_clean(
                         Path(base_dir),
                         cols,
-                        [[str(r.get(c, "")) for c in cols] for r in rows],
+                        chart_rows,
                         {
                             "source": "query_orders",
                             "group_by": group_by,
@@ -497,9 +518,17 @@ def make_query_orders_tool(
                 "rows": rows,
                 "clean_id": chart_id,
                 "chart_hint": (
-                    f"要画图或再分析：把 clean_id 交给 render_chart（x=grp，y=order_count 或 m_<指标名>）/ analyze_table"
-                    if chart_id
-                    else None
+                    (
+                        "要画图或再分析：把 clean_id 交给 render_chart。"
+                        "同比对比（如 2025 vs 2026 逐月）：x=month、series=year（clean 表已带 year/month 列），"
+                        "出两条线或并排柱；要完整年月时间轴则 x=grp（自动按时间排序、不截断）。"
+                    )
+                    if chart_id and group_by == "month"
+                    else (
+                        f"要画图或再分析：把 clean_id 交给 render_chart（x=grp，y=order_count 或 m_<指标名>）/ analyze_table"
+                        if chart_id
+                        else None
+                    )
                 ),
             }
 
