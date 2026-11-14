@@ -19,6 +19,16 @@
 
 ---
 
+## v2.2.0-p1.7 — 幂等键贯穿（Phase C1）（2026-11-14，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 543。详见 `docs/iterations/v2.2.0-p1.7-invocation-idempotency.md`。
+
+- tool_invocation 去重表（UNIQUE(run_id,tool_name,args_hash)，迁移 0014 + init.sql 同步 + 护栏测试覆盖）；react 加 invocation_guard（命中复用观察、登记失败静默降级、表缺失不阻断）。
+- 判据达成：同 run 重投副作用恰好 1 次（三层防线：react 重复提示 → 硬拦 → 幂等缓存）。
+- ⚠️ 未部署：迁移 0014 随 CI alembic 执行；代码对表缺失已降级，部署顺序无耦合。
+
+---
+
 ## v2.2.0-p1.6 — 三级硬预算 + 循环护栏开关化（Phase B3 收官）（2026-11-14，未部署）
 
 分支 `feature/2.2.0-harness`，pytest 539。详见 `docs/iterations/v2.2.0-p1.6-budget-guard.md`。

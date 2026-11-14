@@ -114,6 +114,19 @@ CREATE TABLE IF NOT EXISTS `agent_run` (
   KEY `idx_agent_run_subtask` (`subtask_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS `tool_invocation` (
+  `id`           BIGINT       NOT NULL AUTO_INCREMENT,
+  `run_id`       VARCHAR(64)  NOT NULL,
+  `tool_name`    VARCHAR(128) NOT NULL,
+  `args_hash`    CHAR(64)     NOT NULL,
+  `args_preview` VARCHAR(512) NULL,
+  `observation`  TEXT         NULL,
+  `created_at`   DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_tool_invocation` (`run_id`, `tool_name`, `args_hash`),
+  KEY `idx_tool_invocation_run` (`run_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `tool_call_log` (
   `id`           VARCHAR(64) NOT NULL,
   `agent_run_id` VARCHAR(64) NULL,

@@ -21,7 +21,7 @@
 
 ## Phase C 执行保障（p3.x）— M3：kill -9 无重复副作用
 
-- [ ] C1 幂等键：tool_invocation 表（run_id+step_id+tool_name+args_hash 唯一），编排层去重。
+- [x] **C1 幂等键**（p1.7，2026-11-14）：tool_invocation 表 UNIQUE(run_id,tool_name,args_hash)（迁移 0014+init.sql 同步）；react 加 invocation_guard（lookup 命中复用观察 / record 登记），三层防线（重复提示→硬拦→幂等缓存）。判据达成：同 run 重投副作用恰好 1 次。pytest 543。⚠️ 未部署（含迁移 0014，代码对表缺失已降级）。
 - [ ] C2 run_id lease（MySQL GET_LOCK）+ 分级超时 + 重试计入预算 + 死信。
 - [ ] C3 durable 加固（sync checkpointer + 副作用幂等包装 + step 级进度落库收窄重跑范围）。融合：0001 迁移多语句修复。
 

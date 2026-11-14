@@ -249,6 +249,7 @@ def build_graph(
                 brain,
                 spec_tools,
                 max_iterations=_max_iterations(),
+                invocation_guard=_invocation_guard(state.get("run_id") or rid),
                 emitter=emitter,
                 emit=emit,
                 synthesize=_synthesize,
@@ -381,6 +382,7 @@ def build_graph(
             brain,
             spec_tools,
             max_iterations=_max_iterations(),
+            invocation_guard=_invocation_guard(state.get("run_id") or rid),
             emitter=emitter,
             emit=emit,
             should_cancel=should_cancel,
@@ -569,6 +571,31 @@ def _max_iterations() -> int:
         return max(3, int(runtime_settings.effective("agent_max_iterations") or 10))
     except Exception:  # noqa: BLE001 - 读取失败回落代码缺省（护栏宁紧勿松）
         return 10
+
+
+
+def _invocation_guard(run_id: str):
+    """C1 幂等守卫工厂：同 run 内 (tool_name, args_hash) 命中 → 返回缓存 ToolResult。
+
+    表不存在（旧库未迁移）时 invocation_repo 静默降级为 None（不拦截），
+    部署顺序无耦合；先到先得语义由表的唯一键 + INSERT IGNORE 保证。
+    """
+    from ..core.db import get_engine
+    from ..core.invocation_repo import lookup, record
+
+    def guard(tool_name: str, action_input: dict) -> "ToolResult | None":
+        from .tools import ToolResult
+
+        cached = lookup(get_engine(), run_id, tool_name, action_input)
+        if cached is not None:
+            return ToolResult(ok=True, output=cached)
+        return None
+
+    def recorder(tool_name: str, action_input: dict, observation: str) -> None:
+        record(get_engine(), run_id, tool_name, action_input, observation)
+
+    guard.record = recorder  # type: ignore[attr-defined]
+    return guard
 
 
 def run_task(

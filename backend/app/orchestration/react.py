@@ -146,6 +146,7 @@ def run_react(
     seed_observation: str | None = None,
     allow_ask_user: bool = False,
     budget_interrupt: Callable[[dict[str, Any]], str] | None = None,
+    invocation_guard: Callable[[str, dict[str, Any]], "ToolResult | None"] | None = None,
 ) -> AgentResult:
     """跑 ReAct 循环；超 max_iterations 强制给阶段结论（§四.4 防跑飞）。
 
@@ -348,8 +349,17 @@ def run_react(
 
             if emitter is not None:
                 _emit(emitter.tool_call_start(tool_id, name, unit.action_input))
-            res: ToolResult = tools.call(name, **unit.action_input)
+            # v2.2.0-p1.7（C1）：幂等守卫——命中缓存（同 run 同工具同参数已执行过）
+            # 直接复用观察，fn 不执行（副作用零重复）；guard 返回 None 才真正调用。
+            guarded = invocation_guard(name, unit.action_input) if invocation_guard else None
+            res = guarded if guarded is not None else tools.call(name, **unit.action_input)
             obs = res.output if res.ok else (res.error or "工具调用失败")
+            # C1：真执行（非缓存命中）且结果为普通文本时登记进幂等表（ask_user 等
+            # dict 哨兵不缓存——它们不是可重放的副作用结果）。登记失败由 repo 静默降级。
+            if guarded is None and invocation_guard is not None and res.ok and not isinstance(obs, dict):
+                _record = getattr(invocation_guard, "record", None)
+                if _record is not None:
+                    _record(name, unit.action_input, str(obs))
             # 2.1.0 P1-1（HITL）：ask_user sentinel——模型请求用户补充输入。
             # single（allow_ask_user=True）→ 发 ask_user 事件并终止本轮，任务转
             # paused_input（graph 层 interrupt 落 checkpoint）；multi 层内并行无法
