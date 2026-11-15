@@ -105,7 +105,7 @@ describe('回复信息行', () => {
   });
 
   it('点赞直接落库，激活后再点 = 取消', async () => {
-    const onSubmit = vi.fn(() => Promise.resolve({ rating: 'like', tags: [], comment: null, at: null }));
+    const onSubmit = vi.fn(() => Promise.resolve({ rating: 'like' as const, tags: [], comment: null, at: null }));
     const onCancel = vi.fn(() => Promise.resolve(true));
     render(
       <ChatMessage
@@ -132,7 +132,7 @@ describe('回复信息行', () => {
   });
 
   it('点踩走弹窗：tag 多选 + 其他原因展开输入，提交带原因', async () => {
-    const onSubmit = vi.fn(() => Promise.resolve({ rating: 'dislike', tags: ['数据或数字有误'], comment: '', at: null }));
+    const onSubmit = vi.fn(() => Promise.resolve({ rating: 'dislike' as const, tags: ['数据或数字有误'], comment: '', at: null }));
     render(
       <ChatMessage
         index={1}
@@ -194,7 +194,7 @@ describe('回复信息行', () => {
   it('提交成功后父级重渲染（旧 props 回来）也不把激活态打回空心', async () => {
     // p2.8 回归锚：useEffect 不能依赖 msg.feedback——本地乐观态会被父级重渲染冲掉
     const onSubmit = vi.fn(() =>
-      Promise.resolve({ rating: 'like', tags: [], comment: null, at: '2026-10-29T06:00:00' }),
+      Promise.resolve({ rating: 'like' as const, tags: [], comment: null, at: '2026-10-29T06:00:00' }),
     );
     const { rerender } = render(
       <ChatMessage
@@ -250,7 +250,7 @@ describe('回复信息行', () => {
     // p2.11 回归锚：线上实测请求往返 ~100ms 比连点间隔还快，只有在途锁时
     // 6 连点会发出 6 个请求（每个都等上一个完成后合法发出）
     const onSubmit = vi.fn(() =>
-      Promise.resolve({ rating: 'like', tags: [], comment: null, at: null }),
+      Promise.resolve({ rating: 'like' as const, tags: [], comment: null, at: null }),
     );
     const onCancel = vi.fn(() => Promise.resolve(true));
     render(

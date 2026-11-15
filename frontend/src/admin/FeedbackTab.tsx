@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { adminFeedback, FEEDBACK_TAGS, type AdminFeedbackItem, type AdminFeedbackStats } from '../lib/api';
-import { AdminListPage, AdminPager, PAGE_SIZE } from './AdminListPage';
+import { AdminPager, PAGE_SIZE } from './AdminListPage';
 import { CopyCell } from './ellipsis';
 import { humanizeAdminError } from './errors';
 import { fmtShanghai } from './format';
@@ -137,11 +137,11 @@ export default function FeedbackTab() {
           {
             title: '会话',
             width: 200,
-            render: (_, r) => <CopyCell text={r.session_id} width={200} />,
+            render: (_, r) => <CopyCell text={r.session_id} />,
           },
         ]}
       />
-      <AdminPager page={page} pageSize={PAGE_SIZE} total={total} onChange={(p) => { setPage(p); void load(p); }} />
+      <AdminPager page={page} total={total} onChange={(p) => { setPage(p); void load(p); }} />
     </div>
   );
 }

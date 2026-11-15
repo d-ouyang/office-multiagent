@@ -1,9 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 
-import AdminApp from './AdminApp';
-import LoginPage from './pages/LoginPage';
-import WorkspacePage from './pages/WorkspacePage';
+// v2.2.0-p1.13（F1）：路由级代码分割——AdminApp（管理端含图表重依赖）与
+// WorkspacePage 拆为独立 chunk，首屏只加载当前视图的包。
+const AdminApp = lazy(() => import('./AdminApp'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const WorkspacePage = lazy(() => import('./pages/WorkspacePage'));
 import { checkSession, clearToken, type LoginUser } from './lib/api';
+
+function RouteFallback() {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: 48, color: '#888' }}>
+      加载中…
+    </div>
+  );
+}
 
 type View = 'workspace' | 'admin';
 
@@ -49,13 +59,22 @@ export default function App() {
   // 管理端优先于工作台登录态：/admin 有自己的登录页与 token，
   // 不依赖（也不消耗）工作台登录态——避免"先登工作台再登管理端"的双重登录。
   if (view === 'admin') {
-    return <AdminApp />;
+    return (
+      <Suspense fallback={<RouteFallback />}>
+        <AdminApp />
+      </Suspense>
+    );
   }
   if (!user) {
-    return <LoginPage onLoggedin={setUser} />;
+    return (
+      <Suspense fallback={<RouteFallback />}>
+        <LoginPage onLoggedin={setUser} />
+      </Suspense>
+    );
   }
   const isAdmin = user.role === 'admin' || user.role === 'superadmin';
   return (
+    <Suspense fallback={<RouteFallback />}>
     <WorkspacePage
       user={user}
       onLogout={() => {
@@ -66,5 +85,6 @@ export default function App() {
       }}
       onOpenAdmin={isAdmin ? () => go('admin') : undefined}
     />
+    </Suspense>
   );
 }
