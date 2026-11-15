@@ -24,6 +24,7 @@ jobs:
         run: |
           rsync -a --delete \
             --exclude ".env" --exclude ".env.*" \
+            --exclude ".github-token" \
             --exclude "backend/data" \
             ./ /opt/office/
 
