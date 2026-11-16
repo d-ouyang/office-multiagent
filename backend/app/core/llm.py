@@ -34,6 +34,16 @@ class LlmNotConfigured(LlmError):
     """模型未配置（不在注册表 / 缺密钥）。调用方应如实告知能力不可用。"""
 
 
+class ContextOverflowError(LlmError):
+    """上下文超出模型窗口（provider 返回 400/413）。
+
+    为什么单独成类（v2.3.0-p1.2）：它不是网络抖动、也不是参数写错，而是**可恢复**的
+    ——把历史压小后重试一次通常就能过。混在普通 LlmError 里只会走进两条错路：
+    要么被当成 4xx 直接抛（用户看到"模型暂不可用"），要么被瞬时重试逻辑盲目重试三次
+    （每次更贵、结果一样）。调用方（brain）据此触发一次紧急压缩。
+    """
+
+
 @dataclass
 class ToolCall:
     """原生 tool_calls 的归一化结构（v2.0.0-p1.2）。
@@ -235,6 +245,33 @@ def _chat_impl(
 #: 可重试的 HTTP 状态码——限流与服务端瞬时错误；其余 4xx（鉴权/参数）重试无意义。
 _TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 
+#: 各家 provider 报"上下文超限"的措辞（OpenAI / DeepSeek / 硅基流动 / Qwen 不一致）。
+#: 只认"上下文 / 长度"相关组合词——裸"超出"会误伤"超出配额"这类业务错误，
+#: 把可恢复的溢出判成别的错误、或反过来把业务错误当溢出压缩重试，都是事故。
+_OVERFLOW_HINTS = (
+    "context length",
+    "context_length",
+    "context window",
+    "context_window",
+    "maximum context",
+    "reduce the length",
+    "too many tokens",
+    "maximum token",
+    "上下文长度",
+    "上下文超出",
+    "上下文过长",
+    "输入过长",
+    "token 数量超出",
+)
+
+
+def _is_context_overflow(status: int, body: str) -> bool:
+    """400/413 且错误体命中上下文超限措辞 → 可压缩重试的错误（v2.3.0-p1.2）。"""
+    if status not in (400, 413):
+        return False
+    lowered = (body or "").lower()
+    return any(hint in lowered for hint in _OVERFLOW_HINTS)
+
 
 def _status_code_of(e: LlmError) -> int | None:
     """从 `_chat_once` 的 `LLM 返回 <code>: <body>` 错误里提取状态码（无则 None）。"""
@@ -251,7 +288,10 @@ def _is_transient(e: LlmError) -> bool:
     p5.1：原先纯字符串匹配只覆盖 502/503/504，**429 与 500 完全不重试**——而 multi
     层内并行（dag_max_concurrency=3）多个子任务同时打同一模型时，限流 429 恰是最需要
     退避重试的场景。现在状态码优先结构化判定，网络类错误保留字符串兜底。
+    v2.3.0-p1.2：上下文超限**显式排除**——重试三次还是同样的输入、同样的拒绝，只会更贵。
     """
+    if isinstance(e, ContextOverflowError):
+        return False
     code = _status_code_of(e)
     if code is not None:
         return code in _TRANSIENT_STATUS
@@ -296,7 +336,10 @@ def _chat_once(
     except httpx.HTTPError as e:
         raise LlmError(f"LLM 请求失败：{type(e).__name__}: {e}") from e
     if resp.status_code != 200:
-        raise LlmError(f"LLM 返回 {resp.status_code}: {resp.text[:200]}")
+        body = resp.text or ""
+        if _is_context_overflow(resp.status_code, body):
+            raise ContextOverflowError(f"上下文超限（{resp.status_code}）：{body[:300]}")
+        raise LlmError(f"LLM 返回 {resp.status_code}: {body[:200]}")
     try:
         data = resp.json()
         message = data["choices"][0]["message"]
@@ -411,9 +454,10 @@ def _chat_stream_impl(
             with httpx.Client(timeout=timeout or settings.llm_timeout, transport=transport) as client:
                 with client.stream("POST", url, json=payload, headers=headers) as resp:
                     if resp.status_code != 200:
-                        raise LlmError(
-                            f"LLM 返回 {resp.status_code}: {resp.read().decode('utf-8', 'replace')[:200]}"
-                        )
+                        body = resp.read().decode("utf-8", "replace")
+                        if _is_context_overflow(resp.status_code, body):
+                            raise ContextOverflowError(f"上下文超限（{resp.status_code}）：{body[:300]}")
+                        raise LlmError(f"LLM 返回 {resp.status_code}: {body[:200]}")
                     for line in resp.iter_lines():
                         if not line.startswith("data:"):
                             continue

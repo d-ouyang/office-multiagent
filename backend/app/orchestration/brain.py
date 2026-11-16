@@ -19,6 +19,7 @@ from typing import Any, Protocol
 
 from ..core.config import settings
 from ..core.llm import (
+    ContextOverflowError,
     LlmError,
     LlmResult,
     chat as default_chat,
@@ -35,6 +36,18 @@ logger = logging.getLogger(__name__)
 
 def looks_like_json(text: str) -> bool:
     return (text or "").lstrip().startswith("{")
+
+
+def _overflow_final_text() -> str:
+    """上下文超限后的用户可见文案（v2.3.0-p1.2）。
+
+    说清"发生了什么 + 该怎么办"，不甩 provider 原文——用户看到 `maximum context
+    length is 131072 tokens` 只会来问人，看到"把文档拆小"才会自己解决。
+    """
+    return (
+        "这次任务要处理的内容超出了模型一次能接收的范围（已自动压缩一次仍未通过）。"
+        "建议把文档拆小、或分成几步来问——已查到的结果不受影响。"
+    )
 
 
 def history_step_limit(limit: int | None = None) -> int:
@@ -248,6 +261,37 @@ class LlmBrain:
         return history_step_limit()
 
     @staticmethod
+    def _squeeze_budget(budget: int) -> int:
+        """超限后的紧急预算：腰斩，但不低于 1000；原本不限则给 4000。
+
+        为什么不一压到底：压缩太狠会让模型"忘掉"已经查过的数据，重试成功也答不对；
+        腰斩是"再给一次机会"，不是"保证过"。
+        """
+        if budget <= 0:
+            return 4000
+        return max(1000, budget // 2)
+
+    def _with_overflow_retry(
+        self,
+        call: Callable[[list[dict[str, Any]]], LlmResult],
+        build: Callable[[int], list[dict[str, Any]]],
+        budget: int,
+    ) -> LlmResult:
+        """调模型；上下文超限时压缩历史、重建 messages 再试一次（v2.3.0-p1.2）。
+
+        只重试一次：压缩有损，连压两次的收益远小于"如实失败 + 给用户可操作的提示"；
+        也避免 provider 持续拒绝时把预算烧光。
+        """
+        try:
+            return call(build(budget))
+        except ContextOverflowError as e:
+            squeezed = self._squeeze_budget(budget)
+            logger.warning(
+                "上下文超限，压缩历史后重试一次（预算 %s → %s）| %s", budget, squeezed, e
+            )
+            return call(build(squeezed))
+
+    @staticmethod
     def _render_history(
         history: list[Step], limit: int | None = None, budget: int = 0
     ) -> str:
@@ -264,15 +308,23 @@ class LlmBrain:
     def next_step(self, task: str, history: list[Step]) -> Step:  # noqa: D102 - 见类注释
         if self.protocol == "tool_calls":
             return self._next_step_tool_calls(task, history)
-        messages = [
-            {"role": "system", "content": self._system_prompt()},
-            {
-                "role": "user",
-                "content": f"任务：{task}\n\n已执行步骤：\n{self._render_history(history, self._obs_limit(), self._history_budget)}\n\n请给出下一步 JSON。",
-            },
-        ]
+        def _build(budget: int) -> list[dict[str, Any]]:
+            return [
+                {"role": "system", "content": self._system_prompt()},
+                {
+                    "role": "user",
+                    "content": (
+                        f"任务：{task}\n\n已执行步骤：\n"
+                        f"{self._render_history(history, self._obs_limit(), budget)}\n\n"
+                        "请给出下一步 JSON。"
+                    ),
+                },
+            ]
+
+        messages = _build(self._history_budget)
         if self._stream:
-            return self._next_step_streaming(messages)
+            # v2.3.0-p1.2：流式也要能重放——400 在首块之前返回，此时还没推过任何字
+            return self._next_step_streaming(_build, self._history_budget)
         reservation = (
             self._token_budget.reserve_call(messages)
             if self._token_budget is not None
@@ -285,12 +337,18 @@ class LlmBrain:
             }
             if reservation is not None:
                 kwargs["max_tokens"] = reservation.max_output_tokens
-            res = self._chat(self.model_id, messages, **kwargs)
+            res = self._with_overflow_retry(
+                lambda msgs: self._chat(self.model_id, msgs, **kwargs),
+                _build,
+                self._history_budget,
+            )
         except Exception as e:
             if reservation is not None:
                 reservation.cancel()
             if not isinstance(e, LlmError):
                 raise
+            if isinstance(e, ContextOverflowError):
+                return Step(thought="上下文超限", final=_overflow_final_text())
             logger.warning("LLM brain 调用失败，如实给阶段结论 | %s", e)
             return Step(thought="模型调用失败", final=f"模型暂不可用，无法继续完成该任务：{e}")
         if reservation is not None:
@@ -311,8 +369,14 @@ class LlmBrain:
             return Step(thought="", final=res.content, streamed=False)
         return self._step_from_json(data, thought_streamed=False)
 
-    def _next_step_streaming(self, messages: list[dict[str, str]]) -> Step:
-        """p6.3：流式下一步。自然语言输出边收边推 on_content；JSON 等完整解析。"""
+    def _next_step_streaming(
+        self, build_messages: Callable[[int], list[dict[str, Any]]], budget: int
+    ) -> Step:
+        """p6.3：流式下一步。自然语言输出边收边推 on_content；JSON 等完整解析。
+
+        v2.3.0-p1.2：接收 build 函数而非成品 messages——上下文超限时要能以更小的预算
+        重建消息并重放一次（400 发生在首块之前，此时一个 chunk 都还没推给用户）。
+        """
         parts: list[str] = []
         thought_streamed = False
 
@@ -328,6 +392,7 @@ class LlmBrain:
             if self._on_content is not None and not looks_like_json("".join(parts)):
                 self._on_content(c)
 
+        messages = build_messages(budget)
         reservation = (
             self._token_budget.reserve_call(messages)
             if self._token_budget is not None
@@ -342,12 +407,20 @@ class LlmBrain:
             }
             if reservation is not None:
                 kwargs["max_tokens"] = reservation.max_output_tokens
-            res = self._chat_stream(self.model_id, messages, **kwargs)
+            res = self._with_overflow_retry(
+                lambda msgs: self._chat_stream(self.model_id, msgs, **kwargs),
+                build_messages,
+                budget,
+            )
         except Exception as e:
             if reservation is not None:
                 reservation.cancel()
             if not isinstance(e, LlmError):
                 raise
+            parts.clear()  # 重试前可能已收过思考片段，不能混进终答
+            if isinstance(e, ContextOverflowError):
+                logger.warning("上下文超限且压缩重试仍失败 | %s", e)
+                return Step(thought="上下文超限", final=_overflow_final_text())
             logger.warning("LLM brain 流式调用失败，如实给阶段结论 | %s", e)
             return Step(thought="模型调用失败", final=f"模型暂不可用，无法继续完成该任务：{e}")
         if reservation is not None:
@@ -437,48 +510,56 @@ class LlmBrain:
         return Step(thought=res.content or "", calls=calls, streamed=streamed)
 
     def _next_step_tool_calls(self, task: str, history: list[Step]) -> Step:
-        messages = self._messages_for_tool_calls(
-            task, history, self._obs_limit(), self._history_budget
-        )
-        messages[0]["content"] = self._toolcalls_system_prompt()
+        def _build(budget: int) -> list[dict[str, Any]]:
+            msgs = self._messages_for_tool_calls(task, history, self._obs_limit(), budget)
+            msgs[0]["content"] = self._toolcalls_system_prompt()
+            return msgs
+
+        messages = _build(self._history_budget)
         tools_api = self._tools.describe_openai()
         reservation = (
             self._token_budget.reserve_call(messages)
             if self._token_budget is not None
             else None
         )
-        try:
-            kwargs: dict[str, Any] = {
-                "timeout": self._timeout,
-                "reasoning_effort": self._effort,
-                "tools": tools_api,
-            }
-            if reservation is not None:
-                kwargs["max_tokens"] = reservation.max_output_tokens
+        kwargs: dict[str, Any] = {
+            "timeout": self._timeout,
+            "reasoning_effort": self._effort,
+            "tools": tools_api,
+        }
+        if reservation is not None:
+            kwargs["max_tokens"] = reservation.max_output_tokens
+        if self._stream:
+            thought_parts: list[str] = []
+
+            def _on_chunk(piece: str) -> None:
+                thought_parts.append(piece)
+                # tool_calls 路径：正文先按"可能是终答"逐字推（真打字机）。
+                # 若流末发现模型其实带了 tool_calls，已推片段归为思考（厂商惯例
+                # 工具轮 content 为空；见迭代文档已知限制）。
+                if self._on_content is not None:
+                    self._on_content(piece)
+
+            kwargs.update({
+                "on_chunk": _on_chunk,
+                "on_thought": self._on_thought,
+                "on_tool_call": lambda _call: None,
+            })
+
+        def _call(msgs: list[dict[str, Any]]) -> LlmResult:
             if self._stream:
-                thought_parts: list[str] = []
+                return self._chat_stream(self.model_id, msgs, **kwargs)
+            return self._chat(self.model_id, msgs, **kwargs)
 
-                def _on_chunk(piece: str) -> None:
-                    thought_parts.append(piece)
-                    # tool_calls 路径：正文先按"可能是终答"逐字推（真打字机）。
-                    # 若流末发现模型其实带了 tool_calls，已推片段归为思考（厂商惯例
-                    # 工具轮 content 为空；见迭代文档已知限制）。
-                    if self._on_content is not None:
-                        self._on_content(piece)
-
-                kwargs.update({
-                    "on_chunk": _on_chunk,
-                    "on_thought": self._on_thought,
-                    "on_tool_call": lambda _call: None,
-                })
-                res = self._chat_stream(self.model_id, messages, **kwargs)
-            else:
-                res = self._chat(self.model_id, messages, **kwargs)
+        try:
+            res = self._with_overflow_retry(_call, _build, self._history_budget)
         except Exception as e:
             if reservation is not None:
                 reservation.cancel()
             if not isinstance(e, LlmError):
                 raise
+            if isinstance(e, ContextOverflowError):
+                return Step(thought="上下文超限", final=_overflow_final_text())
             logger.warning("LLM brain（%s 协议）调用失败，如实给阶段结论 | %s", self.protocol, e)
             return Step(thought="模型调用失败", final=f"模型暂不可用，无法继续完成该任务：{e}")
         if reservation is not None:
