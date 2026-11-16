@@ -83,6 +83,21 @@ capability_guards:
   折线图: render_chart
   饼图: render_chart
   流程图: render_flow
+  # v2.3.0-p1.3：文件读取类。真跑事故（2026-11-16 冒烟）——文件就在用户目录里，
+  # 却因路由到工具池没有 read_document 的知识库 Agent，模型只能反问"请上传文件"。
+  # 刻意用组合词而不是裸「文件/文档」：「生成文档」要留在 report_generation，
+  # 「导出文件」也不该被改道 general。
+  读取文件: read_document
+  读取文档: read_document
+  读文件: read_document
+  读文档: read_document
+  文档文件: read_document
+  查看文件: read_document
+  打开文件: read_document
+  该文件: read_document
+  这份文件: read_document
+  上传的文件: read_document
+  附件: read_document
 
 # DAG 拆分（p3.2，§四.2 第三步）：复杂任务按意图依赖生成子任务图。
 # 只对【同时出现】的意图生效；被依赖方不在任务里则自动忽略该边。

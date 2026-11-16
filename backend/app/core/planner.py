@@ -46,11 +46,45 @@ def load_planner_config() -> dict[str, Any]:
     return yaml.safe_load(_resolve_planner_path().read_text(encoding="utf-8")) or {}
 
 
+#: 否定词——出现在关键词**前面**时，这次命中不算意图（v2.3.0-p1.3）。
+#: 真跑事故（2026-11-16 冒烟）：用户说「不要检索知识库，请读取文档文件 smoke-long.md」，
+#: 规则把「检索」「知识库」当命中 → 判成 rag → 路由到无 read_document 的知识库 Agent
+#: → 模型只能反问「请上传文件」，而文件就在目录里。
+_NEGATION_MARKERS = ("不要", "别", "无需", "不用", "不需要", "禁止", "避免", "不必", "勿")
+
+#: 否定窗口：命中词前多少个字符内算「被修饰」。中文否定一般在动词前（"不要检索"），
+#: 8 个字足够覆盖"请不要帮我检索"这类口语，又不会把隔了半句的否定误拖进来。
+_NEGATION_WINDOW = 8
+
+
+def _all_occurrences_negated(low: str, keyword: str) -> bool:
+    """关键词的每一次出现是否都被前置否定词修饰。
+
+    只看前置窗口，不看后置：「检索不到」是结果描述，不是"不要检索"，仍算检索需求。
+    返回 True 表示整个关键词不计分；只要有一次未被否定就返回 False（避免一票否决）。
+    """
+    if not keyword:
+        return True
+    start = 0
+    while True:
+        i = low.find(keyword, start)
+        if i < 0:
+            return True
+        prefix = low[max(0, i - _NEGATION_WINDOW) : i]
+        if not any(neg in prefix for neg in _NEGATION_MARKERS):
+            return False
+        start = i + len(keyword)
+
+
 def _classify(text: str, cfg: dict[str, Any]) -> tuple[list[str], dict[str, int]]:
     low = text.lower()
     hits: dict[str, int] = {}
     for intent, spec in cfg.get("intents", {}).items():
-        n = sum(1 for kw in spec.get("keywords", []) if kw.lower() in low)
+        n = sum(
+            1
+            for kw in spec.get("keywords", [])
+            if kw and not _all_occurrences_negated(low, kw.lower())
+        )
         if n:
             hits[intent] = n
     ordered = sorted(hits, key=lambda k: (-hits[k], k))  # 命中数降序，同分按名稳定
