@@ -45,6 +45,14 @@ jobs:
           # 全部测试自建 sqlite 表（不连 MySQL、conftest 保证不真调 LLM）
           "$VENV/bin/python" -m pytest -q tests/
 
+      # v2.3.0-p1.5：版本号随 tag 注入镜像（此前前端手写常量，连着两个版本停在 v2.0.0）。
+      # 用 git describe 而不是解析 tag 名：带提交后缀时还能看出"tag 之后又更了几次"。
+      - name: 注入版本号
+        working-directory: /opt/office
+        run: |
+          echo "APP_VERSION=$(git describe --tags --always)" >> "$GITHUB_ENV"
+          echo "本次构建版本：$(git describe --tags --always)"
+
       - name: 构建镜像
         working-directory: /opt/office
         run: docker compose -f docker-compose.prod.yml build

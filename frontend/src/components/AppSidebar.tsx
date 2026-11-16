@@ -100,13 +100,13 @@ export function AppSidebar(props: {
   const [renameText, setRenameText] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [appVersion, setAppVersion] = useState(APP_VERSION);
   const accountRef = useRef<HTMLDivElement>(null);
   const visible = props.sessions.slice(0, visibleCount);
   const remaining = props.sessions.length - visible.length;
 
   useEffect(() => {
-    if (!accountOpen && !menuId) return undefined;
-    const onDown = (e: PointerEvent) => {
+    if (!accountOpen && !menuId) return undefined;    const onDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement;
       if (target.closest?.('.ui-confirm-mask, .workspace-dialog-mask')) return;
       if (accountOpen && !accountRef.current?.contains(target)) setAccountOpen(false);
@@ -115,6 +115,25 @@ export function AppSidebar(props: {
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
   }, [accountOpen, menuId]);
+
+  // v2.3.0-p1.5：版本号以后端 /health 为准（构建时由 git describe 注入），
+  // 常量只是兜底——打 tag 部署后侧栏立即显示新版本，不需要改前端代码。
+  useEffect(() => {
+    let alive = true;
+    if (typeof fetch !== 'function') return undefined;
+    fetch('/api/v1/health')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (alive && d && typeof d.version === 'string' && d.version) {
+          setAppVersion(d.version);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -123,7 +142,7 @@ export function AppSidebar(props: {
           <div className="brand-name">锅圈 Agent</div>
           <div className="brand-blurb">{APP_BLURB}</div>
           <div className="brand-product">office-multiagent</div>
-          <div className="brand-version">{APP_VERSION}</div>
+          <div className="brand-version">{appVersion}</div>
         </div>
       </div>
       <button className="new-chat" onClick={props.onNew}>

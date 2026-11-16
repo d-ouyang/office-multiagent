@@ -46,7 +46,11 @@ services:
     networks: [office-net]
 
   backend:
-    build: ./backend
+    # v2.3.0-p1.5：版本号由 CI 注入（git describe）；本地不传时是 dev
+    build:
+      context: ./backend
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
     environment:
       LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-http://gateway:3000/llm/v1}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}

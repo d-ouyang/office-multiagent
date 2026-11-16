@@ -18,6 +18,7 @@ from ..core.decomposer import decompose
 from ..core.model_registry import get_dialogue_models
 from ..core.planner import plan as make_plan
 from ..core.router import decide
+from ..core.version import app_version
 
 router = APIRouter()
 
@@ -61,6 +62,9 @@ def health():
         "services": services,
         "open_fds": open_fds,
         "rss_mb": rss_mb,
+        # v2.3.0-p1.5：版本号由构建注入（git describe），前端侧栏直接显示这个值，
+        # 不再手写常量——此前从 v2.0.0 之后连续两个版本忘了改。
+        "version": app_version(),
     }
 
 

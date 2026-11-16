@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import AppSidebar, { formatSessionTime, shouldFadeSessionTitle, type SessionMeta } from './AppSidebar';
-import { APP_BLURB, APP_VERSION } from '../version';
+import { APP_BLURB } from '../version';
 import { act } from 'react';
 
 afterEach(() => cleanup());
@@ -126,13 +126,20 @@ describe('会话操作', () => {
 });
 
 describe('侧栏简介与版本', () => {
-  it('展示锅圈 Agent、项目简介和当前版本号', () => {
+  it('展示锅圈 Agent、项目简介和当前版本号（版本取自 /health，v2.3.0-p1.5）', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'ok', version: 'v2.3.0-test' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
     render(<AppSidebar sessions={[]} currentId="" onSelect={() => {}} onNew={() => {}} user={user} onLogout={() => {}} />);
     expect(screen.getByText('锅圈 Agent')).toBeInTheDocument();
     expect(screen.getByText(APP_BLURB)).toBeInTheDocument();
     expect(screen.getByText('office-multiagent')).toBeInTheDocument();
-    expect(screen.getByText(APP_VERSION)).toBeInTheDocument();
+    // 版本号不再来自前端常量，而是后端 /health 的 version（构建时 git describe 注入）
+    expect(await screen.findByText('v2.3.0-test')).toBeInTheDocument();
     expect(screen.queryByText('管理（用户与额度）')).toBeNull();
+    vi.unstubAllGlobals();
   });
 
   it('点用户行打开个人中心，额度进入用量弹窗，退出需确认', () => {

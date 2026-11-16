@@ -1,5 +1,10 @@
 FROM python:3.13-slim
 
+# v2.3.0-p1.5：版本号在构建时注入（CI 用 git describe --tags --always），默认 dev。
+# 打进镜像的 ENV 由 /api/v1/health 读出，前端侧栏显示它——不再靠手改前端常量。
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
+
 WORKDIR /app
 
 # 国内镜像（服务器无 clashx，构建也走国内源）
