@@ -67,6 +67,23 @@ def test_replay_aggregates_four_logs(replay_env):
     assert body["dead_letter"][0]["action"] == "run.dead_letter"
 
 
+def test_replay_degrades_when_table_missing(replay_env):
+    """R-5：缺表（本地漏跑 0014）不能让整个回放 500——降级为空并在 degraded 标注。
+
+    v2.3.0-p1.4 真事故：本地 `alembic_version=0013`、`tool_invocation` 不存在，
+    replay 直接 500，把最有用的 events 一起挡在门外。
+    """
+    client, token, eng = replay_env
+    with eng.begin() as c:
+        c.execute(text("DROP TABLE tool_invocation"))
+    r = client.get("/api/v1/runs/run-A/replay", headers={"Authorization": token(1)})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tools"]["invocations"] == []
+    assert "tools.invocations" in body["degraded"]
+    assert body["events"], "事件流不能因缺表一起丢"
+
+
 def test_replay_other_user_404(replay_env):
     """非本人且非管理员 → 404（不暴露存在性，与会话权限同口径）。"""
     client, token, _ = replay_env

@@ -128,18 +128,25 @@ def test_tool_error_becomes_observation_not_crash():
 def test_observation_summary_truncates_dict_content():
     from app.orchestration.react import _summarize_observation
 
-    # p6.9：read_document max_chars=50000、摘要 content 截 24000——
-    # 2 万字文档全量进上下文（通读）；超 24000 才截断并标注
+    # p6.9：read_document max_chars=50000；v2.3.0-p1.4 起摘要上限同为 50000——
+    # 5 万字文档一次读完（通读），超 50000 才截断并标注
     big = {"file_name": "dev/a.md", "total_chars": 60000, "content": "x" * 60000}
     s = _summarize_observation(big)
     assert "file_name=dev/a.md" in s
     assert "已截断展示" in s
-    assert len(s) < 50000  # 24000 上限 + 字段摘要
+    assert len(s) < 51000  # 50000 上限 + 字段摘要
 
     full = {"file_name": "dev/b.md", "total_chars": 20965, "content": "y" * 20965}
     s2 = _summarize_observation(full)
     assert "已截断展示" not in s2  # 2 万字文档不再截断（通读）
     assert s2.count("y") == 20965
+
+    # v2.3.0-p1.4 真跑回归：24,658 字的文档必须一次读完。
+    # 此前上限 24000，末尾 658 字（第 10 章要点）被切，模型只能推断数字。
+    edge = {"file_name": "dev/c.md", "total_chars": 24658, "content": "z" * 24658}
+    s3 = _summarize_observation(edge)
+    assert "已截断展示" not in s3
+    assert s3.count("z") == 24658
 
 
 def test_observation_summary_keeps_sales_report():

@@ -27,6 +27,23 @@ def _rows(conn, sql: str, params: dict) -> list[dict[str, Any]]:
     return [dict(m) for m in conn.execute(text(sql), params).mappings()]
 
 
+def _safe_rows(
+    conn, sql: str, params: dict, *, label: str, degraded: list[str]
+) -> list[dict[str, Any]]:
+    """查询失败（缺表/缺列）时降级为空列表，不把整个回放打成 500。
+
+    为什么宽容（v2.3.0-p1.4）：回放是排障工具，能给的先给。真事故（2026-11-17）——
+    本地库漏了 0014 迁移（`tool_invocation` 不存在），replay 直接 500，反而把最有用的
+    events 一起挡在门外，排障的人连事件都看不到。少一格数据远好过整页报错。
+    """
+    try:
+        return _rows(conn, sql, params)
+    except Exception:  # noqa: BLE001 - 排障工具宁可少一格，也不整页失败
+        logger.warning("回放查询失败，该项降级为空 | %s", label, exc_info=True)
+        degraded.append(label)
+        return []
+
+
 @router.get("/runs/{run_id}/replay")
 async def replay_run(run_id: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     from ..core.db import get_engine
@@ -72,30 +89,39 @@ async def replay_run(run_id: str, authorization: str | None = Header(default=Non
             if isinstance(ev, dict) and str(ev.get("run_id") or "") == run_id:
                 events.append(ev)
 
+    degraded: list[str] = []
     with engine.connect() as conn:
-        invocations = _rows(
+        invocations = _safe_rows(
             conn,
             "SELECT tool_name, args_preview, observation, created_at FROM tool_invocation "
             "WHERE run_id=:r ORDER BY id",
             {"r": run_id},
+            label="tools.invocations",
+            degraded=degraded,
         )
-        call_log = _rows(
+        call_log = _safe_rows(
             conn,
             "SELECT tool, params, error, success FROM tool_call_log "
             "WHERE agent_run_id=:r ORDER BY id",
             {"r": run_id},
+            label="tools.call_log",
+            degraded=degraded,
         )
-        ledger = _rows(
+        ledger = _safe_rows(
             conn,
             "SELECT model, reserve, settle, kind, created_at FROM token_ledger "
             "WHERE task_id=:r ORDER BY id",
             {"r": run_id},
+            label="usage",
+            degraded=degraded,
         )
-        dead_letter = _rows(
+        dead_letter = _safe_rows(
             conn,
             "SELECT actor_username, action, detail, created_at FROM audit_log "
             "WHERE action='run.dead_letter' AND target_id=:r ORDER BY id",
             {"r": run_id},
+            label="dead_letter",
+            degraded=degraded,
         )
 
     request_meta: Any = None
@@ -127,4 +153,6 @@ async def replay_run(run_id: str, authorization: str | None = Header(default=Non
         "tools": {"invocations": invocations, "call_log": call_log},
         "usage": ledger,
         "dead_letter": dead_letter,
+        # v2.3.0-p1.4：哪些块因缺表/缺列被降级（空列表 = 全部正常）
+        "degraded": degraded,
     }

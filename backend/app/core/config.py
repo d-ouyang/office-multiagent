@@ -130,8 +130,11 @@ class Settings(BaseSettings):
 
     # ---- 上下文阈值（v2.3.0-p1.0 C 层补全：从散落的硬编码常量收成一处，可热更）----
     # 0 一律表示"不限制"（预算器/截断直通），便于线上出问题时秒级回退。
-    observation_max_chars: int = 24000   # 单步工具观察写进 history 的上限（字符）
-    history_step_max_chars: int = 24000  # ReAct 历史渲染时每步观察的上限（两条协议共用）
+    # v2.3.0-p1.4：默认 24000 → 50000，与 doc_read_max_chars 齐平。24000 是 p6.9 时代
+    # 为"2 万字文档能通读"定的硬编码；现在有预算器（窗口 × 比例）兜总量，单步再卡 24K
+    # 只会让 2.4 万字的文档丢掉最后一章（真跑见证：第 10 章要点被切，模型只能推断）。
+    observation_max_chars: int = 50000   # 单步工具观察写进 history 的上限（字符）
+    history_step_max_chars: int = 50000  # ReAct 历史渲染时每步观察的上限（两条协议共用）
     history_recent_rounds: int = 4       # 会话记忆保留原文的轮数（更早压成摘要）
     history_round_chars: int = 80        # 压缩后每轮问答各自保留的字符数
     # 单次请求中"历史"可占模型窗口的百分比（v2.3.0-p1.1 预算器）；0=不限（逐条截断）
