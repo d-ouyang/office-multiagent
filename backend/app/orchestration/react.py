@@ -46,35 +46,55 @@ class Step:
     parse_error: str | None = None  # p1.2 落下的 arguments 解析错误（该 call 不真执行）
 
 
-def _summarize_observation(obs: Any, *, max_chars: int = 24000) -> str:
+def _obs_max_chars() -> int:
+    """v2.3.0-p1.0：单步观察写进 history 的上限（0=不限）。
+
+    热开关优先（管理端可调，下一个任务生效），读不到就回落配置——设置层不该阻断任务。
+    """
+    try:
+        from ..core import runtime_settings
+
+        return max(0, int(runtime_settings.effective("observation_max_chars")))
+    except Exception:  # noqa: BLE001 - 设置读失败回落代码缺省
+        from ..core.config import settings
+
+        return max(0, int(settings.observation_max_chars))
+
+
+def _summarize_observation(obs: Any, *, max_chars: int | None = None) -> str:
     """p6.7：工具结果进 LLM 上下文的可读摘要——不是 str(dict) 全文。
     p6.9：content 截断 1200 → 24000（read_document max_chars 同步 50000，
     "通读整篇"场景 2 万字文档全量进上下文；deepseek-chat 128K 装得下）。
+    v2.3.0-p1.0：上限不再写死——max_chars=None 走运行时设置，0 表示不限制
+    （回退开关：线上出问题时改配置即刻回到旧行为，不必发版）。
 
     原实现把含 8000 字 content 的 dict repr 原样塞进 history，LLM 下一轮上下文
     被垃圾撑爆（真跑见证：read_document 成功后 LLM 幻觉出 action="none"）。
     现在：dict 取关键字段、content 截断、截断如实标注。
     """
+    limit = _obs_max_chars() if max_chars is None else max(0, int(max_chars))
+    field_cap = 10**9 if limit == 0 else min(8000, limit)
+    total_cap = 10**9 if limit == 0 else limit * 2
     if isinstance(obs, dict):
         parts = []
         for key, value in obs.items():
             if key == "content" and isinstance(value, str):
-                shown = value[:max_chars]
+                shown = value if limit == 0 else value[:limit]
                 tail = (
                     f"…（原文共 {obs.get('total_chars', len(value))} 字，已截断展示）"
-                    if len(value) > max_chars
+                    if limit > 0 and len(value) > limit
                     else ""
                 )
                 parts.append(f"content={shown}{tail}")
                 continue
             rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
-            if len(rendered) > 8000:
-                rendered = rendered[:8000] + "…（已截断）"
+            if len(rendered) > field_cap:
+                rendered = rendered[:field_cap] + "…（已截断）"
             parts.append(f"{key}={rendered}")
         text = "；".join(parts)
     else:
         text = str(obs)
-    return text[:max_chars * 2]
+    return text if total_cap == 10**9 else text[:total_cap]
 
 
 def _same_call(left: Step, name: str, action_input: dict[str, Any]) -> bool:

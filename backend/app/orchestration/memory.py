@@ -34,25 +34,65 @@ def _pairs(messages: list[dict[str, Any]]) -> list[tuple[str, str]]:
     return pairs
 
 
-def compress_rounds(rounds: list[tuple[str, str]]) -> str:
+def _limits() -> tuple[int, int]:
+    """v2.3.0-p1.0：保留原文的轮数 + 压缩后每段字符数。
+
+    热开关优先（管理端可调，下一个任务生效），读不到回落配置——会话记忆不该因
+    设置层故障而中断。返回 (轮数, 字符数)，轮数 0 表示全部压成摘要。
+    """
+    try:
+        from ..core import runtime_settings
+
+        return (
+            max(0, int(runtime_settings.effective("history_recent_rounds"))),
+            max(10, int(runtime_settings.effective("history_round_chars"))),
+        )
+    except Exception:  # noqa: BLE001 - 设置读失败回落代码缺省
+        from ..core.config import settings
+
+        return (
+            max(0, int(settings.history_recent_rounds)),
+            max(10, int(settings.history_round_chars)),
+        )
+
+
+def compress_rounds(rounds: list[tuple[str, str]], *, max_chars: int | None = None) -> str:
+    """把问答对压成一行。max_chars=None 取配置值（v2.3.0-p1.0 起不再写死 80）。"""
+    cap = _limits()[1] if max_chars is None else max(10, int(max_chars))
     lines = []
     for question, answer in rounds:
-        q = question.replace("\n", " ")[:80]
-        a = answer.replace("\n", " ")[:80]
+        q = question.replace("\n", " ")[:cap]
+        a = answer.replace("\n", " ")[:cap]
         lines.append(f"问：{q} 答：{a or '（没有留下回答）'}")
     return "\n".join(lines)
 
 
-def prepare_turn(history: list[dict[str, Any]], current: str) -> tuple[str, dict[str, str]]:
-    """拼出本轮任务文本，并返回分栏原文。当前问题不要放进 history。"""
+def prepare_turn(
+    history: list[dict[str, Any]],
+    current: str,
+    *,
+    recent_rounds: int | None = None,
+    round_chars: int | None = None,
+) -> tuple[str, dict[str, str]]:
+    """拼出本轮任务文本，并返回分栏原文。当前问题不要放进 history。
+
+    v2.3.0-p1.0：轮数与每段长度改为可配（显式参数 > 运行时设置 > 配置缺省）；
+    recent_rounds=0 表示全部压成摘要（注意 Python 的 `x[:-0]` 是空列表，需单独分支）。
+    """
+    cfg_rounds, cfg_chars = _limits()
+    keep = cfg_rounds if recent_rounds is None else max(0, int(recent_rounds))
+    chars = cfg_chars if round_chars is None else max(10, int(round_chars))
     rounds = _pairs(history)
-    older, recent = rounds[:-RECENT_ROUNDS], rounds[-RECENT_ROUNDS:]
+    if keep <= 0:
+        older, recent = rounds, []
+    else:
+        older, recent = rounds[:-keep], rounds[-keep:]
     parts: dict[str, str] = {}
-    summary = compress_rounds(older)
+    summary = compress_rounds(older, max_chars=chars)
     if summary:
         parts["summary"] = summary
     if recent:
-        parts["recent"] = compress_rounds(recent).replace("问：", "用户：").replace(" 答：", "\n助手：")
+        parts["recent"] = compress_rounds(recent, max_chars=chars).replace("问：", "用户：").replace(" 答：", "\n助手：")
     parts["current"] = current.strip()
     blocks = []
     if summary:

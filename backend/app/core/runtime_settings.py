@@ -58,6 +58,43 @@ def _catalog() -> dict[str, dict[str, Any]]:
             "max": 50,
             "default": int(settings.agent_max_iterations),
         },
+        # v2.3.0-p1.0（C 层补全）：上下文阈值从硬编码常量收成热开关。0 表示不限制。
+        "observation_max_chars": {
+            "label": "单步工具结果上限",
+            "description": "一次工具调用返回的内容，写进上下文时最多保留多少字。超出部分截断并标注。填 0 表示不限制。对所有用户生效。",
+            "value_type": "int",
+            "scope": "system",
+            "min": 0,
+            "max": 200_000,
+            "default": int(settings.observation_max_chars),
+        },
+        "history_step_max_chars": {
+            "label": "历史步骤观察上限",
+            "description": "每轮发给模型时，历史里每一步的观察各保留多少字（两种工具调用协议共用同一值）。填 0 表示不限制。",
+            "value_type": "int",
+            "scope": "system",
+            "min": 0,
+            "max": 200_000,
+            "default": int(settings.history_step_max_chars),
+        },
+        "history_recent_rounds": {
+            "label": "对话保留轮数",
+            "description": "最近几轮对话原样保留，更早的压成摘要再拼进本轮。0 表示全部压成摘要。",
+            "value_type": "int",
+            "scope": "system",
+            "min": 0,
+            "max": 20,
+            "default": int(settings.history_recent_rounds),
+        },
+        "history_round_chars": {
+            "label": "单轮摘要长度",
+            "description": "压缩后的每一轮问答各自保留多少字（问题和回答分别截断）。越小越省上下文，也越容易丢细节。",
+            "value_type": "int",
+            "scope": "system",
+            "min": 10,
+            "max": 2000,
+            "default": int(settings.history_round_chars),
+        },
     }
 
 

@@ -128,6 +128,13 @@ class Settings(BaseSettings):
     user_memory_inject_chars: int = 4000  # 注入块总字符上限（背景四段 + 短条目）
     user_profile_section_chars: int = 2000  # 背景里每一段的字数上限
 
+    # ---- 上下文阈值（v2.3.0-p1.0 C 层补全：从散落的硬编码常量收成一处，可热更）----
+    # 0 一律表示"不限制"（预算器/截断直通），便于线上出问题时秒级回退。
+    observation_max_chars: int = 24000   # 单步工具观察写进 history 的上限（字符）
+    history_step_max_chars: int = 24000  # ReAct 历史渲染时每步观察的上限（两条协议共用）
+    history_recent_rounds: int = 4       # 会话记忆保留原文的轮数（更早压成摘要）
+    history_round_chars: int = 80        # 压缩后每轮问答各自保留的字符数
+
     # ---- 连接层加固（p1.2a）----
     mysql_pool_size: int = 5
     mysql_max_overflow: int = 10

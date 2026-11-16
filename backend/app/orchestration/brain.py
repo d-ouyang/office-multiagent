@@ -36,6 +36,22 @@ def looks_like_json(text: str) -> bool:
     return (text or "").lstrip().startswith("{")
 
 
+def history_step_limit(limit: int | None = None) -> int:
+    """v2.3.0-p1.0：历史渲染时每步观察的上限（0=不限）。
+
+    两条协议（JSON / 原生 tool_calls）共用同一个值——否则灰度期同一任务换协议
+    就换行为，排障无法归因。显式参数 > 运行时设置 > 配置缺省。
+    """
+    if limit is not None:
+        return max(0, int(limit))
+    try:
+        from ..core import runtime_settings
+
+        return max(0, int(runtime_settings.effective("history_step_max_chars")))
+    except Exception:  # noqa: BLE001 - 设置读失败回落代码缺省
+        return max(0, int(settings.history_step_max_chars))
+
+
 def resolve_react_protocol(mode: str | None, model_id: str, tools: ToolRegistry) -> str:
     """v2.0.0-p1.5：解析 ReAct 协议（json | tool_calls）。
 
@@ -221,8 +237,14 @@ class LlmBrain:
         role = self._custom_system or "你是企业办公助手系统中一个业务 Agent（ReAct 模式）。"
         return f"{role}\n\n{_PROTOCOL_TMPL.format(tools=tools, max_steps=self._max_steps_hint)}"
 
+    def _obs_limit(self) -> int:
+        """v2.3.0-p1.0：本实例渲染历史时用的观察上限（见模块级 history_step_limit）。"""
+        return history_step_limit()
+
     @staticmethod
-    def _render_history(history: list[Step]) -> str:
+    def _render_history(history: list[Step], limit: int | None = None) -> str:
+        """把历史步骤渲染成一段文本。limit=None 取运行时设置，0 表示不截断。"""
+        cap = history_step_limit(limit)
         if not history:
             return "（尚无步骤）"
         lines = []
@@ -233,8 +255,10 @@ class LlmBrain:
             if st.observation is not None:
                 # p6.9：400 → 24000——原 400 字截断让 LLM"通读"时只看到文档开头
                 # （真跑见证：2 万字文档读到"一句话价值"即断，LLM 以为工具只返回片段）
-                obs = st.observation[:24000]
-                line += f" | 观察：{obs}{'…（已截断）' if len(st.observation) > 24000 else ''}"
+                # v2.3.0-p1.0：24000 收成可配（history_step_max_chars），0=不限
+                obs = st.observation if cap == 0 else st.observation[:cap]
+                tail = "…（已截断）" if cap > 0 and len(st.observation) > cap else ""
+                line += f" | 观察：{obs}{tail}"
             lines.append(line)
         return "\n".join(lines)
 
@@ -245,7 +269,7 @@ class LlmBrain:
             {"role": "system", "content": self._system_prompt()},
             {
                 "role": "user",
-                "content": f"任务：{task}\n\n已执行步骤：\n{self._render_history(history)}\n\n请给出下一步 JSON。",
+                "content": f"任务：{task}\n\n已执行步骤：\n{self._render_history(history, self._obs_limit())}\n\n请给出下一步 JSON。",
             },
         ]
         if self._stream:
@@ -352,12 +376,16 @@ class LlmBrain:
         return f"{role}\n\n{_TOOLCALLS_TMPL.format(max_steps=self._max_steps_hint)}"
 
     @staticmethod
-    def _messages_for_tool_calls(task: str, history: list[Step]) -> list[dict[str, Any]]:
+    def _messages_for_tool_calls(
+        task: str, history: list[Step], limit: int | None = None
+    ) -> list[dict[str, Any]]:
         """历史消息形态：assistant(tool_calls) → tool(tool_call_id)。
 
         红线（历史双写禁忌）：tool_calls 路径绝不把观察拼进 user 文本——观察只走
         role=tool 消息；同一轮也不存在两种历史形态。
+        v2.3.0-p1.0：观察上限与 JSON 协议同源（limit=None 取配置，0=不限）。
         """
+        cap = history_step_limit(limit)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": ""},
             {"role": "user", "content": f"任务：{task}"},
@@ -386,10 +414,11 @@ class LlmBrain:
                     },
                 }],
             })
+            obs_text = st.observation or ""
             messages.append({
                 "role": "tool",
                 "tool_call_id": call_id,
-                "content": (st.observation or "")[:24000],
+                "content": obs_text if cap == 0 else obs_text[:cap],
             })
         return messages
 
@@ -406,7 +435,7 @@ class LlmBrain:
         return Step(thought=res.content or "", calls=calls, streamed=streamed)
 
     def _next_step_tool_calls(self, task: str, history: list[Step]) -> Step:
-        messages = self._messages_for_tool_calls(task, history)
+        messages = self._messages_for_tool_calls(task, history, self._obs_limit())
         messages[0]["content"] = self._toolcalls_system_prompt()
         tools_api = self._tools.describe_openai()
         reservation = (
