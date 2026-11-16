@@ -1689,3 +1689,43 @@ Phase 1：后端核心骨架 → `v1.0.0-p1.1`。
 ---
 
 ## v2.0.0-p2.5 — 管理端尺寸对齐 rag admin-console（2026-10-27）
+
+---
+
+## v2.2.0 — Harness 工程化：从「能跑」到「敢交给别人用」（2026-11-14~16）
+
+> 完整迭代明细见 `docs/iterations/v2.2.0-p1.*.md`（13 个迭代）；本文是版本级叙事。
+
+2.2.0 用一个月把系统从「单机自己跑得欢」改造为「每个环节可替换、可计量、可重入、
+可回放、可门禁」——五条主线：
+
+**一、契约与可替换（A 层）**：ModelAdapter 把 LLM 门面化（Fake 注入秒级测全链路）、
+ToolSpec 给 13 个工具补上风险/幂等/权限的横切元数据（缺省悲观档）、Event 8/8 字段
+贯穿（trace_id/tenant_id）、StateSnapshot 对齐事件序——恢复语义从此有据可依。
+
+**二、LLM 收口与计量（B 层）**：放弃独立 LiteLLM 容器（服务器内存不够），改 gateway
+内置 LLM 代理（14 模型 × 2 provider，流式透传，服务间密钥隔离）；usage 归因
+tenant/user/run + cache 折扣计价；per-user 入口余额预检 + tenant 日预算 + 软告警
+webhook——「钱」从此有了单一收口点。
+
+**三、重入与不死（C 层）**：tool_invocation 幂等缓存（同 run 重投副作用恰好一次）、
+run 级 lease（并发第二实例 409）+ watchdog（900s 超时置位取消）+ 死信审计
+（不再静默断流）、纯 alembic 建库闭环（0001 多语句拆分修复）。
+
+**四、可观测（D 层）**：`GET /runs/{id}/replay` 四套日志合一——events/tools/usage/
+dead_letter 一个接口拉齐一次任务的全部现场，非本人 404 防探测。
+
+**五、可门禁（E 层）**：golden set 10 条（route/tools_called/无死信三断言）+ 双入口
+（pytest 门禁 + CLI）+ **deploy workflow 挂评测门禁（构建镜像前全量单测+golden set）**
+——门禁上线第一天就拦截了两次部署环境错配（rsync root 属主 / 门禁 venv 建在只读的
+/opt），证明其价值。
+
+**F 系列收尾**：前端 lazy 分割（主包 2043KB→158KB）、tsc 8 错清零、runner 健康监控
+（queued>10min 自动重启，crontab）。
+
+**生产收官**：tag `v2.2.0-p1.13c`，生产代码 9218774。三次部署（p1.13/p1.13b 失败、
+p1.13c 成功）的完整记录见 `iterations/v2.2.0-p1.13c-deploy-gates.md`。
+
+> ⚠️ 版本流水缺口说明：v2.1.0 全程的 RELEASES 节缺失（当时未按版本补写本文档），
+> 迭代明细在 `docs/iterations/` 与 PLAN-2.1.0.md。后续版本（2.3.0 起）恢复逐版本
+> 写 RELEASES 的纪律。
