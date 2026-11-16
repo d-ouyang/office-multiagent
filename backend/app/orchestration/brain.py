@@ -26,6 +26,7 @@ from ..core.llm import (
     resolve_model,
 )
 from ..core.token_budget import TaskTokenBudget
+from .context_budget import budget_steps
 from .react import Brain, Step, StubBrain
 from .tools import ToolRegistry
 
@@ -198,6 +199,7 @@ class LlmBrain:
         reasoning_effort: str | None = None,
         token_budget: TaskTokenBudget | None = None,
         protocol: str | None = None,
+        history_budget: int = 0,
     ) -> None:
         self.model_id = model_id
         self._tools = tools
@@ -211,6 +213,10 @@ class LlmBrain:
         self._on_thought = on_thought
         self._effort = reasoning_effort or None
         self._token_budget = token_budget
+        # v2.3.0-p1.1：单次请求给历史用的 token 预算（0=不限，回退到逐条截断）。
+        # 由 graph 按"模型窗口 × 百分比"注入——放在 brain 上是因为渲染在 brain 里发生，
+        # 而预算属于任务上下文（同一任务的多步共享同一个值）。
+        self._history_budget = max(0, int(history_budget))
         # v2.0.0-p1.3：协议解析一次定终身（构造时按 model+工具集判定，运行期不变）。
         self.protocol = resolve_react_protocol(protocol, model_id, tools)
         self.usage: dict[str, int] = {
@@ -242,25 +248,18 @@ class LlmBrain:
         return history_step_limit()
 
     @staticmethod
-    def _render_history(history: list[Step], limit: int | None = None) -> str:
-        """把历史步骤渲染成一段文本。limit=None 取运行时设置，0 表示不截断。"""
-        cap = history_step_limit(limit)
+    def _render_history(
+        history: list[Step], limit: int | None = None, budget: int = 0
+    ) -> str:
+        """把历史步骤渲染成一段文本。
+
+        limit=None 取运行时设置（0=不截）；budget>0 时按 token 预算降级旧步
+        （v2.3.0-p1.1），0=不限、行为与 p1.0 完全一致（回退路径）。
+        """
         if not history:
             return "（尚无步骤）"
-        lines = []
-        for i, st in enumerate(history, 1):
-            line = f"{i}. 思考：{st.thought or '（无）'}"
-            if st.action:
-                line += f" | 动作：{st.action}({json.dumps(st.action_input, ensure_ascii=False)})"
-            if st.observation is not None:
-                # p6.9：400 → 24000——原 400 字截断让 LLM"通读"时只看到文档开头
-                # （真跑见证：2 万字文档读到"一句话价值"即断，LLM 以为工具只返回片段）
-                # v2.3.0-p1.0：24000 收成可配（history_step_max_chars），0=不限
-                obs = st.observation if cap == 0 else st.observation[:cap]
-                tail = "…（已截断）" if cap > 0 and len(st.observation) > cap else ""
-                line += f" | 观察：{obs}{tail}"
-            lines.append(line)
-        return "\n".join(lines)
+        plan = budget_steps(history, budget, step_cap=history_step_limit(limit))
+        return "\n".join(plan.lines)
 
     def next_step(self, task: str, history: list[Step]) -> Step:  # noqa: D102 - 见类注释
         if self.protocol == "tool_calls":
@@ -269,7 +268,7 @@ class LlmBrain:
             {"role": "system", "content": self._system_prompt()},
             {
                 "role": "user",
-                "content": f"任务：{task}\n\n已执行步骤：\n{self._render_history(history, self._obs_limit())}\n\n请给出下一步 JSON。",
+                "content": f"任务：{task}\n\n已执行步骤：\n{self._render_history(history, self._obs_limit(), self._history_budget)}\n\n请给出下一步 JSON。",
             },
         ]
         if self._stream:
@@ -377,27 +376,31 @@ class LlmBrain:
 
     @staticmethod
     def _messages_for_tool_calls(
-        task: str, history: list[Step], limit: int | None = None
+        task: str, history: list[Step], limit: int | None = None, budget: int = 0
     ) -> list[dict[str, Any]]:
         """历史消息形态：assistant(tool_calls) → tool(tool_call_id)。
 
         红线（历史双写禁忌）：tool_calls 路径绝不把观察拼进 user 文本——观察只走
         role=tool 消息；同一轮也不存在两种历史形态。
-        v2.3.0-p1.0：观察上限与 JSON 协议同源（limit=None 取配置，0=不限）。
+        v2.3.0-p1.0：观察上限与 JSON 协议同源；p1.1 起预算判定也同源——用
+        `plan.obs_text` 决定每步发原文还是降级文案，被整块省掉的步连 assistant 一起不发。
         """
-        cap = history_step_limit(limit)
+        plan = budget_steps(history, budget, step_cap=history_step_limit(limit))
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": ""},
             {"role": "user", "content": f"任务：{task}"},
         ]
         for i, st in enumerate(history, 1):
+            body = plan.obs_text.get(i)
+            if body is None:  # 预算省掉的步
+                continue
             if st.action is None:
                 # 2.1.0 P1-1n hotfix：无工具调用的观察步（HITL 续跑 seed"用户已补充输入：…"）
                 # 以 user 消息进入——生产实测该 Step 被跳过导致模型永远收不到用户回答，
                 # 在 ask_user 后直接给终答。seed 是用户说的话，走 user 消息语义正确；
                 # 工具观察仍只走 role=tool（红线不变）。
-                if st.observation:
-                    messages.append({"role": "user", "content": st.observation})
+                if body:
+                    messages.append({"role": "user", "content": body})
                 continue
             if st.observation is None:
                 continue
@@ -414,11 +417,10 @@ class LlmBrain:
                     },
                 }],
             })
-            obs_text = st.observation or ""
             messages.append({
                 "role": "tool",
                 "tool_call_id": call_id,
-                "content": obs_text if cap == 0 else obs_text[:cap],
+                "content": body,
             })
         return messages
 
@@ -435,7 +437,9 @@ class LlmBrain:
         return Step(thought=res.content or "", calls=calls, streamed=streamed)
 
     def _next_step_tool_calls(self, task: str, history: list[Step]) -> Step:
-        messages = self._messages_for_tool_calls(task, history, self._obs_limit())
+        messages = self._messages_for_tool_calls(
+            task, history, self._obs_limit(), self._history_budget
+        )
         messages[0]["content"] = self._toolcalls_system_prompt()
         tools_api = self._tools.describe_openai()
         reservation = (
@@ -518,6 +522,7 @@ def make_brain(
     reasoning_effort: str | None = None,
     token_budget: TaskTokenBudget | None = None,
     protocol: str | None = None,
+    history_budget: int = 0,
 ) -> Brain:
     """配置驱动的 Brain 工厂：模型+密钥就绪 → LlmBrain；否则回落 StubBrain（可测基线）。
 
@@ -552,4 +557,5 @@ def make_brain(
         reasoning_effort=reasoning_effort,
         token_budget=token_budget,
         protocol=protocol,
+        history_budget=history_budget,
     )

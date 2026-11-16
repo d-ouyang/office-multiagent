@@ -134,6 +134,8 @@ class Settings(BaseSettings):
     history_step_max_chars: int = 24000  # ReAct 历史渲染时每步观察的上限（两条协议共用）
     history_recent_rounds: int = 4       # 会话记忆保留原文的轮数（更早压成摘要）
     history_round_chars: int = 80        # 压缩后每轮问答各自保留的字符数
+    # 单次请求中"历史"可占模型窗口的百分比（v2.3.0-p1.1 预算器）；0=不限（逐条截断）
+    history_budget_window_pct: int = 60
 
     # ---- 连接层加固（p1.2a）----
     mysql_pool_size: int = 5

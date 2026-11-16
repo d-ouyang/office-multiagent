@@ -193,8 +193,30 @@ class RunEventEmitter:
     def error(self, message: str, code: str | None = None) -> Event:
         return self.emit(EventType.ERROR, message=message, code=code)
 
-    def context_usage(self, window: int, used: int, items: list[dict[str, Any]]) -> Event:
-        return self.emit(EventType.CONTEXT_USAGE, window=window, used=used, items=items)
+    def context_usage(
+        self,
+        window: int,
+        used: int,
+        items: list[dict[str, Any]],
+        *,
+        budget: int = 0,
+        dropped: int = 0,
+        notes: list[str] | None = None,
+    ) -> Event:
+        """上下文占用快照。
+
+        v2.3.0-p1.1：budget（本次历史预算，0=不限）/ dropped（被降级丢弃的字数）/
+        notes（预算器说明）为纯增量字段，老前端忽略即可——事件契约只增不改。
+        """
+        return self.emit(
+            EventType.CONTEXT_USAGE,
+            window=window,
+            used=used,
+            items=items,
+            budget=budget,
+            dropped=dropped,
+            notes=notes or [],
+        )
 
     def visual(self, kind: str, payload: dict[str, Any]) -> Event:
         """前端绘制用的结构。kind=flow 是流程图，kind=chart 是 ECharts 数据。

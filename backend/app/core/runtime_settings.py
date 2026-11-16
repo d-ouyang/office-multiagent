@@ -95,6 +95,15 @@ def _catalog() -> dict[str, dict[str, Any]]:
             "max": 2000,
             "default": int(settings.history_round_chars),
         },
+        "history_budget_window_pct": {
+            "label": "历史占用窗口比例",
+            "description": "一次请求里，历史步骤最多占模型窗口的百分之多少；超出的旧步骤自动压成要点。填 0 表示不限制（只按单步上限截断）。",
+            "value_type": "int",
+            "scope": "system",
+            "min": 0,
+            "max": 90,
+            "default": int(settings.history_budget_window_pct),
+        },
     }
 
 

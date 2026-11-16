@@ -115,6 +115,30 @@ def _json_safe_dict(value: Any) -> dict[str, Any]:
         return {str(k): str(v) for k, v in (value or {}).items()}
 
 
+def _history_budget(model_id: str | None) -> int:
+    """v2.3.0-p1.1：单次请求给历史用的 token 预算 = 模型窗口 × 百分比。
+
+    为什么按窗口而不是按任务余额：这是**单次请求**的长度约束（防 provider 400），
+    任务累计预算由 TaskTokenBudget 单独管。两者混用会让长任务在后半程"越跑越瞎"。
+    读不到窗口按 128K 兜底，读不到开关按 60%；返回 0 表示不限（回退到逐条截断）。
+    """
+    from ..core import runtime_settings
+    from ..core.model_registry import load_registry
+
+    try:
+        pct = max(0, min(90, int(runtime_settings.effective("history_budget_window_pct"))))
+    except Exception:  # noqa: BLE001 - 设置读失败回落配置
+        pct = max(0, int(settings.history_budget_window_pct))
+    if pct == 0:
+        return 0
+    window = 128000
+    mid = model_id or settings.llm_brain_model
+    entry = next((m for m in load_registry().get("models", []) if m.id == mid), None)
+    if entry is not None and int(getattr(entry, "context_window", 0) or 0) > 0:
+        window = int(entry.context_window)
+    return max(1000, int(window * pct / 100))
+
+
 def _emit_context(state: TaskState, system: str, tools, emitter: RunEventEmitter, emit: Callable[[Event], None]) -> None:
     from ..core.model_registry import load_registry
     from .brain import _PROTOCOL_TMPL
@@ -132,7 +156,7 @@ def _emit_context(state: TaskState, system: str, tools, emitter: RunEventEmitter
         window = int(entry.context_window)
     items = context_items(parts, system=system, rules=_PROTOCOL_TMPL, tools=tool_text)
     used = sum(int(item["tokens"]) for item in items)
-    emit(emitter.context_usage(window, used, items))
+    emit(emitter.context_usage(window, used, items, budget=_history_budget(state.get("model"))))
 
 
 def _validate_and_flag(
@@ -204,6 +228,9 @@ def build_graph(
         仍是逐字流（打字机），不受影响。
         """
 
+        # v2.3.0-p1.1：子任务与人共享同一个窗口预算（并行时各自独立成请求，互不影响）
+        hb = _history_budget(state.get("model"))
+
         def _run(st, upstream=None):
             spec = get_agent_spec(st.agent_type)
             spec_tools = build_registry_for_spec(spec, base)
@@ -217,6 +244,7 @@ def build_graph(
                 on_thought=lambda t: emit(emitter.thinking_delta(t)),
                 reasoning_effort=_effort_for(state),
                 token_budget=token_budget,
+                history_budget=hb,
             )
             extra_tokens = {"n": 0}  # p4.3d：强制收尾那次 LLM 调用的用量，最后并入账
 
@@ -230,6 +258,7 @@ def build_graph(
                     stream=False,
                     reasoning_effort=_effort_for(state),
                     token_budget=token_budget,
+                    history_budget=hb,
                 )
                 step = bare.next_step(
                     f"【强制收尾】{reason}。不要再调用任何工具，直接基于以上已获得的观察，"
@@ -346,6 +375,7 @@ def build_graph(
             on_thought=lambda t: emit(emitter.thinking_delta(t)),
             reasoning_effort=_effort_for(state),
             token_budget=token_budget,
+            history_budget=_history_budget(state.get("model")),
         )
         # 2.1.0 P1-1（HITL）：paused_input 续跑时回放已完成步骤 + 注入用户补充；
         # ask_count ≥ 3 后不再允许 ask_user（防问询循环），强制收敛给终答。
@@ -487,6 +517,8 @@ def build_graph(
                 on_thought=lambda t: emit(emitter.thinking_delta(t)),
                 reasoning_effort=_effort_for(state),
                 token_budget=token_budget,
+                # 汇总脑最容易超窗口（塞的是各子任务终答），预算必须给
+                history_budget=_history_budget(state.get("model")),
             )
             task_lines = "\n".join(f"【{k}】{(v.final or '')[:2000]}" for k, v in results.items())
             asset_block = ("\n\n生成的文件：\n" + "\n".join(deliverables)) if deliverables else ""

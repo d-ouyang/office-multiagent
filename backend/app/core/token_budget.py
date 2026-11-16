@@ -57,10 +57,19 @@ class TaskTokenBudget:
 
     @staticmethod
     def prompt_upper_bound(messages: list[dict[str, Any]]) -> int:
-        """UTF-8 字节数是常见 BPE tokenizer 的保守 token 上界，再留协议余量。"""
+        """CJK 折 1、其余 4 字符 1 token 的估算上界，再留协议余量。
+
+        为什么不再用 UTF-8 字节数（v2.3.0-p1.1 修正）：中文 1 字 3 字节，字节口径
+        把中文 prompt 高估约 3 倍——2 万字文档就报 6 万"token"，而缺省的
+        task_token_hard_limit 是 5 万，任务会被误判超限直接暂停（paused_budget）。
+        与渲染预算（orchestration.memory.estimate_tokens）统一口径后，预算门与
+        窗口约束不再互相打架；真被 provider 拒的兜底见 v2.3.0-p1.2。
+        """
+        from ..orchestration.memory import estimate_tokens
+
         size = sum(
-            len(str(item.get("role") or "").encode("utf-8"))
-            + len(str(item.get("content") or "").encode("utf-8"))
+            estimate_tokens(str(item.get("content") or ""))
+            + estimate_tokens(str(item.get("role") or ""))
             for item in messages
         )
         return size + 64

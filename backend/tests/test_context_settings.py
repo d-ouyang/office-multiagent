@@ -64,11 +64,17 @@ def test_render_history_uses_configured_limit(rs):
 
 
 def test_tool_calls_path_same_limit(rs):
-    """S-3：原生 tool_calls 协议与 JSON 协议同源，同一配置值下截断长度一致。"""
+    """S-3：原生 tool_calls 协议与 JSON 协议同源，同一配置值下截断长度一致。
+
+    v2.3.0-p1.1：两条协议现在共用预算器，截断都带"…（已截断）"标注（此前只有
+    JSON 协议带，tool_calls 路径静默截断——同一任务换协议结果不同）。
+    """
     rs(history_step_max_chars=6000)
     msgs = LlmBrain._messages_for_tool_calls("任务", _steps(1, 30000))
     tool_msg = [m for m in msgs if m["role"] == "tool"][0]
-    assert len(tool_msg["content"]) == 6000
+    assert tool_msg["content"].startswith("字" * 100)
+    assert "…（已截断）" in tool_msg["content"]
+    assert len(tool_msg["content"]) <= 6000 + 10  # 6000 正文 + 标注
     assert history_step_limit() == 6000
     assert "…（已截断）" in LlmBrain._render_history(_steps(1, 30000))
 

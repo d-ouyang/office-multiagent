@@ -89,7 +89,7 @@
 
 | 文件 | 动作 |
 | ---- | ---- |
-| `core/context_budget.py` | **新建**。`budget_steps(steps, max_tokens) -> BudgetResult{lines, kept, downgraded, dropped_chars, notes}` |
+| `orchestration/context_budget.py` | **新建**（原计划放 `core/`，实际放这里——它依赖 `memory.estimate_tokens`，放 core 会造成 core→orchestration 反向依赖）。`budget_steps(steps, max_tokens, step_cap)` → `BudgetResult{lines, obs_text, kept, downgraded, omitted, dropped_chars, notes}` |
 | `orchestration/brain.py` | `_render_history` 改调 `budget_steps`；预算来源见下 |
 | `orchestration/react.py` | 调 `run_react` 时把预算实例传进 brain（或 brain 构造参数），使渲染时有账可算 |
 | `api/routes.py` / `orchestration/graph.py` | 计算并注入 `step_history_budget`：`min(模型窗口 × 0.6, token_budget.remaining)`，模型窗口从 `model_registry.load_registry()` 的 `context_window` 取（`graph.py::_emit_context` 已有同款读法，复用） |
@@ -118,6 +118,16 @@
 
 **判据**：6 步 × 3 万字任务能正常完成（不 400），`GET /runs/{id}/replay` 里可见前几步是降级摘要，`context_usage` 的 budget 字段与实际一致。
 **预计基线**：pytest 568 → 576。
+
+**实施记录（2026-11-16，已完成 · 未提交）**
+
+- 新增 `orchestration/context_budget.py`（约 250 行，含注释与边界说明）；`brain._render_history` / `_messages_for_tool_calls` 双协议改用 `budget_steps`，共用 `obs_text` 判定。
+- 新增第 5 个开关 `history_budget_window_pct`（0=回退到逐条截断）；`graph._history_budget()` 按"模型窗口 × 百分比"算，读不到窗口按 128K。
+- **实现偏差 1（重要）**：末步保底最初给足全部预算，实测 2 万字单步会把预算吃光、前面 5 步全被整块省略——"最近优先"退化成"最近独吞"。改为**末步最多吃 60%**，其余留给更早步骤降级。
+- **实现偏差 2**：seed 步（HITL 用户补充输入）免疫预算——不可再生的信息不能被压缩掉，只截正文，且最多吃"剩余预算 − 30"。
+- **顺手修 p1.0 遗留**：tool_calls 路径此前静默截断（无"…（已截断）"标注），JSON 协议有标注——同一任务换协议结果不同。p1.1 统一后两条协议都标注。
+- **B-9 口径**：`prompt_upper_bound` 从 UTF-8 字节改为 `estimate_tokens`（CJK 1:1），断言改为"2 万字文档不再被算成 6 万"，比原计划"≥ 旧值 ×0.4"更贴近真实风险。
+- 实测：`pytest 571 → 581 passed / 3 skipped`（B-1~B-10 共 10 条，比计划多 1 条）。
 
 ---
 
@@ -203,7 +213,7 @@
 | 阶段 | tag | 交付 |
 | ---- | --- | ---- |
 | p1.0 | `v2.3.0-p1.0` | ✅ 代码完成 2026-11-16（4 开关 + 8 testcase，pytest 571）· 待 commit/tag |
-| p1.1 | `v2.3.0-p1.1` | `core/context_budget.py` + 9 testcase + 口径对齐 + 迭代文档 |
+| p1.1 | `v2.3.0-p1.1` | ✅ 代码完成 2026-11-16（预算器 + 10 testcase，pytest 581）· 待 commit/tag |
 | p1.2 | `v2.3.0-p1.2` | 溢出兜底 + 4 testcase + 迭代文档 |
 | 收官 | `v2.3.0` | RELEASES 更新 + 生产冒烟记录（2 万字文档任务 / 多轮追问任务） |
 
