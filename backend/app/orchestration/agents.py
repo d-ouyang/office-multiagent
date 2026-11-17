@@ -128,7 +128,13 @@ def build_default_registry(
     )
     reg.register(
         "query_orders",
-        make_query_orders_tool(engine, max_rows=settings.db_query_max_rows, base_dir=str(doc_base)),
+        make_query_orders_tool(
+            engine,
+            max_rows=settings.db_query_max_rows,
+            # v2.4.1：分组行数与明细行分开——维度组合数用独立上限
+            aggregate_max_groups=settings.aggregate_max_groups,
+            base_dir=str(doc_base),
+        ),
         description=(
             "【指标映射纪律】用户说'销售/销售额/金额'→ metric 用 sum_pay；'订单量/单量/订单数'→ count；'客单价'→ avg_pay。"
             "按用户原话映射指标，不要自作主张换成订单数；确实不明确就先 ask_user 让用户选（销售金额还是订单数量）。"

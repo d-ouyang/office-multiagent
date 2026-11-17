@@ -411,3 +411,57 @@ docker exec -i office-multiagent-backend-1 python - < backend/scripts/seed_order
 - 多维分组行数多时结果会被截断（`truncated=true`），可考虑 top_n 或分月查询。
 
 测试：后端 **621 → 633**（+5 列名解析、+7 JSON 容错）；前端文案调整，typecheck 通过。
+
+---
+
+## 11. v2.4.1：结果截断的系统性修复（2026-11-17）
+
+### 三个事实
+
+| 问题 | 现状 |
+| ---- | ---- |
+| `max_tokens` | **8192**，来自 `TaskTokenBudget.reserve_call(desired_output_tokens=8192)`；实际取 `min(8192, 剩余预算 − prompt)`，不是配置项 |
+| `thought` 长度 | **此前完全没限制**，协议只给格式 `{"thought": "...", ...}` |
+| 截断 | 真凶不是 `db_query_max_rows=50`，而是 `_limit()` 的 **默认值写死 20** |
+
+### 真凶链（层层叠加，最狠的是第一个）
+
+1. **`_limit(raw)` 默认 20**：模型不传 limit 时只回 20 行 —— 比明细上限 50 还小。
+   真跑：城市×月份 66 组只回 20 组，**热力图漏掉 70% 数据**，模型还以为拿到了全部。
+2. `_limit` 里还硬卡 `min(_MAX_ROWS=50, ...)`：即使传 limit=200 也只有 50。
+3. 分组与明细共用同一个上限：分组行数 = 维度组合数（34 门店 × 2 月 = 68），与明细行数不是一个量级。
+4. `db_query` **静默截断**：返回 50 行但不说"还有更多"，模型当完整结果用。
+5. `analyze_table` 的 `_MAX_GROUPS=100`：门店×月份 102 组会缺组。
+
+### 修法（统一契约）
+
+| 位置 | 改动 |
+| ---- | ---- |
+| `config.py` | 新增 `aggregate_max_groups=500`（**与 `db_query_max_rows=50` 分开**） |
+| `tools_orders._limit` | 默认值由调用方给（分组 500 / 明细 50），不再写死 20；上限交给调用方 `min(row_cap, ...)` |
+| `query_orders` | 分组走 500、明细走 50；两处返回都加 `truncated_hint`（"共 N 组/行，只给前 M；补查方式"） |
+| `tools_db` | 补 `truncated` + `truncated_hint`（`len(rows) >= max_rows` 保守判定） |
+| `tools_table` | `_MAX_GROUPS` 100 → 500，返回加 `group_count` + `truncated_hint` |
+| `brain._PROTOCOL_TMPL` | thought ≤80 字、禁止复述数据；`truncated=true` 时**先说明"给了多少/共多少"再下结论** |
+
+### 效果（同一句热力图提问）
+
+| 指标 | 修前 | 修后 |
+| ---- | ---- | ---- |
+| 分组返回 | 20 组（截断） | **66 组（无截断）** |
+| 工具调用 | 4~10 次、常 ask_user | **2 次**（query_orders → render_chart） |
+| 终答 | "结果被截断，请选择怎么办" | 直接给结论（上海 10 月 30,581 元居首等） |
+
+### 举一反三：还有哪些同类截断（已一并处理或标注）
+
+| 场景 | 是否已修 |
+| ---- | -------- |
+| 明细行数上限（query_orders 无分组） | ✔ 50 + hint 引导 export_orders |
+| 分组组数（多维交叉） | ✔ 500 + hint |
+| db_query 自定义 SQL 大结果 | ✔ 50 + hint（保守判定 `>=`） |
+| analyze_table 上传表分组 | ✔ 100 → 500 + hint |
+| read_document 长文档 | ✔ v2.4.0 已做分段 + headings |
+| export_orders 全量导出 | ✔ 上限 5000，超限会明确报错（不静默） |
+| rag_retrieve 检索条数 | 属"召回质量"不是截断，另有 top_k 机制 |
+
+测试：后端 **633 → 637**（test_tool_limits 4 条：聚合/明细上限关系、analyze_table 对齐、db_query 截断提示、未截断不乱提示）。

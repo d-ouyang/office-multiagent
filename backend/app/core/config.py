@@ -99,8 +99,13 @@ class Settings(BaseSettings):
     rag_service_username: str = "office-service"  # 注入 X-Username（须能在 RAG user 表解析）
     # export_orders 明细导出的单次行数上限（p6.30）
     export_orders_max_rows: int = 5000
-    # db_query 工具护栏：强制 LIMIT 行数上限
+    # db_query 工具护栏：强制 LIMIT 行数上限（明细行——一类大结果）
     db_query_max_rows: int = 50
+    # 聚合分组（GROUP BY）的行数上限（v2.4.1）。**必须与明细分开**：
+    # 分组行数 = 维度组合数（城市 20 × 月份 2 = 40、门店 34 × 月份 2 = 68），
+    # 用明细的 50 去卡会导致"城市×月份热力图"这类多维分析静默缺组
+    # （真跑 2026-11-17：热力图只画了部分城市，模型不得不用 ask_user 收场）。
+    aggregate_max_groups: int = 500
     # read_document 工具：文档目录（工具只能读该目录内文件，防路径穿越）与单次返回字符上限。
     # p6.9：8000 → 50000——"通读整篇"场景 2 万字文档一次拿全（1M 上下文模型/128K 模型都装得下）
     documents_dir: str = "data/upload"
