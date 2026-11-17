@@ -209,8 +209,10 @@ def build_default_registry(
             "表格只返回表头、行数和前 20 行，不是整表。"
             "参数 file_name 只写文件名，例如 网站备案办事指南.pdf。"
             "查找目录由系统按当前用户确定，不要传本机绝对路径；写成「用户名/文件名」也可以。"
-            "文档很长时可以分段读：返回里的 has_more=true 时用 next_offset 作为下一次的 offset 继续读，"
-            "不要因为看到 has_more 就声称已读全文；改传 limit 可控制每次读多少字。"
+            "长文档优先用目录定位：返回里若带 headings（标题+字符偏移），先看标题找到目标章节，"
+            "再用该条目的 offset 精读那一段，不要整篇通读；传 headings_only=true 可以只取目录不取正文。"
+            "headings 为空说明文档没有标题，此时按 has_more/next_offset 分段读到底，"
+            "不要因为看到 has_more 就声称已读全文。"
             "文件不存在时不要反复重试，直接如实告知用户。"
         )
     else:
@@ -219,7 +221,8 @@ def build_default_registry(
             "表格只返回表头、行数和前 20 行。"
             "参数: file_name（文档目录内的相对路径；当前登录用户上传的文件在 "
             "'<用户名>/' 子目录下，例如 dev/handbook.md）。"
-            "文档较长时可分段读：has_more=true 时把 next_offset 传回 offset 继续，别声称读完了全文。"
+            "长文档优先用目录定位：headings 里有标题和字符偏移，用目标章节的 offset 精读，"
+            "别整篇通读；headings 为空时按 has_more/next_offset 分段读。"
             "适用于需要引用某份文档原文/做摘要的场景。"
             "注意：文件不存在时不要反复重试，直接如实告知用户文件名可能不对。"
         )
@@ -234,11 +237,15 @@ def build_default_registry(
                 "file_name": {"type": "string", "description": "上传目录内的文件名（或 用户名/文件名）"},
                 "offset": {
                     "type": "integer",
-                    "description": "起始字符位，默认 0；续读时用上一次返回的 next_offset",
+                    "description": "起始字符位，默认 0；续读时用上一次返回的 next_offset，或 headings 里该章节的 offset",
                 },
                 "limit": {
                     "type": "integer",
                     "description": "本次最多返回多少字，默认 0 = 用系统上限（通常 5 万字）",
+                },
+                "headings_only": {
+                    "type": "boolean",
+                    "description": "只返回目录（标题+偏移）不返回正文，适合先看结构再精读",
                 },
             },
             ["file_name"],

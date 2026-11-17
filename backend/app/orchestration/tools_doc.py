@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
@@ -22,6 +23,13 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 _IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 TABLE_PREVIEW_ROWS = 20
 _SUPPORTED = SUPPORTED_SUFFIXES
+
+#: v2.4.0-p5.0 目录索引：Markdown 标题（# ~ ######）
+_MD_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(\S.*)$")
+#: 中文章节行（"第3章 xxx" / "第三节" / "第二十条"），无 # 也能认——业务文档大多这种
+_CN_CHAPTER_RE = re.compile(r"^第[0-9一二三四五六七八九十百千零两]{1,6}[章节条篇部](?:[ \t　]|$)")
+#: 目录条数上限：再多对模型也是噪音，且会挤占正文预算
+MAX_HEADINGS = 80
 
 
 def normalize_doc_name(file_name: str, owner: str | None = None) -> str:
@@ -310,19 +318,58 @@ def _similar_files(base: Path, name: str, *, limit: int = 3, scan: int = 300) ->
     return difflib.get_close_matches(Path(name).name, files, n=limit, cutoff=0.6)
 
 
+def extract_headings(text: str, *, limit: int = MAX_HEADINGS) -> tuple[list[dict[str, Any]], bool]:
+    """扫出目录索引（v2.4.0-p5.0）：标题行 + 它在正文中的字符偏移。
+
+    为什么需要：9.3 万字文档问"第 20 章多少"，模型只能整段读 → 两轮 prefill 共 15 万
+    token → 73 秒。有了 offset 索引，模型可以一次定位目标章节，prefill 降到 1 万量级。
+    兼容两类写法：Markdown `## 标题`，以及业务文档常见的 `第3章 xxx`（没有 # 号）。
+
+    返回 (headings, truncated)。**没有标题的文档返回空列表**——调用方照旧分段读，
+    行为与 v2.4.0-p2.0 完全一致（目录是增量信息，不是替代品）。
+    """
+    out: list[dict[str, Any]] = []
+    truncated = False
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        level = 0
+        title = ""
+        if stripped.startswith("#"):
+            m = _MD_HEADING_RE.match(stripped)
+            if m:
+                level = len(m.group(1))
+                title = m.group(2).strip()
+        elif len(stripped) <= 80 and _CN_CHAPTER_RE.match(stripped):
+            level = 1
+            title = stripped
+        if title:
+            if len(out) < limit:
+                out.append({"level": level, "title": title[:80], "offset": pos})
+            else:
+                truncated = True
+        pos += len(line)
+    return out, truncated
+
+
 def make_read_document_tool(
     *, base_dir: str, max_chars: int = 8000, owner: str | None = None
 ) -> Callable[..., Any]:
     """base_dir 是查找根目录。owner 有值时根目录应已是该用户的上传目录，file_name 只写文件名。"""
     base = Path(base_dir).resolve()
 
-    def read_document(file_name: str, offset: int = 0, limit: int = 0) -> dict[str, Any]:
-        """读文档正文，支持分段（v2.4.0-p2.0）。
+    def read_document(
+        file_name: str, offset: int = 0, limit: int = 0, headings_only: bool = False
+    ) -> dict[str, Any]:
+        """读文档正文，支持分段与目录索引（v2.4.0-p2.0 / p5.0）。
 
-        为什么分段：整读超过单步上限就只能截尾，文档末尾的章节模型永远看不到——
-        真跑事故（2026-11-17）：2.4 万字文件的第 10 章被切掉，模型只能"按规律推断"。
-        分段后可以先读开头判断结构、再按 next_offset 定位后面的章节；
-        每次返回仍受 doc_read_max_chars 约束，不会因为分段把单步撑爆。
+        分段：整读超过单步上限只能截尾，末尾章节模型永远看不到（真跑事故 2026-11-17：
+        2.4 万字文件的第 10 章被切）。offset/limit 允许续读，has_more/next_offset 指路。
+
+        目录：返回里带 `headings`（标题 + 字符偏移），模型可直接定位目标章节精读，
+        不必整段扫描——9.3 万字文档"读第 20 章"从 73 秒降到 20 秒量级。
+        `headings_only=True` 只给目录不给正文（token 极省）。
+        没有标题的文档 `headings=[]`，退回分段读，行为与 p2.0 一致。
 
         offset：起始字符位（从 0 开始）；limit：本次最多返回多少字，0=用默认上限。
         """
@@ -346,6 +393,24 @@ def make_read_document_tool(
             raise ValueError(f"文档内容为空：{file_name}")
 
         total = len(content)
+        headings, headings_truncated = extract_headings(content)
+
+        if headings_only:
+            # 只看目录：content 为空、不消耗正文预算。has_more 提示"正文还没读"。
+            return {
+                "file_name": file_name,
+                "no_artifact": True,
+                "total_chars": total,
+                "headings": headings,
+                "headings_truncated": headings_truncated,
+                "content": "",
+                "offset": 0,
+                "returned_chars": 0,
+                "has_more": total > 0,
+                "next_offset": 0,
+                "truncated": True,
+            }
+
         start = max(0, int(offset or 0))
         if start >= total:
             raise ValueError(
@@ -369,6 +434,9 @@ def make_read_document_tool(
             "content": chunk,
             # 兼容旧字段：仍表示"还有内容没给到"，但语义从"超上限"变成"可分页继续读"
             "truncated": has_more,
+            # v2.4.0-p5.0：目录索引（无标题时为空数组，模型退回分段读）
+            "headings": headings,
+            "headings_truncated": headings_truncated,
         }
 
     read_document.__name__ = "read_document"
