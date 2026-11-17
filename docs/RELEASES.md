@@ -9,6 +9,42 @@
 
 ---
 
+## v2.4.0 — 路由与 IO 根治（2026-11-17）
+
+分支 `feature/2.4.0-routing-and-io`（自 `v2.3.0` 切出），后端 **598 → 621 passed / 3 skipped**，前端 **123 → 137 passed**。详见 `docs/PLAN-2.4.0.md`。
+
+**一句话**：2.3.0 让长任务不把上下文撑爆；2.4.0 让"选对人"和"读得全"不再靠人肉维护的映射表，并把大文档定位从 73 秒压到 6 秒。
+
+### 主线
+
+| 步骤 | 内容 | 判据 |
+| ---- | ---- | ---- |
+| A 意图能力声明 | `planner.yaml` 7 个意图各加 `requires`；预检合并"意图级 requires ∪ 实体级 guards"，缺任一改道 general | 工具池被改坏时订单任务自动改道（A-5）；配置自洽护栏进 CI（A-4） |
+| B 文档分段 | `read_document(offset, limit)` + `has_more/next_offset`，limit 受 `doc_read_max_chars` 二次约束 | 9.3 万字 / 20 章文档分两段读到第 20 章 |
+| C 文件名自纠 | 找不到文件时附 `difflib` 相似候选 + "直接重试，不要向用户索要已存在文件" | `smoke_md` → 提示 `smoke-long.md` |
+| p2.1 死锁修复 | `task_token_hard_limit` 50000 → 200000（须 ≥ `doc_read_max_chars × 2`） | 读 5 万字文档不再一次调用就 `paused_budget`；护栏测试锁死倍数关系 |
+| p4.0 提示统一 | 新建 `lib/apiError.ts` + `components/Notice.tsx`：解析后端 `detail.message` → `{kind,title,message,hint}` | 429 显示"余额不足 / 预计消耗 / 充值后重发"，不再是 `HTTP 429` |
+| p4.0 管理端免重登 | `adminCheckSession` 缺 admin token 时借用工作台 `office_token`（角色校验仍在） | 工作台登录后进 `/admin` 直接进入 |
+| p5.0 目录索引 | `read_document` 返回 `headings[{level,title,offset}]` + `headings_only`；无标题则 `[]` 回退分段读 | **73 秒 / 100,656 tokens → 6 秒 / 16,599 tokens**（同一句提问） |
+
+### 真链路验收（本地）
+
+| 场景 | 结果 |
+| ---- | ---- |
+| 9.3 万字 20 章文档问第 20 章 | 6 秒，16,599 tokens，答 100000 元并注明章节来源 |
+| 2.4 万字文档问第 10 章 | 一次读完（单步上限 5 万），答 200000 元 |
+| 2.3 万字文档 + 预算压到 1% | 模型如实说"只看到前几章"，不编造 |
+| 文件名写错（`smoke_md`） | 提示相近文件，模型自己重试成功 |
+| 订单 / 制度问句 | 仍走 query_orders / rag_retrieve（路由未回归） |
+
+### 部署必做
+
+- **无需迁移**（0014 已在 v2.3.0 部署时升级）。
+- 生产 `.env` 若写死 `TASK_TOKEN_HARD_LIMIT=50000`，会覆盖新默认 200000 —— 当前生产实际生效值是 **300000**（已确认），无需改。
+- 侧栏版本号随 tag 自动显示（v2.3.0 起生效）。
+
+---
+
 ## v2.3.0 — 上下文预算化（C 层补全）（2026-11-17）
 
 分支 `feature/2.3.0-context-budget`（自 `v2.2.0-p1.13c` / `9218774` 切出），pytest **563 → 598 passed / 3 skipped**（新增 21 条上下文/路由测试 + 4 条版本号测试）。详见 `docs/PLAN-2.3.0.md`。
