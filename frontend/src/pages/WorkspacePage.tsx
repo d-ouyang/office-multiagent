@@ -10,6 +10,8 @@ import { sortDialogueModels, toPromptModel, type DialogueModel } from '../compon
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import type { StreamEvent } from '../types';
 import ContextRing from '../components/ContextRing';
+import Notice from '../components/Notice';
+import { describeError, parseApiError } from '../lib/apiError';
 import { deriveAskUser, deriveContextUsage, deriveCurrentAgent, agentLabel, normalizeAsk, pauseText, quotaPauseText, type AskUserPayload } from '../lib/derive';
 import AskUserCard from '../components/AskUserCard';
 import { answerTaskResponse, authHeaders, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
@@ -46,7 +48,7 @@ function parseCreatedAt(raw: string | undefined): number | undefined {
 }
 
 export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUser; onLogout: () => void; onOpenAdmin?: () => void }) {
-  const { events, status, error, start, stop, reset } = useNdjsonStream('/api/v1/demo/stream');
+  const { events, status, error, start, stop, reset, clearError } = useNdjsonStream('/api/v1/demo/stream');
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [currentId, setCurrentId] = useState<string>('');
   const [loadingSession, setLoadingSession] = useState(false); // p6.48：切会话拉消息期间不闪空态
@@ -111,8 +113,9 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
       }
       const data = await res.json();
       if (!res.ok) {
-        setUploadError(`上传失败：${data?.detail?.message ?? `HTTP ${res.status}`}`);
-        setTimeout(() => setUploadError(null), 5000);
+        // 标题由 Notice 统一给"文件上传失败"，这里只放后端 original message
+        setUploadError(parseApiError(res.status, data).message);
+        setTimeout(() => setUploadError(null), 6000);
         return null;
       }
       return String(data.file_name);
@@ -702,8 +705,14 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
         {/* 2.1.0-p1.9：暂停/弹窗区块包进 chat-column——与消息列表/输入框同列左缘对齐
             （此前弹窗在 chat-main 直接子级，全宽贴最左，与居中的列表/输入框错位） */}
         <div className="chat-column">
-        {uploadError && <div className="banner warn">{uploadError}</div>}
-        {error && <div className="banner err">{error}</div>}
+        {/* v2.4.1：统一提示条——文案由 describeError 产出，不再各写各的红条 */}
+        {uploadError && (
+          <Notice
+            notice={{ kind: 'error', title: '文件上传失败', message: uploadError }}
+            onClose={() => setUploadError(null)}
+          />
+        )}
+        {error && <Notice notice={describeError(error)} onClose={clearError} />}
         {paused && paused.status === 'paused_budget' && (
           <div className="banner warn pause-banner">
             <span>⏸ 已达单任务 token 上限，任务已暂停（{paused.needed ? `已消耗 ${paused.needed.toLocaleString('zh-CN')} tokens` : '可在余额充足后继续'}）</span>

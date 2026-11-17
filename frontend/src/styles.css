@@ -1488,6 +1488,86 @@ button.ghost {
   padding: 8px 12px;
   font-size: 13px;
 }
+
+/* ---- 统一提示条（v2.4.1）：Notice 组件专用 -------------------------------
+   收拢此前散落在各页面的 <div className="banner err">{string}</div>。
+   结构固定为 色条 + 标题 + 正文 + 提示 + 可选按钮，样式只随 kind 换色。 */
+.notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0 0 12px;
+  padding: 12px 14px 12px 12px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.notice-mark {
+  flex: 0 0 3px;
+  align-self: stretch;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.85;
+}
+.notice-body {
+  flex: 1;
+  min-width: 0;
+}
+.notice-title {
+  font-weight: 600;
+}
+.notice-message {
+  margin-top: 3px;
+  opacity: 0.92;
+  word-break: break-word;
+}
+.notice-hint {
+  margin-top: 5px;
+  font-size: 12px;
+  opacity: 0.68;
+}
+.notice-action {
+  margin-top: 8px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.notice-action:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.notice-close {
+  border: 0;
+  background: none;
+  color: inherit;
+  opacity: 0.55;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.notice-close:hover {
+  opacity: 0.9;
+}
+.notice-error {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
+  background: color-mix(in srgb, var(--err) 8%, transparent);
+}
+.notice-warning {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+.notice-info {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
 .model-info {
   margin: 0 20px;
   padding: 6px 12px;

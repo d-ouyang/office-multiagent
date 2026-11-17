@@ -241,3 +241,47 @@ C 依赖 A/B 的文案（改道后才有"已为你改道"这句话）。
 | 任务状态 | `paused_budget`（1 次调用就撞上限） | `single`，tokens 162,069 |
 
 测试基线：**598 → 615 passed / 3 skipped**。
+
+---
+
+## 7. p4.0：错误提示统一（2026-11-17，真跑反馈）
+
+### 问题
+
+用户截图里，任务失败只显示一条 `HTTP 429`。后端其实返回了
+`{"detail":{"code":"BALANCE_INSUFFICIENT","message":"钱包余额不足：余额 ¥0，本次预估 2986，请先充值后重试"}}`，
+但 `hooks/useNdjsonStream` 只 `throw new Error(\`HTTP ${res.status}\`)`，把最有用的 message 丢了。
+
+### 改动
+
+| 文件 | 内容 |
+| ---- | ---- |
+| `lib/apiError.ts` | **新建**：`parseApiError(status, body)` 解析 FastAPI/网关两种错误体；`describeError(err)` 翻译成 `{kind,title,message,hint}` |
+| `components/Notice.tsx` | **新建**：色条 + 标题 + 正文 + 提示 + 可选按钮 + 关闭；样式只随 `kind` 变 |
+| `styles.css` | 新增 `.notice` 系列（用 `--err/--warn/--accent` + `color-mix`），替代各页面手写 banner |
+| `hooks/useNdjsonStream.ts` | 非 2xx 读 body → `ApiError`；`error` 类型 `string` → `Error`；新增 `clearError()`（只关提示，不动消息） |
+| `pages/WorkspacePage.tsx` | 两处 banner → `Notice`；上传错误改走 `parseApiError` |
+| `pages/DemoPage.tsx` | 同上 |
+| `lib/api.ts` | `adminCheckSession` 复用工作台 `office_token`（同一账号同一 JWT），进 `/admin` 不再二次登录 |
+
+### 文案映射（describeError）
+
+| 条件 | kind | 标题 | hint |
+| ---- | ---- | ---- | ---- |
+| `BALANCE_INSUFFICIENT` | warning | 余额不足，本次任务没能开始 | 充值后可直接重发同一条消息 |
+| `QUOTA_PAUSED` / `*TOKEN_LIMIT*` | warning | 已达单任务上限，任务已暂停 | 把任务拆小，或联系管理员调整上限 |
+| 401 | error | 登录已过期 | 重新登录即可，输入框内容还在 |
+| 403 | error | 没有权限执行这个操作 | 联系管理员 |
+| 429（其他） | warning | 请求有点频繁 | 稍等几秒再发一次 |
+| ≥500 | error | 服务暂时不可用 | 稍后重试 |
+| fetch 失败 | error | 连不上服务 | 检查网络或代理 |
+| 其他 | error | 操作没有完成 | — |
+
+**原则**：标题说"发生了什么"，message 保留后端数字，hint 说"你能做什么"。
+**绝不把 `HTTP 429` 当标题**——它对用户没有任何行动指示（有测试锁死）。
+
+### 测试
+
+`lib/apiError.test.ts` 10 条（两种错误体 / 空 body / 六类映射 / 不把状态码当标题）；
+`components/Notice.test.tsx` 4 条（字段渲染 / kind 换样式 / 关闭回调 / 操作按钮）。
+前端 **123 → 137 passed**，`tsc -b` 通过。

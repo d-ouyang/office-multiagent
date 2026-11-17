@@ -453,7 +453,17 @@ export async function adminLogout(): Promise<void> {
 }
 
 export async function adminCheckSession(): Promise<LoginUser | null> {
-  if (!adminGetToken()) return null;
+  let token = adminGetToken();
+  if (!token) {
+    // v2.4.1：复用工作台登录态——同一账号、同一个 JWT，进 /admin 不必再登一次。
+    // 角色校验在下面（非 admin 会被清掉并回落登录页），所以这里先"借用"是安全的。
+    const shared = getToken();
+    if (shared) {
+      adminSetToken(shared);
+      token = shared;
+    }
+  }
+  if (!token) return null;
   try {
     const res = await fetch('/api/v1/auth/me', { headers: adminAuthHeaders() });
     if (!res.ok) {
