@@ -23,6 +23,9 @@ class Plan:
     score: float = 0.0                                    # 复杂度分
     signals: dict[str, Any] = field(default_factory=dict)  # 打分明细（可解释、可对账）
     entities: dict[str, Any] = field(default_factory=dict)  # 抽取实体（输出格式等）
+    #: v2.4.0-p1.0：各意图声明的必需工具（去重保序）。路由预检据此判断"主 Agent 够不够用"，
+    #: 不再只依赖 `capability_guards` 那种"说法 → 工具"的人工映射。
+    requires: list[str] = field(default_factory=list)
 
 
 def _resolve_planner_path() -> Path:
@@ -148,6 +151,14 @@ def plan(text: str) -> Plan:
     score, signals = _score(text, intents, cfg)
     low = text.lower()
     output_formats = [o for o in cfg.get("complexity", {}).get("output_markers", []) if o in low]
+    # v2.4.0-p1.0：聚合各意图的 requires（折叠后再算，避免已剔除的意图带入依赖）
+    requires: list[str] = []
+    intents_cfg = cfg.get("intents", {})
+    for name in intents:
+        for tool in intents_cfg.get(name, {}).get("requires") or []:
+            tool_name = str(tool)
+            if tool_name not in requires:
+                requires.append(tool_name)
     return Plan(
         text=text,
         intents=intents,
@@ -155,4 +166,5 @@ def plan(text: str) -> Plan:
         score=score,
         signals=signals,
         entities={"output_formats": output_formats},
+        requires=requires,
     )

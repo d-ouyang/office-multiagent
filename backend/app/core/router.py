@@ -50,24 +50,32 @@ def _agent_tool_pools() -> dict[str, set[str]]:
     return pools
 
 
-def _capability_reroute(text: str, primary_agent: str, cfg: dict) -> str | None:
-    """p5.6 廉价预检：返回改道目标（general）或 None（不干预）。
+def _capability_reroute(plan: Plan, primary_agent: str, cfg: dict) -> tuple[str, set[str]] | None:
+    """路由预检：主 Agent 的工具池够不够用。返回 (改道目标, 缺失工具) 或 None。
 
-    只拦「自信地错」：问句含强实体词、而 single 主意图 Agent 的工具池
-    恰好缺该实体所需的工具。agents.yaml 缺失时跳过预检（不因配置缺失放大影响）。
+    两个需求来源（v2.4.0-p1.0，缺一不可）：
+      1. `plan.requires`——**意图级**声明（orders 要 query_orders、rag 要 rag_retrieve）。
+         防"配置漂移"：以后有人改 agents.yaml 的工具池，漏配会在预检阶段被兜住。
+      2. `capability_guards`——**实体级**映射（"订单"→query_orders、"读取文件"→read_document）。
+         防"意图判错"：小模型把读文件判成 rag 时，靠句子里的实体把任务拉回有能力的 Agent。
+
+    以前只有第 2 层，等于"用户怎么说"驱动路由；加第 1 层后，"意图需要什么"也参与判定。
+    改道目标固定 general——它是唯一持有全量工具的 Agent。
     """
     if primary_agent == "general":
         return None
     pools = _agent_tool_pools()
     if not pools:
-        return None
+        return None  # 配置缺失时跳过预检，不因缺配置放大影响
     tools = pools.get(primary_agent)
     if tools is None:
-        return "general"
+        return "general", set()
+    needed = set(plan.requires)
     for entity, required_tool in (cfg.get("capability_guards") or {}).items():
-        if str(entity) in text and str(required_tool) not in tools:
-            return "general"
-    return None
+        if str(entity) in plan.text:
+            needed.add(str(required_tool))
+    missing = needed - tools
+    return ("general", missing) if missing else None
 
 
 def decide(plan: Plan) -> RouteDecision:
@@ -97,10 +105,12 @@ def decide(plan: Plan) -> RouteDecision:
         reason = f"复杂度分 {plan.score} < 阈值 {threshold}，单 Agent ReAct 直跑"
     if mode == "single":
         # p5.6：multi 不预检——DAG 按意图分派各自专家 Agent，天然无工具错配。
-        reroute = _capability_reroute(plan.text, primary_agent, cfg)
+        reroute = _capability_reroute(plan, primary_agent, cfg)
         if reroute:
-            reason += "；能力预检：问句实体所需工具不在该 Agent 工具池，改道 general 兜底"
-            primary_agent = reroute
+            target, missing = reroute
+            detail = f"缺 {sorted(missing)}" if missing else "Agent 未注册"
+            reason += f"；能力预检：{detail}，改道 {target} 兜底"
+            primary_agent = target
     return RouteDecision(
         mode=mode,
         reason=reason,

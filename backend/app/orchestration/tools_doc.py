@@ -289,31 +289,86 @@ def extract_document_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace").strip()
 
 
+def _similar_files(base: Path, name: str, *, limit: int = 3, scan: int = 300) -> list[str]:
+    """给"文件名写得不准"的场景提供候选（v2.4.0-p3.0）。
+
+    为什么需要：文件明明在目录里，模型却回"没找到，请上传"——除了路由错（p1.3 已修），
+    另一类变体是文件名差一两个字符（`smoke_md` vs `smoke-long.md`）。给出候选能让模型
+    自己纠正重试，而不是把"信息缺失"甩回给用户。
+    """
+    import difflib
+
+    try:
+        files: list[str] = []
+        for i, p in enumerate(base.rglob("*")):
+            if i >= scan:
+                break
+            if p.is_file():
+                files.append(p.name)
+    except OSError:
+        return []
+    return difflib.get_close_matches(Path(name).name, files, n=limit, cutoff=0.6)
+
+
 def make_read_document_tool(
     *, base_dir: str, max_chars: int = 8000, owner: str | None = None
 ) -> Callable[..., Any]:
     """base_dir 是查找根目录。owner 有值时根目录应已是该用户的上传目录，file_name 只写文件名。"""
     base = Path(base_dir).resolve()
 
-    def read_document(file_name: str) -> dict[str, Any]:
+    def read_document(file_name: str, offset: int = 0, limit: int = 0) -> dict[str, Any]:
+        """读文档正文，支持分段（v2.4.0-p2.0）。
+
+        为什么分段：整读超过单步上限就只能截尾，文档末尾的章节模型永远看不到——
+        真跑事故（2026-11-17）：2.4 万字文件的第 10 章被切掉，模型只能"按规律推断"。
+        分段后可以先读开头判断结构、再按 next_offset 定位后面的章节；
+        每次返回仍受 doc_read_max_chars 约束，不会因为分段把单步撑爆。
+
+        offset：起始字符位（从 0 开始）；limit：本次最多返回多少字，0=用默认上限。
+        """
         name = normalize_doc_name(file_name, owner)
         target = check_inside_base(base, name)
         if not target.is_file():
             where = "当前用户上传目录" if owner else "文档目录"
-            raise FileNotFoundError(f"文件不存在：{file_name}（已在{where}查找）")
+            hints = _similar_files(base, name)
+            tail = (
+                f"；目录里有相近的文件：{'、'.join(hints)}。"
+                "请核对文件名后直接重试，不要向用户索要这些已经存在的文件"
+                if hints
+                else ""
+            )
+            raise FileNotFoundError(f"文件不存在：{file_name}（已在{where}查找）{tail}")
         suffix = target.suffix.lower()
         if suffix not in _SUPPORTED:
             raise ValueError(f"暂不支持该格式：{suffix}（当前支持 {'/'.join(_SUPPORTED)}）")
         content = extract_document_text(target)
         if not content:
             raise ValueError(f"文档内容为空：{file_name}")
+
+        total = len(content)
+        start = max(0, int(offset or 0))
+        if start >= total:
+            raise ValueError(
+                f"offset {start} 超出文档长度（该文档共 {total} 字，偏移从 0 开始）"
+            )
+        cap = int(limit or 0)
+        if cap <= 0 or (max_chars > 0 and cap > max_chars):
+            cap = max_chars if max_chars > 0 else total
+        end = min(total, start + cap)
+        chunk = content[start:end]
+        has_more = end < total
         return {
             "file_name": file_name,
             "no_artifact": True,  # 2.1.0-p1.7：读的是用户上传的输入文件，不是生成产物——
             # 不发 artifact（此前被误当"生成文件"进对话文件区，模型也跟着说"已生成文件"）
-            "total_chars": len(content),
-            "content": content[:max_chars],
-            "truncated": len(content) > max_chars,
+            "total_chars": total,
+            "offset": start,
+            "returned_chars": len(chunk),
+            "has_more": has_more,
+            "next_offset": end if has_more else None,
+            "content": chunk,
+            # 兼容旧字段：仍表示"还有内容没给到"，但语义从"超上限"变成"可分页继续读"
+            "truncated": has_more,
         }
 
     read_document.__name__ = "read_document"

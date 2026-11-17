@@ -6,6 +6,10 @@
 >   ② `read_document` 只能整读或截尾，超过单步上限就丢掉文档末尾（第 10 章看不到）。
 > 纪律不变：每步 testcase + tag `v2.4.0-pN.M` + 迭代文档 + RELEASES 更新 + 推送。
 > 相对 2.3.0 的定位：2.3.0 解决"上下文被打爆"，2.4.0 解决"路由选错人 / 工具读不全"。
+>
+> **进度（2026-11-17）**：A/B/C 三步代码完成，pytest 615 passed / 3 skipped，真链路验证通过；未打 tag。
+> 实施中修正了两处判据（见文末"实施记录"）：A 的"删光 guards"不可达（requires 是意图级、
+> guards 是实体级，互补而非替代）；另外发现并修掉"单步上限 = 任务上限"的死锁（p2.1）。
 
 ---
 
@@ -186,3 +190,54 @@ C 依赖 A/B 的文案（改道后才有"已为你改道"这句话）。
 - **不做"全 Agent 共享全量工具"**：白名单的价值是"最小权限 + 提示词聚焦"，不能为了方便放弃。
 - **不改 `single_agent_covers`**：它回答的是"一个 Agent 能否顺序完成"，与工具能力正交。
 - **不给 read_document 加摘要能力**（让模型自己总结正文）：那是 C 层的事，2.3.0 已做。
+
+---
+
+## 6. 实施记录（2026-11-17）
+
+### A 阶段：intents.requires（7 testcase）
+
+- `planner.yaml`：7 个意图各加 `requires`（analysis: [] / orders: [query_orders] / cleaning: [clean_table] /
+  report: [write_document] / rag: [rag_retrieve] / visualization: [render_chart] / image_restore: []）。
+- `planner.Plan` 新增 `requires` 字段，`plan()` 在**折叠可视化之后**聚合（避免已剔除意图带入依赖）。
+- `router._capability_reroute` 改为接收 Plan，需求 = `plan.requires ∪ guards 命中项`，
+  返回 `(目标, 缺失工具)`，reason 里写明缺什么（可观测）。
+- **判据修正**：原计划写"删掉 11 条文件类 guards 后仍能改道"——**做不到也不该做**。
+  requires 是"意图级"（这个意图需要哪些能力），guards 是"实体级"（这句话里出现了什么）。
+  "读取文件"不是意图，是任务形态，requires 表达不了。两者互补，实测也无法互替。
+  改为两条真判据：
+  - **A-4 配置自洽护栏**：遍历所有意图，断言 `requires ⊆ 该意图 Agent 的工具池`（CI 门槛，防配置漂移）；
+  - **A-5 工具池被改坏时改道**：monkeypatch 把 `query_orders` 从 data_analysis 挪走 → 订单任务自动改道 general。
+
+### B 阶段：read_document 分段（7 testcase）
+
+- 签名 `read_document(file_name, offset=0, limit=0)`，返回增 `offset / returned_chars / has_more / next_offset`。
+- `limit` 受 `doc_read_max_chars` 二次约束（模型传 999999 也只给 5 万）；
+  越界 offset 直接报错不返回空串；`truncated` 保留为 `has_more` 的兼容别名。
+- 工具描述与 schema 同步（offset 说明"续读用 next_offset"，并警告"has_more=true 时不得声称读完全文"）。
+
+### C 阶段：文件名自我纠正（3 testcase）
+
+- 原计划是"区分能力缺失/信息缺失"，但实现中发现 p1.3 的路由修正已经消掉了"没有工具"那一类；
+  剩下的真实痛点是**文件名写错**（`smoke_md` vs `smoke-long.md`）被当成"文件不存在"→ 反问用户。
+- 改为：`FileNotFoundError` 里附 `difflib` 相似文件名候选（≤3 个），并明确"请直接重试，不要向用户索要
+  这些已经存在的文件"。指向性更强，且不改变任何权限语义（路径护栏仍在 ValueError 分支）。
+
+### p2.1 附带修复：单步上限与任务上限的死锁
+
+真链路第一次验证直接 `paused_budget`，只有 1 次工具调用：
+
+- 单步上限（p1.4 调到 50000）**等于**任务上限（`TASK_TOKEN_HARD_LIMIT=50000`）——
+  读一份 5 万字文档，第一次调用就把任务预算打满。
+- 修：`task_token_hard_limit` 默认 50000 → **200000**；`docker-compose.yml` 与 `.env.example` 同步。
+  加护栏 `test_task_budget_covers_multiple_doc_reads`（断言 ≥ `doc_read_max_chars × 2`）。
+- 部署注意：生产 `.env` 若固定了 `TASK_TOKEN_HARD_LIMIT=50000`，会覆盖新默认，需同步改。
+
+### 真链路（本地，9.3 万字 `big-doc.md` / 20 章）
+
+| 轮次 | 改动前 | 改动后 |
+| ---- | ------ | ------ |
+| 读第 20 章 | 只能到前 10 章（截尾） | **2 次 read_document**（第二次带 offset）→ 答「100000 元」并引用原文 |
+| 任务状态 | `paused_budget`（1 次调用就撞上限） | `single`，tokens 162,069 |
+
+测试基线：**598 → 615 passed / 3 skipped**。

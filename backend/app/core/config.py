@@ -109,7 +109,10 @@ class Settings(BaseSettings):
     # settle 时按真实 usage 补差）
     token_estimate_default: int = 2000
     # 单任务全局硬上限：与钱包余额无关，对所有用户生效。0 表示关闭。
-    task_token_hard_limit: int = 50000
+    # v2.4.0-p2.1：50000 → 200000。原值等于 v2.3.0-p1.4 的单步上限（50000），
+    # 导致"读一份 5 万字文档"第一次调用就撞任务上限 → paused_budget（真跑 2026-11-17）。
+    # 护栏约束：必须 ≥ doc_read_max_chars × 2（读一次 + 再读一段），见 test_doc_paging。
+    task_token_hard_limit: int = 200000
     # v2.2.0-p1.6（B3）：循环护栏的 ReAct 步数上限（runtime_settings 可覆盖，见 catalog）。
     agent_max_iterations: int = 10
     # v2.2.0-p1.8（C2）：run 级硬超时（秒）——worker 启动 watchdog 定时器，到点置位
