@@ -835,11 +835,17 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
   );
 }
 
-// 新会话示例：覆盖订单分析 / 报告产出 / 明细导出三类核心能力，点击直接发起任务
+// 新会话示例（v2.4.1）：按"能触发不同 Agent 分支且点了有结果"设计——
+//   多维图表 → data_analysis（render_chart，城市×月份×两个指标）
+//   跨月报告 → report_generation（PDF 交付）
+//   信息不全 → 只说要导出、不给时间/字段，意图缺条件时走 ask_user 反问
+//   制度口径 → rag_retrieval（知识库检索）
+// 注：image_restore 目前只有 ask_user（能力未接入），不放引导卡避免点了只得到"暂不支持"。
 const WELCOME_SUGGESTIONS = [
-  { tag: '数据', text: '帮我看看 2026 年 10 月卖得最好的前 5 个城市，画张柱状图' },
-  { tag: '报告', text: '把 9 月和 10 月的销售额对比整理成一份 PDF 报告' },
-  { tag: '导出', text: '帮我导出 10 月的全国订单明细表（Excel）' },
+  { tag: '多维图表', text: '帮我看看最近两个月各城市的销售额和订单量，按城市和月份画一张对比看板' },
+  { tag: '跨月报告', text: '把 9 月、10 月、11 月的销售额和客单价做个对比，整理成一份 PDF 报告' },
+  { tag: '信息不全', text: '帮我导出一份订单明细表' },
+  { tag: '制度口径', text: '差旅报销的审批流程和金额上限是怎么规定的？' },
 ];
 
 export default WorkspacePage;

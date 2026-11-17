@@ -326,3 +326,50 @@ C 依赖 A/B 的文案（改道后才有"已为你改道"这句话）。
 `test_doc_headings.py` 6 条：Markdown 层级 / 中文章节行 / **offset 精确定位**（最关键）/
 headings_only 不返正文 / 无标题回退分段 / 条数封顶。
 后端 **615 → 621 passed / 3 skipped**。
+
+---
+
+## 9. v2.4.1：引导问题 / 本地数据 / token 输出明细（2026-11-17，未部署）
+
+### 9.1 快捷引导问题换一批
+
+原 3 条（数据/报告/导出）都在 `data_analysis` + `report_generation` 上，看不出意图分支。
+新 4 条按"**能触发不同 Agent 且有结果**"设计（`WorkspacePage.WELCOME_SUGGESTIONS`）：
+
+| 标签 | 问题 | 覆盖分支 |
+| ---- | ---- | -------- |
+| 多维图表 | 最近两个月各城市的销售额和订单量，按城市和月份画对比看板 | `data_analysis` + `render_chart`（城市×月份×两指标） |
+| 跨月报告 | 9/10/11 月销售额与客单价对比，整理成 PDF 报告 | `report_generation` |
+| 信息不全 | 帮我导出一份订单明细表 | **`ask_user`**（缺时间/字段，应反问而不是瞎导） |
+| 制度口径 | 差旅报销的审批流程和金额上限是怎么规定的 | `rag_retrieval` |
+
+**没放 `image_restore`**：该 Agent 当前只有 `ask_user`（能力未接入），引导卡点了只会得到"暂不支持"，
+属于把缺陷摆在首屏。等 OCR 接上再加。
+
+### 9.2 本地订单数据补充 500 条
+
+`backend/scripts/seed_orders_bulk.py`（新增，容器内执行）：
+
+```
+docker exec -i office-multiagent-backend-1 python - < backend/scripts/seed_orders_bulk.py
+```
+
+- 500 条：**150 条落在当月（2026-11-01 ~ 今天）**，350 条随机分布在 2025-01 ~ 上月；
+- 门店/地址从现有 `guoquan_orders` 取（34 家店），保证 `derive_city` 能正常归属城市；
+- 状态/渠道/金额带权重（已完成 60%、退款 2%），`order_no` 用 `INSERT IGNORE` 防重复；
+- 固定随机种子（`20261117`）可复现。
+
+实测：总量 1500 → **2000**；`2026-11` = **150 条**，城市分布 上海 61 / 安庆 14 / 广州 7 …
+真跑验证「11 月各城市销售额前 5」→ 上海 18,830 元 61 单，与 SQL 统计一致。
+
+### 9.3 token 明细补"输出"
+
+`done` 事件本来就同时带 `tokens_used` 与 `prompt_tokens`，但 `ChatMessage` 的浮窗只列了
+输入侧（输入 / 缓存命中 / 未命中 / 逐步），**输出要靠用户自己减**。
+
+改：`outputTokens = tokens - promptTokens`，在"输入"下面加一行（紫色圆点 `.tok-dot--out`）；
+`promptTokens` 缺失的历史消息不显示该行（不猜数）。
+
+实测：一条 11,901 tokens 的任务 → 输入 11,604 / **输出 297**。
+
+测试：`ChatMessage.test.tsx` +2（有输出行 / 缺字段不显示），前端 **137 → 139**。

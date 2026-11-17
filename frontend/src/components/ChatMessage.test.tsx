@@ -81,6 +81,56 @@ describe('回复信息行', () => {
     expect(screen.getByText('耗时 3.2s')).toBeInTheDocument();
   });
 
+  it('token 明细同时给出输入与输出（v2.4.1：此前只有输入侧）', () => {
+    render(
+      <ChatMessage
+        index={1}
+        msg={{
+          role: 'assistant',
+          id: 12,
+          createdAt: clock,
+          events: [
+            ev('content_delta', { delta: '好的' }, 1000, 1),
+            ev(
+              'done',
+              {
+                status: 'single',
+                tokens_used: 12000,
+                prompt_tokens: 9000,
+                model: 'deepseek-chat',
+                steps: [{ label: '第 1 步', tokens: 12000 }],
+              },
+              4200,
+              2,
+            ),
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText('输入')).toBeInTheDocument();
+    expect(screen.getByText('输出')).toBeInTheDocument();
+    expect(screen.getByText('9,000')).toBeInTheDocument();
+    expect(screen.getByText('3,000')).toBeInTheDocument(); // 12000 - 9000
+  });
+
+  it('没有 prompt_tokens 时不显示输出行（历史消息缺字段不猜数）', () => {
+    render(
+      <ChatMessage
+        index={1}
+        msg={{
+          role: 'assistant',
+          id: 13,
+          createdAt: clock,
+          events: [
+            ev('content_delta', { delta: '好的' }, 1000, 1),
+            ev('done', { status: 'single', tokens_used: 5000, steps: [{ label: '第 1 步', tokens: 5000 }] }, 4200, 2),
+          ],
+        }}
+      />,
+    );
+    expect(screen.queryByText('输出')).toBeNull();
+  });
+
   it('没有消息 id 或回调时不渲染反馈按钮（流式刚结束的本地消息）', () => {
     render(
       <ChatMessage index={1} msg={{ role: 'assistant', content: '好', createdAt: clock }} />,

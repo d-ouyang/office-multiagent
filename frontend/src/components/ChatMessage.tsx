@@ -266,6 +266,10 @@ export function ChatMessage({
     meta.cacheHitTokens != null && meta.promptTokens ? Math.min(100, Math.round((meta.cacheHitTokens / meta.promptTokens) * 100)) : null;
   const modelId = meta.model || msg.model;
   const tokens = meta.tokens ?? msg.tokens;
+  // v2.4.1：输出 = 总消耗 − 输入。done 事件同时带 tokens_used 与 prompt_tokens，
+  // 相减即生成侧成本；此前明细只列输入，用户看不出"回答本身花了多少"。
+  const outputTokens =
+    tokens != null && meta.promptTokens != null ? Math.max(0, tokens - meta.promptTokens) : 0;
   const clock = formatClock(msg.createdAt || meta.endedAt);
   const copyText = () => {
     if (content) return content;
@@ -403,6 +407,13 @@ export function ChatMessage({
                       <span className="token-pop__row">
                         <span className="token-pop__label"><span className="tok-dot tok-dot--in" /> 输入</span>
                         <span className="token-pop__num">{formatTokens(meta.promptTokens)}</span>
+                      </span>
+                    )}
+                    {/* v2.4.1：输出 = 总消耗 − 输入。此前明细只有输入侧，用户看不出生成花了多少 */}
+                    {outputTokens > 0 && (
+                      <span className="token-pop__row">
+                        <span className="token-pop__label"><span className="tok-dot tok-dot--out" /> 输出</span>
+                        <span className="token-pop__num">{formatTokens(outputTokens)}</span>
                       </span>
                     )}
                     {meta.cacheHitTokens != null && meta.promptTokens != null && (

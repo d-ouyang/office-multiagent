@@ -2576,6 +2576,8 @@ button.ghost {
 .token-pop__sub .token-pop__label { padding-left: 14px; opacity: 0.8; }
 .tok-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 1px; }
 .tok-dot--in { background: #4c8dff; }
+/* v2.4.1：输出 token 用紫色，与输入（蓝）/命中（绿）/未命中（红）区分 */
+.tok-dot--out { background: #a371f7; }
 .tok-dot--hit { background: #2fbf71; }
 .tok-dot--miss { background: #f2545b; }
 .token-pop__rate { display: flex; justify-content: space-between; align-items: baseline; margin: 6px 0 4px; font-weight: 600; }
