@@ -74,7 +74,17 @@ _ORDER_METRIC = {
         "items": {"type": "string", "enum": _METRIC_ENUM},
         "description": "一次聚合多个指标（宽表，各指标一列 m_<指标>），最多 6 个。要多个指标时优先用这个，别按指标逐个查询。相同参数的重复查询会直接返回缓存结果（结果里 cached=true），不要反复查同一样东西",
     },
-    "group_by": {"type": "string", "description": "month、city 或订单表字段"},
+    # v2.4.1：原来只声明 string，模型据此认为"不能同时按城市和月份分组"，
+    # 于是绕路导明细、越试越偏（真跑见证：5 次里 4 次死于编造工具名）。
+    # 代码早就支持 ≤2 列的数组分组，schema 必须如实说明。
+    "group_by": {
+        "type": ["string", "array"],
+        "items": {"type": "string"},
+        "description": (
+            "分组维度，最多 2 列。传单个字符串（month）或数组（[\"month\",\"city\"]）都可以；"
+            "两个维度交叉（城市×月份矩阵）就传数组，会返回 clean_id 宽表，可直接交给 render_chart。"
+        ),
+    },
 }
 
 
@@ -127,6 +137,11 @@ def build_default_registry(
             "至少要带一个条件：date_from、date_to（YYYY-MM-DD，按下单时间）、"
             "order_no、store_name（包含匹配）、city、order_status、order_channel、"
             "order_type、fulfillment_type、member_level、group_by，或 filters。"
+            # v2.4.1：JSON 协议路径下模型只读得到 description（看不到 parameters schema），
+            # 多维分组的能力必须写在这里，否则它会认为"一次只能按一个维度分组"而绕路。
+            "group_by 支持 1~2 列：单列传字符串（month），两个维度交叉传数组 [\"month\",\"city\"]，"
+            "返回带 clean_id 的宽表（列如 month、city、order_count、m_sum_pay），可直接交给 render_chart 画 heatmap。"
+            "多个指标用 metrics 数组一次查完。"
             "city 按门店地址包含匹配：传「上海」或「上海市」都能命中，不限制城市名单。"
             "状态、渠道、类型、履约方式、会员等级按表里的实际值相等匹配，可传一个值或列表，"
             "不要用写死的可选值；表里没有该值时结果就是 0 行。"

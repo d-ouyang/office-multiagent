@@ -373,3 +373,41 @@ docker exec -i office-multiagent-backend-1 python - < backend/scripts/seed_order
 实测：一条 11,901 tokens 的任务 → 输入 11,604 / **输出 297**。
 
 测试：`ChatMessage.test.tsx` +2（有输出行 / 缺字段不显示），前端 **137 → 139**。
+
+---
+
+## 10. v2.4.1 修复：多维图表卡片跑不通（2026-11-17）
+
+### 现象链（三层，逐层剥出来）
+
+1. 用户点「多维图表」卡 → `render_chart(y="metric_value")` 报「数值列不存在」。
+2. 修了列名别名后重测 → 5/5 全失败，其中 4 次是「模型连续给出无效工具名」。
+3. 打开日志里模型原始输出（新加的 `raw=` 日志）看到真相：
+   > "query_orders 的 group_by 只支持单维度（month 或 city），无法同时按城市和月份分组"
+   模型**根本不知道 group_by 支持数组**，于是想绕路（导明细 → 画图），越试越偏；
+   `thought` 越写越长，最后输出被截断 → JSON 解析失败。
+
+### 四层根因与修法
+
+| # | 根因 | 修法 |
+| - | ---- | ---- |
+| 1 | `group_by` schema 只声明 `type: string`（代码早已支持 ≤2 列数组） | `agents.py`：改 `["string","array"]` + 说明"多维交叉传数组" |
+| 2 | **JSON 协议路径下模型只读得到工具 description，看不到 parameters schema** | `query_orders` 的 description 补一段"group_by 支持 1~2 列，交叉传数组会返回 clean_id 宽表" |
+| 3 | `data_analysis` 提示词没提多维分组，还让模型去找不存在的"看板"工具 | 提示词加"两维交叉传数组、图只有 render_chart、不要试探不存在的工具名"（**注意 YAML 缩进**：general 是 8 空格、data_analysis 是 6 空格，第一次改漏了后者） |
+| 4 | 模型格式小瑕疵（尾逗号/裸换行/JSON 后带说明）直接判死 | `brain.extract_json` 四层：全文 → 代码块 → 配平括号 → 去尾逗号；解析失败日志带 `raw=` 前 300 字 |
+
+另外：`render_chart` 的列名加别名解析（`metric_value` ↔ `m_sum_pay`），报错时直接告诉模型正确写法。
+
+### 效果（同一句提问，连跑 3 次）
+
+| 阶段 | 结果 |
+| ---- | ---- |
+| 修前 | 5/5 失败（4 次编造工具名、1 次 JSON 解析失败） |
+| 修后 | **2/3 成功且都只调 2 次工具**（query_orders → render_chart），1 次仍 ask_user |
+
+### 遗留（下轮）
+
+- 仍有 ~1/3 概率走 ask_user 或 JSON 截断：模型 `thought` 过长是诱因，可在协议提示里限制 thought 长度或调高 max_tokens。
+- 多维分组行数多时结果会被截断（`truncated=true`），可考虑 top_n 或分月查询。
+
+测试：后端 **621 → 633**（+5 列名解析、+7 JSON 容错）；前端文案调整，typecheck 通过。

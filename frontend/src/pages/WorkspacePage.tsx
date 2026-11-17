@@ -842,7 +842,9 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
 //   制度口径 → rag_retrieval（知识库检索）
 // 注：image_restore 目前只有 ask_user（能力未接入），不放引导卡避免点了只得到"暂不支持"。
 const WELCOME_SUGGESTIONS = [
-  { tag: '多维图表', text: '帮我看看最近两个月各城市的销售额和订单量，按城市和月份画一张对比看板' },
+  // 注：不用"看板/dashboard"这种系统里不存在的交付物名——真跑时模型会去找 dashboard 工具
+  // 并反复编造工具名（v2.4.1 实测 5 次 4 次因此失败），改成明确的一种图（热力图）。
+  { tag: '多维图表', text: '统计最近两个月各城市、各月份的销售额，画一张城市×月份的热力图' },
   { tag: '跨月报告', text: '把 9 月、10 月、11 月的销售额和客单价做个对比，整理成一份 PDF 报告' },
   { tag: '信息不全', text: '帮我导出一份订单明细表' },
   { tag: '制度口径', text: '差旅报销的审批流程和金额上限是怎么规定的？' },

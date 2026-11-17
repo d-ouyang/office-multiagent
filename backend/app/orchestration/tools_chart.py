@@ -63,9 +63,35 @@ def _columns(value: Any) -> list[str]:
     return [str(item) for item in _as_list(value)]
 
 
+#: 指标列别名（v2.4.1）。query_orders 的列名随分组列数变化：
+#:   单列分组（group_by=month）→ grp / order_count / **metric_value**
+#:   多列分组（group_by=month,city）→ month / city / order_count / **m_sum_pay**
+#: 模型经常混用（真跑 2026-11-17：y 填 metric_value，而实际列是 m_sum_pay，
+#: 整条任务卡在"数值列不存在"）。这里做一次兜底解析，别让用户为列名重来一遍。
+_Y_ALIASES = ("metric_value", "value", "metric", "y", "amount", "pay_amount")
+
+
+def _resolve_column(name: str, headers: list[str]) -> str:
+    """把模型惯用的别名映射到实际列名；解析不了就原样返回，交给 _require 报错。"""
+    if not name or name in headers:
+        return name
+    if name in _Y_ALIASES:
+        metric_cols = [h for h in headers if h.startswith("m_")]
+        if len(metric_cols) == 1:  # 只有一个指标列时无歧义，直接用
+            return metric_cols[0]
+    if name.startswith("m_") and name[2:] in headers:
+        return name[2:]
+    if f"m_{name}" in headers:
+        return f"m_{name}"
+    return name
+
+
 def _require(headers: list[str], name: str, label: str) -> None:
     if not name or name not in headers:
-        raise ValueError(f"{label}不存在：{name or '（未填）'}。现有列：{'、'.join(headers)}")
+        # 列名缺失最常见的原因是"单列/多列分组的指标列名不同"，把正确写法直接告诉模型
+        metric_cols = [h for h in headers if h.startswith("m_")]
+        hint = f"。多列分组时指标列名带 m_ 前缀，如 {metric_cols[0]}" if metric_cols else ""
+        raise ValueError(f"{label}不存在：{name or '（未填）'}。现有列：{'、'.join(headers)}{hint}")
 
 
 def _reduce(values: list[float], agg: str) -> float | None:
@@ -195,6 +221,8 @@ def _draw(path: Path, chart: str, title: str, payload: dict[str, Any], *, fmt: s
 def _prepare(records: list[dict[str, str]], headers: list[str], chart: str, x: str, y_cols: list[str], series: str, agg: str, top_n: int, bins: int) -> tuple[dict[str, Any], int, int]:
     skipped = 0
     used = 0
+    # v2.4.1：先把别名解析成实际列名（metric_value → m_sum_pay），再进各图表分支校验
+    y_cols = [_resolve_column(col, headers) for col in y_cols]
     if chart == "hist":
         column = y_cols[0] if y_cols else x
         _require(headers, column, "直方图的列")

@@ -136,28 +136,84 @@ _TOOLCALLS_TMPL = """你可以通过 function calling 调用上面传入的工�
 """
 
 
+#: 尾逗号：模型在 JSON 最后一项后多写一个逗号是高频错误（`{"a":1,}`）
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def _loads_lenient(raw: str) -> dict[str, Any] | None:
+    """尽量把一段文本解析成 dict：容忍字符串内控制字符与尾逗号。
+
+    为什么宽容（v2.4.1）：模型偶尔在 JSON 字符串里放裸换行、或末项后多一个逗号，
+    严格 `json.loads` 直接失败 → 整条任务被判"模型输出无法解析"终止。
+    真跑见证（2026-11-17 多维图表卡片）：3 次里 1 次死在这里，而模型其实给出了完整决策。
+    """
+    for candidate in (raw, _TRAILING_COMMA_RE.sub(r"\1", raw)):
+        try:
+            data = json.loads(candidate, strict=False)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _balanced_object(text: str) -> str | None:
+    """截出第一个配平的 `{...}`（跳过字符串内的括号与转义）。
+
+    为什么不用 `rfind("}")`：模型常在 JSON 后追加一句说明、甚至再给一个示例对象，
+    取"第一个 { 到最后一个 }"会把两段黏在一起。
+    """
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
 def extract_json(text: str) -> dict[str, Any] | None:
-    """从 LLM 回复里提取第一个 JSON 对象；失败返回 None（不猜、不编）。"""
+    """从 LLM 回复里提取第一个 JSON 对象；失败返回 None（不猜、不编）。
+
+    四层尝试（v2.4.1 补齐后两层）：全文 → ```json 代码块 → 配平括号截取 → 去尾逗号。
+    """
     s = (text or "").strip()
-    try:
-        data = json.loads(s)
-        return data if isinstance(data, dict) else None
-    except (json.JSONDecodeError, ValueError):
-        pass
+    if not s:
+        return None
+    found = _loads_lenient(s)
+    if found is not None:
+        return found
     m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", s, re.DOTALL)
     if m:
-        try:
-            data = json.loads(m.group(1))
-            return data if isinstance(data, dict) else None
-        except (json.JSONDecodeError, ValueError):
-            pass
+        found = _loads_lenient(m.group(1))
+        if found is not None:
+            return found
+    balanced = _balanced_object(s)
+    if balanced:
+        found = _loads_lenient(balanced)
+        if found is not None:
+            return found
     start, end = s.find("{"), s.rfind("}")
     if start != -1 and end > start:
-        try:
-            data = json.loads(s[start : end + 1])
-            return data if isinstance(data, dict) else None
-        except (json.JSONDecodeError, ValueError):
-            return None
+        return _loads_lenient(s[start : end + 1])
     return None
 
 
@@ -359,7 +415,10 @@ class LlmBrain:
         if data is None:
             if looks_like_json(res.content):
                 # 以 { 开头但不是合法 JSON → 真解析失败，如实停止（不编造）
-                logger.warning("LLM brain 输出无法解析为 JSON，如实停止（不编造）")
+                logger.warning(
+                    "LLM brain 输出无法解析为 JSON，如实停止（不编造）| raw=%r",
+                    (res.content or "")[:300],
+                )
                 return Step(
                     thought="模型输出无法解析",
                     final="模型输出无法解析为决策 JSON，已停止本次任务（未编造结论）。请稍后重试。",
@@ -433,7 +492,7 @@ class LlmBrain:
             return Step(thought="", final=text, streamed=True)
         data = extract_json(text)
         if data is None:
-            logger.warning("LLM brain 输出无法解析为 JSON，如实停止（不编造）")
+            logger.warning("LLM brain 输出无法解析为 JSON，如实停止（不编造）| raw=%r", text[:300])
             return Step(
                 thought="模型输出无法解析",
                 final="模型输出无法解析为决策 JSON，已停止本次任务（未编造结论）。请稍后重试。",
