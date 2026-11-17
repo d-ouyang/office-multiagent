@@ -9,6 +9,42 @@
 
 ---
 
+## v2.4.1 — 引导入口与结果完整性（2026-11-17）
+
+分支 `feature/2.4.0-routing-and-io`（接 v2.4.0），后端 **633 → 637 passed / 3 skipped**，前端 **137 → 139 passed**。详见 `docs/iterations/v2.4.1-entry-and-integrity.md`。
+
+**一句话**：2.4.0 管"能不能跑通"，2.4.1 管"跑通了结果对不对、全不全"——第一次真点引导卡逼出来的一轮修正。
+
+### 产品改动
+
+| 改动 | 内容 |
+| ---- | ---- |
+| 引导问题 3 → 4 条 | 多维图表 / 跨月报告 / **信息不全（ask_user 场景）** / 制度口径；不放 image_restore（能力未接入） |
+| 订单数据 +500 | 150 条落当月（此前 11 月无数据），350 条随机历史；`scripts/seed_orders_bulk.py` 可复现 |
+| token 明细补"输出" | `tokens_used − prompt_tokens`，实测 11,901 = 输入 11,604 + 输出 297 |
+
+### 两轮修复
+
+**A. 多维图表卡片（5/5 失败 → 2/3 成功，稳定 2 次工具调用）**
+
+四层根因：① `group_by` schema 只写 `string`；② **JSON 协议下模型只读 description、看不到 parameters**；
+③ `data_analysis` 提示词没提多维分组，模型以为只能单维度而绕路、编造工具名；
+④ 尾逗号/裸换行/JSON 带说明直接判死。修：schema + description + 提示词 + `extract_json` 四层容错 + 失败日志带 `raw=`。
+
+**B. 结果截断（分组 20 → 66 组，无截断）**
+
+五处叠加：① **`_limit()` 默认值写死 20**（城市×月份 66 组只回 20 组，热力图漏 70% 数据）；
+② `_limit` 内硬卡 `min(50)`；③ 分组与明细共用上限；④ `db_query` 静默截断；⑤ `analyze_table` 上限 100。
+修：`aggregate_max_groups=500` 与明细 50 分离 + 五处统一 `truncated`/`truncated_hint` + 协议要求"先说明给了多少再下结论"。
+
+### 部署必做
+
+- 无迁移、无新增环境变量。
+- 侧栏版本号随 tag 自动显示（v2.3.0 起生效）。
+- ⚠️ `agents.yaml` 改动走 volume 挂载，**部署后容器会读新配置，无需额外操作**。
+
+---
+
 ## v2.4.0 — 路由与 IO 根治（2026-11-17）
 
 分支 `feature/2.4.0-routing-and-io`（自 `v2.3.0` 切出），后端 **598 → 621 passed / 3 skipped**，前端 **123 → 137 passed**。详见 `docs/PLAN-2.4.0.md`。
