@@ -74,7 +74,7 @@ describe('pageWindow（分页页码折叠）', () => {
 describe('ADMIN_TABS', () => {
   it('一级入口固定七个（v2.4.3 增加任务对账）', () => {
     expect(ADMIN_TABS.map((t) => t.key)).toEqual([
-      'overview', 'tasks', 'users', 'pools', 'reconcile', 'audit', 'feedback',
+      'overview', 'tasks', 'users', 'reconcile', 'pools', 'audit', 'feedback',
     ]);
   });
 });
