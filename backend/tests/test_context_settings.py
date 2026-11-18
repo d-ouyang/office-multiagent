@@ -80,36 +80,49 @@ def test_tool_calls_path_same_limit(rs):
 
 
 def test_recent_rounds_configurable(rs):
-    """S-4：对话保留轮数可配；0 表示全部压成摘要（`[:-0]` 空列表陷阱不得复现）。"""
+    """S-4：对话保留轮数可配。
+
+    v2.4.2：0 **不再等于"全部压成摘要"**——最近 2 轮是硬底线（MIN_RECENT_ROUNDS），
+    任何配置都不能把上文全抹掉。想要更省 token 应该调 budget，而不是丢掉全部原文。
+    """
     history = []
     for i in range(5):
         history.append({"role": "user", "content": f"问题{i}"})
         history.append({"role": "assistant", "content": f"回答{i}"})
 
-    rs(history_recent_rounds=2, history_round_chars=80)
+    rs(history_recent_rounds=3, history_round_chars=800)
     _, parts = prepare_turn(history, "本轮问题")
     assert "问题0" in parts["summary"]
-    assert "问题2" in parts["summary"]      # 5 轮里前 3 轮进摘要
-    assert "问题3" not in parts["summary"]
-    assert "问题3" in parts["recent"]       # 最近 2 轮保留原文
+    assert "问题1" in parts["summary"]      # 5 轮里前 2 轮进摘要
+    assert "问题2" not in parts["summary"]
+    assert "问题2" in parts["recent"]       # 最近 3 轮保留原文
     assert "问题4" in parts["recent"]
 
     rs(history_recent_rounds=0)
     _, parts0 = prepare_turn(history, "本轮问题")
-    assert "recent" not in parts0
-    assert "问题4" in parts0["summary"]
+    assert "recent" in parts0               # 硬底线：至少留 2 轮原文
+    assert "问题4" in parts0["recent"]
+    assert "问题3" in parts0["recent"]
+    assert "问题0" in parts0["summary"]
 
 
 def test_round_chars_configurable(rs):
-    """S-4b：单轮摘要长度可配（旧实现写死 80）。"""
-    rs(history_recent_rounds=0, history_round_chars=20)
-    history = [
-        {"role": "user", "content": "长" * 200},
-        {"role": "assistant", "content": "短" * 200},
-    ]
-    _, parts = prepare_turn(history, "本轮")
-    assert parts["summary"].count("长") == 20
-    assert parts["summary"].count("短") == 20
+    """S-4b：`history_round_chars` 语义变更（v2.4.2）。
+
+    旧语义：每轮问答各自切片多少字（-80 字断句事故的根源）。
+    新语义：**单条结构化摘要**的字符上限——调小只会让摘要更短，不会切出断句。
+    """
+    history = []
+    for i in range(5):
+        history.append({"role": "user", "content": f"第{i}轮的问题" + "细节" * 60})
+        history.append({"role": "assistant", "content": "结论：本期销售额 12345 元。" * 20})
+
+    rs(history_recent_rounds=2, history_round_chars=120)
+    _, short = prepare_turn(history, "本轮")
+    rs(history_recent_rounds=2, history_round_chars=1200)
+    _, long = prepare_turn(history, "本轮")
+    assert short["summary"] and long["summary"]
+    assert len(short["summary"]) < len(long["summary"])
 
 
 def test_settings_catalog_exposes_new_keys(rs):

@@ -317,3 +317,16 @@ CREATE TABLE IF NOT EXISTS `runtime_setting` (
   `updated_at`    DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`setting_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ===== 会话轮次结构化摘要（v2.4.2 / 迁移 0015）：一轮一条，生成后永久复用 =====
+-- 替代旧实现 `answer[:80]` 的切片"摘要"——那种做法会把 730 字的回答砍成 "- 时…"，
+-- 结尾「需要我导出成文档吗」直接丢失，用户回「需要」时模型无从对上。
+CREATE TABLE IF NOT EXISTS `session_summary` (
+  `session_id` VARCHAR(64)  NOT NULL,
+  `turn_no`    INT          NOT NULL,
+  `payload`    JSON         NOT NULL,
+  `rendered`   TEXT         NULL,
+  `engine`     VARCHAR(16)  NOT NULL DEFAULT 'rule',
+  `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`session_id`, `turn_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

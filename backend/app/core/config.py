@@ -143,8 +143,10 @@ class Settings(BaseSettings):
     # 只会让 2.4 万字的文档丢掉最后一章（真跑见证：第 10 章要点被切，模型只能推断）。
     observation_max_chars: int = 50000   # 单步工具观察写进 history 的上限（字符）
     history_step_max_chars: int = 50000  # ReAct 历史渲染时每步观察的上限（两条协议共用）
-    history_recent_rounds: int = 4       # 会话记忆保留原文的轮数（更早压成摘要）
-    history_round_chars: int = 80        # 压缩后每轮问答各自保留的字符数
+    # v2.4.2：4 → 8 轮原文；80 → 1500（语义从"每轮切多少字"改为"单条摘要字符上限"）。
+    # 80 字切片曾让多轮对话在第二轮就失效（730 字的回答被砍成断句，结尾的提问丢失）。
+    history_recent_rounds: int = 8       # 保留原文的轮数（硬底线 2 轮）
+    history_round_chars: int = 1500      # 单条结构化摘要的字符上限
     # 单次请求中"历史"可占模型窗口的百分比（v2.3.0-p1.1 预算器）；0=不限（逐条截断）
     history_budget_window_pct: int = 60
 

@@ -773,6 +773,47 @@ _MAX_RECHARGE = 10_000_000
 _RESUMABLE = {"paused_insufficient_quota", "paused_user", "paused_error", "failed", "paused_budget"}  # 2.1.0：paused_budget 走真断点续跑（重置预算）
 
 
+def _summarize_and_store(session_id: str, question: str, answer: str) -> None:
+    """生成并落库本轮的结构化摘要（v2.4.2）。
+
+    规则抽取打底（**数字/产物/问句必须原样**，模型改写数字是摘要在本场景最危险的失真），
+    模型归纳只负责"意图 + 结论"两层的可读性；模型失败就只留规则版。
+    """
+    from sqlalchemy import text as _text
+
+    from ..core.config import settings
+    from ..core.db import get_engine
+    from ..core.session_summary_repo import SessionSummaryRepo
+    from ..orchestration.summary import (
+        merge_summaries,
+        render_summary,
+        summarize_round,
+        summarize_with_llm,
+    )
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        turn_no = int(
+            conn.execute(
+                _text("SELECT COUNT(*) FROM message WHERE session_id=:s AND role='user'"),
+                {"s": session_id},
+            ).scalar()
+            or 0
+        )
+    if turn_no <= 0:
+        return
+    rule = summarize_round(turn_no, question, answer)
+    llm = summarize_with_llm(turn_no, question, answer)
+    payload = merge_summaries(rule, llm)
+    SessionSummaryRepo(eng).upsert(
+        session_id,
+        turn_no,
+        payload,
+        render_summary(payload, max_chars=int(settings.history_round_chars)),
+        engine_name="llm" if llm else "rule",
+    )
+
+
 def _build_asset_index(prior: list[dict[str, Any]]) -> str:
     """2.1.0 P0 轻档：从会话历史 assistant trace 里提取可复用的数据副本（clean_id）索引。
 
@@ -1731,7 +1772,15 @@ def _stream_task(
     pool = TokenPool(get_engine())
 
     prior = repo.list_messages(session_id)
-    remembered, context_parts = prepare_turn(prior, text)
+    # v2.4.2：已落库的轮次摘要直接复用（未命中的轮次由 prepare_turn 现算规则摘要）。
+    # 读失败不影响任务——摘要只是增强，不是依赖。
+    try:
+        from ..core.session_summary_repo import SessionSummaryRepo
+
+        summaries = SessionSummaryRepo(get_engine()).list_rendered(session_id)
+    except Exception:  # noqa: BLE001
+        summaries = []
+    remembered, context_parts = prepare_turn(prior, text, summaries=summaries)
     effective_text = _compose_task_text(remembered, attachments, _recognize_images(attachments))
     if attachments:
         context_parts["current"] = effective_text
@@ -1858,6 +1907,13 @@ def _stream_task(
                     )
                     repo.append_message(session_id, "user", text, trace=user_trace)
                     repo.append_message(session_id, "assistant", body, trace=trace)
+                # v2.4.2：本轮落库之后再生成摘要——turn_no 取自 user 消息计数，
+                # 放在落库之前会读到上一轮的计数（首轮为 0 直接跳过）。
+                if status == "done":
+                    try:
+                        _summarize_and_store(session_id, text, str(result.get("result") or ""))
+                    except Exception:  # noqa: BLE001
+                        logging.getLogger(__name__).exception("生成会话摘要失败（忽略）")
                 payload = None
                 if status == "paused_budget":
                     payload = _json.dumps(result.get("pause_payload") or {}, ensure_ascii=False)
