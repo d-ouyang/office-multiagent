@@ -7,6 +7,7 @@ import {
   adminRunLlmCalls,
   adminToolSchemas,
   type LlmCallDetail,
+  type LlmCallMessage,
   type LlmCallRow,
 } from '../lib/api';
 import { Collapse } from 'antd';
