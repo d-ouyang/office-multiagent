@@ -203,7 +203,7 @@ export default function LlmCallsPanel({ runId }: { runId?: string | null }) {
   const [calls, setCalls] = useState<LlmCallRow[]>([]);
   const [detail, setDetail] = useState<LlmCallDetail | null>(null);
   const [schemas, setSchemas] = useState<string>('');
-  const [schemaData, setSchemaData] = useState<ReturnType<typeof adminToolSchemas> | null>(null);
+  const [schemaData, setSchemaData] = useState<Awaited<ReturnType<typeof adminToolSchemas>> | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
