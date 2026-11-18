@@ -847,9 +847,11 @@ export async function adminRunLlmCalls(runId: string): Promise<LlmCallRow[]> {
 }
 
 export async function adminRunLlmCall(runId: string, callId: number): Promise<LlmCallDetail> {
-  return adminGet<LlmCallDetail>(
+  // 后端返回 { call: {...} }——必须解包，否则 detail.step/messages 全是 undefined（真跑踩过）
+  const data = await adminGet<{ call: LlmCallDetail }>(
     `/api/v1/runs/${encodeURIComponent(runId)}/llm-calls?detail=${callId}`,
   );
+  return data.call;
 }
 
 export async function adminToolSchemas(agent: string): Promise<{ agent: string; tools: Array<{ function: { name: string; description: string; parameters: unknown } }> }> {
