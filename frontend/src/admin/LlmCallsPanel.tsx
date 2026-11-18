@@ -111,14 +111,17 @@ export default function LlmCallsPanel({ runId }: { runId?: string | null }) {
         {detail && (
           <>
             <Typography.Title level={5}>模型收到（{detail.messages.length} 条，手机号已脱敏）</Typography.Title>
-            {detail.messages.map((m, i) => (
-              <div key={i} style={{ marginBottom: 10 }}>
-                <Tag>{m.role}</Tag>
-                <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, maxHeight: 240, overflow: 'auto' }}>
-                  {m.content.length > 1500 ? `${m.content.slice(0, 1500)}…（共 ${m.content.length} 字）` : m.content}
-                </pre>
-              </div>
-            ))}
+            {detail.messages.map((m, i) => {
+              // content 可能是 null（带 tool_calls 的 assistant）或数组（多模态）——直接 .length 会崩掉整个抽屉
+              const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? m.tool_calls ?? null);
+              const shown = text.length > 1500 ? `${text.slice(0, 1500)}…（共 ${text.length} 字）` : text;
+              return (
+                <div key={i} style={{ marginBottom: 10 }}>
+                  <Tag>{m.role}</Tag>
+                  <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, maxHeight: 240, overflow: 'auto' }}>{shown}</pre>
+                </div>
+              );
+            })}
             <Typography.Title level={5}>模型返回</Typography.Title>
             <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, maxHeight: 240, overflow: 'auto' }}>
               {(detail.response_text || '').slice(0, 2000)}

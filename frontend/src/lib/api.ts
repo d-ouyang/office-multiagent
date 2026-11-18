@@ -832,7 +832,7 @@ export interface LlmCallRow {
   created_at: string;
 }
 
-export interface LlmCallMessage { role: string; content: string }
+export interface LlmCallMessage { role: string; content: string | unknown; tool_calls?: unknown }
 
 export interface LlmCallDetail extends LlmCallRow {
   messages: LlmCallMessage[];

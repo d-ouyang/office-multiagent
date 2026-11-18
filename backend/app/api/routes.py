@@ -2215,6 +2215,7 @@ def run_llm_calls(
 def admin_tool_schemas(agent: str = Query(default="data_analysis"), authorization: str | None = Header(default=None)):
     """某 Agent 工具池的完整 schema（v2.4.3 完整回放：排障时看模型"应该"收到什么）。"""
     _require_admin(authorization)
+    from ..core.db import get_engine
     from ..orchestration.agents import build_default_registry, get_agent_spec
 
     spec = get_agent_spec(agent)
