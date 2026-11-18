@@ -439,3 +439,29 @@
 .admin-dialog .ant-descriptions {
   margin-top: 4px;
 }
+
+/* ===== v2.4.3：模型调用/工具 schema 弹窗的分层样式（暗色） ===== */
+.llm-modal-title { color: #e6edf3; }
+.llm-stats { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.llm-stat { background: #1a2233; border: 1px solid #232c40; border-radius: 8px; padding: 6px 12px; min-width: 90px; }
+.llm-stat b { display: block; font-size: 15px; color: #e6edf3; font-weight: 500; }
+.llm-stat span { font-size: 11px; color: #8b93a7; }
+.llm-msg { background: #1a2233; border: 1px solid #232c40; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.llm-msg-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.llm-role { font-size: 12px; border: 1px solid; border-radius: 999px; padding: 1px 10px; }
+.llm-len { font-size: 11px; color: #8b93a7; }
+.llm-pre { margin: 0; white-space: pre-wrap; font-size: 12px; line-height: 1.6; color: #c9d1d9; max-height: 280px; overflow: auto; }
+.llm-resp-label { font-size: 12px; color: #8b93a7; margin: 2px 0 4px; }
+.llm-thought { background: #172033; border-left: 3px solid #60a5fa; padding: 8px 10px; border-radius: 6px; color: #c9d1d9; font-size: 13px; margin-bottom: 10px; }
+.llm-action { margin-bottom: 10px; }
+.llm-args { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.llm-arg { font-size: 12px; color: #c9d1d9; background: #111827; border-radius: 6px; padding: 5px 9px; }
+.llm-arg code { color: #7dd3fc; }
+.llm-tool { background: #1a2233; border: 1px solid #232c40; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.llm-tool-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.llm-tool-name { color: #7dd3fc; font-size: 13px; }
+.llm-tool-desc { font-size: 12px; color: #8b93a7; margin-bottom: 6px; }
+.llm-params { width: 100%; font-size: 12px; border-collapse: collapse; }
+.llm-params th { text-align: left; color: #8b93a7; padding: 4px 8px; border-bottom: 1px solid #232c40; font-weight: 400; }
+.llm-params td { padding: 5px 8px; border-bottom: 1px solid #1a2233; color: #c9d1d9; vertical-align: top; }
+.llm-req { color: #f87171; margin-left: 3px; font-weight: 600; }
