@@ -1834,6 +1834,15 @@ def _stream_task(
     except Exception:  # noqa: BLE001 - 索引构建失败不阻断任务
         logging.getLogger(__name__).exception("产物索引注入失败（忽略）")
 
+    # v2.4.3：预扣估算重写——(本轮文本 token + 提示词固定开销) × 平均步数 + 输出预留。
+    # 旧默认 2000 偏低 6.5 倍（真跑 reserve=2000 / 实际=12937），钱包被事后补扣、预算门失效。
+    # 必须在 effective_text 最终形态（含记忆/产物索引注入）之后算，取两者较大值。
+    from ..orchestration.memory import estimate_tokens as _estimate_tokens
+
+    _prompt0 = _estimate_tokens(effective_text) + int(settings.token_prompt_overhead)
+    _steps = max(1.0, float(settings.token_estimate_steps_factor))
+    estimate = max(int(settings.token_estimate_default), int(_prompt0 * _steps) + 2000)
+
     q: _queue.Queue = _queue.Queue()
     run_id = new_run_id()
     # v2.2.0-p1.8（C2）：lease 预检——同 run 已在跑（双击/重试赛跑）→ 409 拒绝，
@@ -2160,6 +2169,124 @@ def admin_recharge(
         detail={"amount": int(body.amount), "balance_after": balance, "note": (body.note or "").strip() or None},
     )
     return {"ok": True, "user_id": user_id, "balance": balance}
+
+
+@router.get("/runs/{run_id}/llm-calls")
+def run_llm_calls(
+    run_id: str,
+    detail: int | None = Query(default=None, ge=1),
+    authorization: str | None = Header(default=None),
+):
+    """一次任务的模型调用记录（v2.4.3）。
+
+    权限：admin 可看任意任务；普通用户只能看自己的。
+    `?detail=<call_id>` 返回单条完整内容（脱敏后的 messages + 原始输出）。
+    """
+    user = _current_user(authorization)
+    from sqlalchemy import text as _text
+
+    from ..core.db import get_engine
+    from ..core.llm_call_repo import LlmCallRepo
+
+    # 归属校验：task 表的 user_id（admin 跳过）
+    is_admin = True
+    try:
+        _require_admin(authorization)
+    except HTTPException:
+        is_admin = False
+    if not is_admin:
+        with get_engine().connect() as conn:
+            owned = conn.execute(
+                _text("SELECT 1 FROM task WHERE task_id = :t AND user_id = :u"),
+                {"t": run_id, "u": user["id"]},
+            ).first()
+        if not owned:
+            raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "任务不存在"})
+    repo = LlmCallRepo(get_engine())
+    if detail is not None:
+        call = repo.get(run_id, detail)
+        if call is None:
+            raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "调用记录不存在"})
+        return {"call": call}
+    return {"calls": repo.list_for(run_id)}
+
+
+@router.get("/admin/tool-schemas")
+def admin_tool_schemas(agent: str = Query(default="data_analysis"), authorization: str | None = Header(default=None)):
+    """某 Agent 工具池的完整 schema（v2.4.3 完整回放：排障时看模型"应该"收到什么）。"""
+    _require_admin(authorization)
+    from ..orchestration.agents import build_default_registry, get_agent_spec
+
+    spec = get_agent_spec(agent)
+    allowed = set(spec.tools)
+    reg = build_default_registry(get_engine(), username="office-admin-inspect")
+    schemas = [
+        t for t in reg.describe_openai()
+        if t.get("function", {}).get("name") in allowed
+    ]
+    return {"agent": agent, "tools": schemas}
+
+
+@router.get("/admin/reconcile")
+def admin_reconcile(
+    days: int = Query(default=7, ge=1, le=90),
+    limit: int = Query(default=100, ge=1, le=500),
+    authorization: str | None = Header(default=None),
+):
+    """任务对账（v2.4.3）：预扣 / 真实用量 / 折扣后结算 三列对齐。
+
+    自洽公式：settle == actual − cache_read + ceil(cache_read × llm_cache_price_ratio)。
+    不符的行 `ok=False`（前端标红）——出现即说明缓存折扣或结算逻辑有 bug。
+    """
+    _require_admin(authorization)
+    import math
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import text as _text
+
+    from ..core.config import settings as _settings
+    from ..core.db import get_engine
+
+    ratio = max(0.0, min(1.0, float(_settings.llm_cache_price_ratio)))
+    start = (
+        datetime.now(ZoneInfo("Asia/Shanghai")).replace(hour=0, minute=0, second=0, microsecond=0)
+    )
+    from datetime import timedelta as _td
+
+    start = (start - _td(days=days - 1)).astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%d %H:%M:%S")
+    rows = []
+    with get_engine().connect() as conn:
+        raw = conn.execute(
+            _text(
+                "SELECT l.task_id, l.model, l.reserve, l.settle, l.input_tokens, l.output_tokens, "
+                "l.cache_read, l.created_at, u.username "
+                "FROM token_ledger l LEFT JOIN `user` u ON u.id = l.user_id "
+                "WHERE l.kind='task' AND l.settle IS NOT NULL AND l.created_at >= :start "
+                "ORDER BY l.id DESC LIMIT :limit"
+            ),
+            {"start": start, "limit": limit},
+        ).mappings().all()
+    for r in raw:
+        actual = int(r["input_tokens"] or 0) + int(r["output_tokens"] or 0)
+        cache = int(r["cache_read"] or 0)
+        expected = max(0, actual - cache + math.ceil(cache * ratio))
+        rows.append(
+            {
+                "task_id": r["task_id"],
+                "username": r["username"],
+                "model": r["model"],
+                "reserve": int(r["reserve"] or 0),
+                "settle": int(r["settle"] or 0),
+                "actual": actual,
+                "cache_read": cache,
+                "expected": expected,
+                "ok": int(r["settle"] or 0) == expected,
+                "under_reserved": actual > int(r["reserve"] or 0) * 2,  # 预扣偏低 2 倍以上提示
+                "created_at": str(r["created_at"]),
+            }
+        )
+    return {"rows": rows, "ratio": ratio, "days": days}
 
 
 @router.get("/admin/users/{user_id}/ledger")

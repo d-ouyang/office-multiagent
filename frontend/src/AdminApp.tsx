@@ -21,6 +21,7 @@ import {
   FeedbackTab,
   ModelPoolsTab,
   OverviewTab,
+  ReconcileTab,
   TasksTab,
   UsersTab,
   readAdminTab,
@@ -30,6 +31,7 @@ import { adminCheckSession, type LoginUser } from './lib/api';
 
 const { Sider, Header, Content } = Layout;
 
+import { ReconciliationOutlined } from '@ant-design/icons';
 const TAB_ICON: Record<AdminTab, ReactNode> = {
   overview: <DashboardOutlined />,
   tasks: <UnorderedListOutlined />,
@@ -37,6 +39,7 @@ const TAB_ICON: Record<AdminTab, ReactNode> = {
   pools: <ClusterOutlined />,
   audit: <AuditOutlined />,
   feedback: <LikeOutlined />,
+  reconcile: <ReconciliationOutlined />,
 };
 
 export default function AdminApp() {
@@ -135,6 +138,7 @@ function AdminShell({ user, onLogout }: { user: LoginUser; onLogout: () => void 
         <Content className="admin-antd-content">
           {tab === 'overview' && <OverviewTab />}
           {tab === 'users' && <UsersTab />}
+          {tab === 'reconcile' && <ReconcileTab />}
           {tab === 'tasks' && <TasksTab />}
           {tab === 'pools' && <ModelPoolsTab />}
           {tab === 'audit' && <AuditTab />}

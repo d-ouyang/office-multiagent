@@ -13,6 +13,7 @@ make_brain()：配置驱动。模型+密钥就绪 → LlmBrain；否则回落 St
 from __future__ import annotations
 
 import json
+import time
 import logging
 import re
 from typing import Any, Protocol
@@ -359,14 +360,36 @@ class LlmBrain:
         只重试一次：压缩有损，连压两次的收益远小于"如实失败 + 给用户可操作的提示"；
         也避免 provider 持续拒绝时把预算烧光。
         """
+        _started = time.perf_counter()
         try:
-            return call(build(budget))
+            msgs = build(budget)
+            res = call(msgs)
         except ContextOverflowError as e:
             squeezed = self._squeeze_budget(budget)
             logger.warning(
                 "上下文超限，压缩历史后重试一次（预算 %s → %s）| %s", budget, squeezed, e
             )
-            return call(build(squeezed))
+            msgs = build(squeezed)
+            res = call(msgs)
+        self._record_call(msgs, res, _started)
+        return res
+
+    def _record_call(self, messages: list[dict[str, Any]], result: LlmResult, started: float) -> None:
+        """v2.4.3：把这次模型调用落 llm_call（messages 脱敏）。recorder 未挂载则跳过。"""
+        recorder = getattr(self, "call_recorder", None)
+        if recorder is None:
+            return
+        try:
+            recorder(
+                model=self.model_id,
+                messages=messages or [],
+                response_text=result.content or "",
+                prompt_tokens=int(result.prompt_tokens or 0) or None,
+                completion_tokens=int(result.completion_tokens or 0) or None,
+                ms=int((time.perf_counter() - started) * 1000),
+            )
+        except Exception:
+            logger.exception("LLM 调用记录失败（忽略）")
 
     @staticmethod
     def _render_history(

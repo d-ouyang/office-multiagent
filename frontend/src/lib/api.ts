@@ -820,6 +820,64 @@ export interface AuditRow {
   created_at: string;
 }
 
+// v2.4.3：LLM 调用级可观测（每次模型调用一行：messages + 原始输出 + 用量 + 耗时）
+export interface LlmCallRow {
+  id: number;
+  agent: string | null;
+  step: number | null;
+  model: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  ms: number | null;
+  created_at: string;
+}
+
+export interface LlmCallMessage { role: string; content: string }
+
+export interface LlmCallDetail extends LlmCallRow {
+  messages: LlmCallMessage[];
+  response_text: string;
+}
+
+export async function adminRunLlmCalls(runId: string): Promise<LlmCallRow[]> {
+  const data = await adminGet<{ calls: LlmCallRow[] }>(
+    `/api/v1/runs/${encodeURIComponent(runId)}/llm-calls`,
+  );
+  return data.calls ?? [];
+}
+
+export async function adminRunLlmCall(runId: string, callId: number): Promise<LlmCallDetail> {
+  return adminGet<LlmCallDetail>(
+    `/api/v1/runs/${encodeURIComponent(runId)}/llm-calls?detail=${callId}`,
+  );
+}
+
+export async function adminToolSchemas(agent: string): Promise<{ agent: string; tools: Array<{ function: { name: string; description: string; parameters: unknown } }> }> {
+  return adminGet(`/api/v1/admin/tool-schemas?agent=${encodeURIComponent(agent)}`);
+}
+
+// v2.4.3：任务对账（预扣 / 真实用量 / 折扣后结算 三列对齐）
+export interface ReconcileRow {
+  task_id: string;
+  username: string | null;
+  model: string | null;
+  reserve: number;
+  settle: number;
+  actual: number;
+  cache_read: number;
+  expected: number;
+  ok: boolean;
+  under_reserved: boolean;
+  created_at: string;
+}
+
+export async function adminReconcile(params: { days?: number; limit?: number } = {}): Promise<{ rows: ReconcileRow[]; ratio: number; days: number }> {
+  const qs = new URLSearchParams({ days: String(params.days ?? 7), limit: String(params.limit ?? 200) });
+  return adminGet<{ rows: ReconcileRow[]; ratio: number; days: number }>(
+    `/api/v1/admin/reconcile?${qs.toString()}`,
+  );
+}
+
 export async function adminAuditLogs(params: {
   action?: string;
   target_type?: string;

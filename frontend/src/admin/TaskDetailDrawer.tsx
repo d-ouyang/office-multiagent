@@ -2,6 +2,7 @@ import type { AdminRunDetail } from '../lib/api';
 import { DRAWER_WIDTH } from './AdminListPage';
 import { fmtDuration, fmtShanghai, fmtTokens, REASON, STATUS } from './format';
 import FlowPathSvg from './FlowPathSvg';
+import LlmCallsPanel from './LlmCallsPanel';
 import { Descriptions, Drawer, Tag, Typography } from './ui';
 
 export default function TaskDetailDrawer({
@@ -46,6 +47,9 @@ export default function TaskDetailDrawer({
       <div className="admin-flow-card">
         <FlowPathSvg flow={flow} />
       </div>
+
+      <Typography.Title level={5}>模型调用</Typography.Title>
+      <LlmCallsPanel runId={detail.id} />
 
       <Typography.Title level={5}>执行编排</Typography.Title>
       <Descriptions column={1} size="small" bordered>

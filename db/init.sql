@@ -330,3 +330,39 @@ CREATE TABLE IF NOT EXISTS `session_summary` (
   `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`session_id`, `turn_no`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ===== LLM 调用级可观测（v2.4.3 / 迁移 0016）：一行 = 一次模型调用 =====
+-- messages_json 存实际发送的完整 messages（手机号脱敏）；2.4.2 的「需要」事故靠它 5 分钟定位。
+CREATE TABLE IF NOT EXISTS `llm_call` (
+  `id`               BIGINT       NOT NULL AUTO_INCREMENT,
+  `run_id`           VARCHAR(64)  NOT NULL,
+  `agent`            VARCHAR(64)  NULL,
+  `step`             INT          NULL,
+  `model`            VARCHAR(128) NULL,
+  `messages_json`    LONGTEXT     NOT NULL,
+  `response_text`    LONGTEXT     NULL,
+  `prompt_tokens`    INT          NULL,
+  `completion_tokens` INT         NULL,
+  `ms`               INT          NULL,
+  `created_at`       DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  KEY `idx_llm_call_run` (`run_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ===== LLM 调用级可观测（v2.4.3 / 迁移 0016）：一行 = 一次模型调用 =====
+-- messages_json 存实际发送的完整 messages（手机号脱敏）；2.4.2 的「需要」事故靠它 5 分钟定位。
+CREATE TABLE IF NOT EXISTS `llm_call` (
+  `id`               BIGINT       NOT NULL AUTO_INCREMENT,
+  `run_id`           VARCHAR(64)  NOT NULL,
+  `agent`            VARCHAR(64)  NULL,
+  `step`             INT          NULL,
+  `model`            VARCHAR(128) NULL,
+  `messages_json`    LONGTEXT     NOT NULL,
+  `response_text`    LONGTEXT     NULL,
+  `prompt_tokens`    INT          NULL,
+  `completion_tokens` INT         NULL,
+  `ms`               INT          NULL,
+  `created_at`       DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  KEY `idx_llm_call_run` (`run_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
