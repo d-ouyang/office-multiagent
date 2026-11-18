@@ -25,6 +25,8 @@ export interface ChatMessageData {
   events?: StreamEvent[];
   streaming?: boolean;
   createdAt?: number;
+  /** v2.4.2：后端留有完整 trace（含思考逐字流），界面上可按需加载 */
+  hasFullTrace?: boolean;
   /** 账本补上的模型 id（trace 的 done 事件没有 model 时用） */
   model?: string;
   tokens?: number;
@@ -87,6 +89,8 @@ export function ChatMessage({
   onPreview,
   onFeedbackSubmit,
   onFeedbackCancel,
+  sessionId,
+  onLoadThinking,
 }: {
   msg: ChatMessageData;
   index: number;
@@ -103,6 +107,10 @@ export function ChatMessage({
   ) => Promise<MessageFeedback | null>;
   /** v2.0.0-p2.2：取消反馈。成功返回 true。 */
   onFeedbackCancel?: (messageId: number) => Promise<boolean>;
+  /** v2.4.2：当前会话 id（思考过程按需加载用） */
+  sessionId?: string;
+  /** v2.4.2：加载某条消息的完整 trace（含思考逐字流） */
+  onLoadThinking?: (messageId: number) => Promise<StreamEvent[] | null>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(msg.text ?? '');
@@ -237,8 +245,25 @@ export function ChatMessage({
     );
   }
 
-  const events = msg.events;
+  // v2.4.2：思考过程按需加载——历史消息的 trace 默认剥离逐字流（占 97%），
+  // 工具明细仍随列表下发；点「查看思考过程」才拉完整 trace 覆盖渲染。
+  const [loadedTrace, setLoadedTrace] = useState<StreamEvent[] | null>(null);
+  const [loadingTrace, setLoadingTrace] = useState(false);
+  const events = loadedTrace ?? msg.events;
   const process = events ? deriveProcess(events) : null;
+  const hasThinking = events?.some((e) => e.type === 'thinking_delta') ?? false;
+  const canLoadThinking =
+    !msg.streaming && !hasThinking && !!msg.hasFullTrace && !!msg.id && !!sessionId && !!onLoadThinking;
+  const loadThinking = async () => {
+    if (!msg.id || !sessionId) return;
+    setLoadingTrace(true);
+    try {
+      const traceEvents = await onLoadThinking?.(msg.id);
+      if (traceEvents) setLoadedTrace(traceEvents);
+    } finally {
+      setLoadingTrace(false);
+    }
+  };
   // 2.1.0：交付物暂存——流式期间与挂起/失败中间态不显示，任务终态 done 后统一展示
   // （用户反馈：中途产物一直挂在对话框最下面，等完全回复之后再显示）
   const finalStatus = events
@@ -258,7 +283,8 @@ export function ChatMessage({
   const artifacts = events && showDeliverables ? deriveArtifacts(events) : [];
   // 2.1.0 定稿：图表/流程图改为过程时间线内实时渲染（ProcessTrace visual 项），
   // 消息级不再渲染 visual——最终回答不重复显示图。底部只保留文件级 artifacts。
-  const content = process ? process.result : (msg.content ?? '');
+  // v2.4.2：历史 trace 已剥离逐字流（answer 步骤为空），正文兜底到 content 字段
+  const content = process?.result?.trim() || msg.content || '';
   const failure = events ? deriveFailure(events) : null;
   const meta = events ? deriveReplyMeta(events) : {};
   // 2.1.0-p1.9c：缓存命中率（参照 rag-qa token 明细样式）
@@ -339,6 +365,16 @@ export function ChatMessage({
         {process && process.steps.length > 0 && (
           <ProcessTrace steps={process.steps} durationMs={process.durationMs ?? meta.durationMs} streaming={!!msg.streaming} />
         )}
+          {canLoadThinking && (
+            <button
+              type="button"
+              className="trace-load-btn"
+              disabled={loadingTrace}
+              onClick={() => void loadThinking()}
+            >
+              {loadingTrace ? '加载思考过程…' : '查看思考过程'}
+            </button>
+          )}
         {failure && (
           <div className={`msg-failure ${failure.kind}`}>
             <span className="failure-icon">{failure.kind === 'quota' ? '⏸' : '⚠'}</span>

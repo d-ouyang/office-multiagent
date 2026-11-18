@@ -115,6 +115,22 @@ export async function getMessages(sessionId: string): Promise<Array<{
   return data.messages ?? [];
 }
 
+// v2.4.2：单条消息的完整 trace（含思考逐字流）——「查看思考过程」按需加载。
+// 列表接口默认剥离逐字流（占 97%），这里取回未剥离的完整事件流。
+export async function fetchMessageTrace(sessionId: string, messageId: number): Promise<string | null> {
+  const res = await fetch(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/${messageId}/trace`,
+    { headers: authHeaders() },
+  );
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.trace ?? null;
+}
+
 // --------------------------------------------------------------------------- //
 // v2.0.0-p2.2：消息点赞/点踩反馈（闭环：提交/覆盖/取消，DB 为真相源）
 // --------------------------------------------------------------------------- //

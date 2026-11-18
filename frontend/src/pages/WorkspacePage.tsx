@@ -14,7 +14,7 @@ import Notice from '../components/Notice';
 import { describeError, parseApiError } from '../lib/apiError';
 import { deriveAskUser, deriveContextUsage, deriveCurrentAgent, agentLabel, normalizeAsk, pauseText, quotaPauseText, type AskUserPayload } from '../lib/derive';
 import AskUserCard from '../components/AskUserCard';
-import { answerTaskResponse, authHeaders, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
+import { answerTaskResponse, authHeaders, fetchMessageTrace, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
 
 const EFFORTS = ['低', '高', '最大'] as const;
 const EFFORT_API: Record<string, string> = { 低: 'low', 高: 'high', 最大: 'max' };
@@ -194,11 +194,19 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
               evs = undefined;
             }
           }
-          return (
-            evs
-            ? { role: 'assistant' as const, id: m.id, events: evs, streaming: false, createdAt, model: m.model ?? undefined, tokens: m.tokens ?? undefined, feedback: m.feedback ?? null }
-            : { role: 'assistant' as const, id: m.id, content: m.content, createdAt, model: m.model ?? undefined, tokens: m.tokens ?? undefined, feedback: m.feedback ?? null }
-          );
+          // v2.4.2：content 永远带上——trace 剥离逐字流后，正文兜底到这个字段
+          return {
+            role: 'assistant' as const,
+            id: m.id,
+            content: m.content,
+            hasFullTrace: Boolean(m.trace),
+            events: evs,
+            streaming: false,
+            createdAt,
+            model: m.model ?? undefined,
+            tokens: m.tokens ?? undefined,
+            feedback: m.feedback ?? null,
+          };
         }),
       );
     } catch (e) {
@@ -698,6 +706,12 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
               onPreview={setPreviewPath}
               onFeedbackSubmit={onFeedbackSubmit}
               onFeedbackCancel={onFeedbackCancel}
+              sessionId={currentId}
+              onLoadThinking={async (mid) => {
+                if (!currentId) return null;
+                const trace = await fetchMessageTrace(currentId, mid);
+                return trace ? (JSON.parse(trace) as StreamEvent[]) : null;
+              }}
             />
           ))}
           </div>

@@ -338,6 +338,29 @@ def session_messages(session_id: str, authorization: str | None = Header(default
     return {"messages": repo.list_messages(session_id)}
 
 
+@router.get("/sessions/{session_id}/messages/{message_id}/trace")
+def message_trace(
+    session_id: str, message_id: int, authorization: str | None = Header(default=None)
+):
+    """单条消息的**完整** trace（含逐字流）——「查看思考过程」按需加载（v2.4.2）。
+
+    messages 列表默认剥离 thinking_delta / content_delta（占单条 trace 的 97%），
+    回答正文与工具明细仍在列表里；思考过程流在这里取全量。
+    """
+    user = _current_user(authorization)
+    from ..core.session_repo import SessionRepo
+
+    repo = SessionRepo()
+    if not repo.session_belongs_to(session_id, user["id"]):
+        raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"})
+    trace = repo.get_message_trace(session_id, message_id)
+    if trace is None:
+        raise HTTPException(
+            404, detail={"code": "NOT_FOUND", "message": "消息不存在或没有过程数据"}
+        )
+    return {"trace": trace}
+
+
 @router.patch("/sessions/{session_id}")
 def update_session(session_id: str, body: UpdateSessionRequest, authorization: str | None = Header(default=None)):
     """p6.5：更新会话默认模型（归属校验）。"""
