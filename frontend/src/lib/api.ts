@@ -854,7 +854,7 @@ export async function adminRunLlmCall(runId: string, callId: number): Promise<Ll
   return data.call;
 }
 
-export async function adminToolSchemas(agent: string): Promise<{ agent: string; tools: Array<{ function: { name: string; description: string; parameters: unknown } }> }> {
+export async function adminToolSchemas(agent: string): Promise<{ agent: string; tools: Array<{ function: { name: string; description: string; parameters: { properties?: Record<string, { type?: unknown; description?: string; enum?: string[] }>; required?: string[] } | null } }> }> {
   return adminGet(`/api/v1/admin/tool-schemas?agent=${encodeURIComponent(agent)}`);
 }
 
