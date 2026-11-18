@@ -2591,16 +2591,9 @@ button.ghost {
 .chart-card .echart-visual { margin-bottom: 10px; }
 .chart-visual + .chart-visual { margin-top: 8px; }
 
-/* v2.4.2：思考过程按需加载按钮（trace 瘦身后历史消息默认不含逐字流） */
-.trace-load-btn {
-  margin-top: 6px;
+/* v2.4.2：思考过程按需加载的占位（面板展开时显示） */
+.thinking-loading {
   font-size: 12px;
   color: var(--color-text-tertiary, #8b949e);
-  background: none;
-  border: 1px dashed var(--color-border-secondary, rgba(128, 128, 128, 0.35));
-  border-radius: 6px;
-  padding: 3px 10px;
-  cursor: pointer;
+  padding: 2px 0 6px;
 }
-.trace-load-btn:hover { color: var(--color-text-primary); border-style: solid; }
-.trace-load-btn:disabled { opacity: 0.6; cursor: wait; }

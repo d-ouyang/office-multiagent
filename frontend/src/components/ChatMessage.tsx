@@ -363,18 +363,14 @@ export function ChatMessage({
     <div className="msg-row assistant">
       <div className="assistant-block">
         {process && process.steps.length > 0 && (
-          <ProcessTrace steps={process.steps} durationMs={process.durationMs ?? meta.durationMs} streaming={!!msg.streaming} />
+          <ProcessTrace
+            steps={process.steps}
+            durationMs={process.durationMs ?? meta.durationMs}
+            streaming={!!msg.streaming}
+            onExpand={canLoadThinking ? () => void loadThinking() : undefined}
+            loadingExtra={loadingTrace}
+          />
         )}
-          {canLoadThinking && (
-            <button
-              type="button"
-              className="trace-load-btn"
-              disabled={loadingTrace}
-              onClick={() => void loadThinking()}
-            >
-              {loadingTrace ? '加载思考过程…' : '查看思考过程'}
-            </button>
-          )}
         {failure && (
           <div className={`msg-failure ${failure.kind}`}>
             <span className="failure-icon">{failure.kind === 'quota' ? '⏸' : '⚠'}</span>
