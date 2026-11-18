@@ -148,7 +148,9 @@ class Settings(BaseSettings):
     history_recent_rounds: int = 8       # 保留原文的轮数（硬底线 2 轮）
     history_round_chars: int = 1500      # 单条结构化摘要的字符上限
     # 单次请求中"历史"可占模型窗口的百分比（v2.3.0-p1.1 预算器）；0=不限（逐条截断）
-    history_budget_window_pct: int = 60
+    # v2.4.2：60 → 75。历史预算 = 模型窗口 × 该比例（128K → 96K），
+    # 配合"近 8 轮原文"需要更多空间；仍留 25% 给输出与协议开销。
+    history_budget_window_pct: int = 75
 
     # ---- 连接层加固（p1.2a）----
     mysql_pool_size: int = 5

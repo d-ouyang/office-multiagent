@@ -21,7 +21,7 @@ from typing import Any
 SUPPORTED_SUFFIXES = (".md", ".txt", ".json", ".csv", ".docx", ".xlsx", ".pdf", ".png", ".jpg", ".jpeg", ".webp")
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 _IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
-TABLE_PREVIEW_ROWS = 20
+TABLE_PREVIEW_ROWS = 50  # v2.4.2: 20 → 50（配合列统计，样本够看格式即可）
 _SUPPORTED = SUPPORTED_SUFFIXES
 
 #: v2.4.0-p5.0 目录索引：Markdown 标题（# ~ ######）
@@ -77,17 +77,56 @@ def _decode_text(path: Path) -> str:
         return raw.decode("gbk", errors="replace")
 
 
+def _to_number(value: str) -> float | None:
+    raw = (value or "").strip().replace(",", "").replace("¥", "").replace("￥", "")
+    if not raw or raw in {"-", "—", "/"}:
+        return None
+    percent = raw.endswith("%")
+    if percent:
+        raw = raw[:-1]
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _column_stats(headers: list[str], rows: list[list[str]], *, max_cols: int = 8) -> str:
+    """每列一句话统计（v2.4.2）。
+
+    为什么加这个：模型看 50 行样本也说不清"这张表值不值得分析"——它需要的是
+    min/max/均值/不同值个数这类**聚合事实**。列统计让模型用少量 token 建立全局印象，
+    比"再多给几百行原文"有效得多，也不会稀释注意力。
+    """
+    lines: list[str] = []
+    for idx, name in enumerate(headers[:max_cols]):
+        values = [_cell(r[idx]) for r in rows if idx < len(r) and _cell(r[idx])]
+        if not values:
+            continue
+        numbers = [n for n in (_to_number(v) for v in values) if n is not None]
+        if len(numbers) >= max(3, int(len(values) * 0.8)):
+            lines.append(
+                f"{name}: 最小 {min(numbers):g} / 最大 {max(numbers):g} / 均值 {sum(numbers) / len(numbers):.2f}"
+            )
+        else:
+            lines.append(f"{name}: {len(set(values))} 个不同值")
+    return "\n".join(lines)
+
+
 def _table_preview(headers: list[str], rows: list[list[str]], *, sheet: str | None = None) -> str:
     title = f"工作表 {sheet}\n" if sheet else ""
     shown = rows[:TABLE_PREVIEW_ROWS]
     head = "列：" + ("、".join(headers) if any(headers) else "（无表头）")
     lines = [f"{i}. " + " | ".join(row) for i, row in enumerate(shown, 1)]
     if len(rows) > TABLE_PREVIEW_ROWS:
-        tail = f"共 {len(rows)} 行，这里只给出前 {TABLE_PREVIEW_ROWS} 行"
+        tail = f"共 {len(rows)} 行，这里给出前 {TABLE_PREVIEW_ROWS} 行"
     else:
         tail = f"共 {len(rows)} 行"
+    stats = _column_stats(headers, rows)
     body = "\n".join(lines)
-    return f"{title}{head}\n{body}\n{tail}".strip()
+    out = f"{title}{head}\n{body}\n{tail}"
+    if stats:
+        out += "\n列统计：\n" + stats
+    return out.strip()
 
 
 def load_table_grid(

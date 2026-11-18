@@ -813,10 +813,14 @@ def run_task(
     # 正常完成 → settle（actual=真实 LLM 用量；StubBrain 基线为 0，全额退回预扣）
     if token_pool is not None and user_id is not None:
         actual = int(state.get("tokens_used", 0))
+        prompt_total = int(state.get("prompt_tokens", 0) or 0)
         token_pool.settle(
             user_id, estimate, actual, task_id=rid,
             model=state.get("model") or settings.llm_brain_model,  # p6.4/p6.5：落账记实际模型
             cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0),  # B2：cache 折扣计价
+            # v2.4.2：账本同时记输入/输出拆分，才能对账（此前只有预扣与折扣后结算）
+            prompt_tokens=prompt_total or None,
+            completion_tokens=max(0, actual - prompt_total) if prompt_total else None,
         )
     emit(
         emitter.done(
@@ -958,7 +962,13 @@ def resume_with_answer(
     state = graph.invoke(Command(resume=str(answer or "").strip()), cfg)
     actual = int(state.get("tokens_used", 0) or 0)
     if token_pool is not None and user_id is not None:
-        token_pool.settle(user_id, 0, actual, task_id=run_id, model=state.get("model") or model, cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0))
+        _pt = int(state.get("prompt_tokens", 0) or 0)
+        token_pool.settle(
+            user_id, 0, actual, task_id=run_id, model=state.get("model") or model,
+            cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0),
+            prompt_tokens=_pt or None,
+            completion_tokens=max(0, actual - _pt) if _pt else None,
+        )
     route = state.get("route", "single")
     if state.get("need_input"):
         # 续跑后模型又发起了一轮 ask_user——保持 paused_input，graph 重新登记

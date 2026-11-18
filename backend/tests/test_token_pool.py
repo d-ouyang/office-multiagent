@@ -17,6 +17,7 @@ def _make(balance: int) -> tuple[TokenPool, object]:
             text(
                 "CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, "
                 "user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, "
+                "input_tokens INTEGER, output_tokens INTEGER, cache_read INTEGER, "
                 "kind TEXT DEFAULT 'task', note TEXT, amount INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
             )
         )
@@ -143,3 +144,55 @@ def test_settle_ratio_one_is_legacy_pricing(monkeypatch):
     tp.reserve(1, 1500)
     bal = tp.settle(1, 1500, 1000, cache_hit_tokens=800)
     assert bal == 1000  # billed=1000，refund=500 → (2000-1500)+500
+
+
+def test_settle_records_actual_input_output_for_reconcile():
+    """v2.4.2 对账：结算时把真实输入/输出写进账本。
+
+    此前账本只有 reserve 与 settle（折扣后可消费额度），真实用量只存在 done 事件里，
+    导致"用了 1000 却扣 400"无法核对是缓存折扣还是 bug。
+    """
+    tp, eng = _make(10000)
+    tp.reserve(1, 2000, task_id="t9", model="m")
+    tp.settle(
+        1, 2000, 1500, task_id="t9", model="m",
+        cache_hit_tokens=600, prompt_tokens=1200, completion_tokens=300,
+    )
+    with eng.connect() as c:
+        row = c.execute(
+            text(
+                "SELECT reserve, settle, input_tokens, output_tokens, cache_read "
+                "FROM token_ledger WHERE task_id='t9' AND settle IS NOT NULL"
+            )
+        ).first()
+    assert row is not None
+    reserve, settle, pin, pout, pcache = row
+    assert reserve == 2000
+    assert pin == 1200 and pout == 300 and pcache == 600
+    assert settle is not None and settle < 1500   # 缓存折扣后低于真实用量
+
+
+def test_settle_records_actual_input_output_for_reconcile():
+    """v2.4.2 对账：结算时把真实输入/输出写进账本。
+
+    此前账本只有 reserve 与 settle（折扣后可消费额度），真实用量只存在 done 事件里，
+    导致"用了 1000 却扣 400"无法核对是缓存折扣还是 bug。
+    """
+    tp, eng = _make(10000)
+    tp.reserve(1, 2000, task_id="t9", model="m")
+    tp.settle(
+        1, 2000, 1500, task_id="t9", model="m",
+        cache_hit_tokens=600, prompt_tokens=1200, completion_tokens=300,
+    )
+    with eng.connect() as c:
+        row = c.execute(
+            text(
+                "SELECT reserve, settle, input_tokens, output_tokens, cache_read "
+                "FROM token_ledger WHERE task_id='t9' AND settle IS NOT NULL"
+            )
+        ).first()
+    assert row is not None
+    reserve, settle, pin, pout, pcache = row
+    assert reserve == 2000
+    assert pin == 1200 and pout == 300 and pcache == 600
+    assert settle is not None and settle < 1500   # 缓存折扣后低于真实用量

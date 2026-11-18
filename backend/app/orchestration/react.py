@@ -81,7 +81,10 @@ def _summarize_observation(obs: Any, *, max_chars: int | None = None) -> str:
             if key == "content" and isinstance(value, str):
                 shown = value if limit == 0 else value[:limit]
                 tail = (
-                    f"…（原文共 {obs.get('total_chars', len(value))} 字，已截断展示）"
+                    # v2.4.2：不只说"被截断"，还要说"怎么继续拿"——否则模型只知道信息不全，
+                    # 却不知道 read_document 支持 offset 续读 / headings 定位
+                    f"…（原文共 {obs.get('total_chars', len(value))} 字，已截断展示；"
+                    "需要更多就对同一文件传 offset 续读，或先看 headings 定位章节）"
                     if limit > 0 and len(value) > limit
                     else ""
                 )

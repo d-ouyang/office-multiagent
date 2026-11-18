@@ -172,6 +172,8 @@ class TokenPool:
         task_id: str | None = None,
         model: str | None = None,
         cache_hit_tokens: int = 0,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
     ) -> int:
         """结算：把 (reserved - billed) 补回余额，落 ledger；返回最新余额。
 
@@ -207,11 +209,22 @@ class TokenPool:
                 )
             conn.execute(
                 text(
-                    "INSERT INTO token_ledger (user_id, task_id, model, reserve, settle) "
-                    "VALUES (:u, :t, :m, :res, :set)"
+                    "INSERT INTO token_ledger "
+                    "(user_id, task_id, model, reserve, settle, input_tokens, output_tokens, cache_read) "
+                    "VALUES (:u, :t, :m, :res, :set, :pin, :pout, :pcache)"
                 ),
-                # settle 列记 billed（折扣后可消费口径）；真实用量 actual 在 steps_usage/DONE
-                {"u": user_id, "t": task_id, "m": model, "res": reserved, "set": billed},
+                # settle 列记 billed（折扣后可消费口径）；input/output/cache_read 记真实用量，
+                # 三者与 reserve/settle 一起才能对账（v2.4.2）
+                {
+                    "u": user_id,
+                    "t": task_id,
+                    "m": model,
+                    "res": reserved,
+                    "set": billed,
+                    "pin": int(prompt_tokens) if prompt_tokens is not None else None,
+                    "pout": int(completion_tokens) if completion_tokens is not None else None,
+                    "pcache": int(cache_hit_tokens) if cache_hit_tokens else None,
+                },
             )
             row = conn.execute(
                 text("SELECT balance FROM wallet WHERE user_id=:u"), {"u": user_id}

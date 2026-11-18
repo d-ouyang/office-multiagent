@@ -19,7 +19,7 @@ _CLEAN_ID = re.compile(r"^c-[0-9a-f]{16}$")
 _NULL_TOKENS = {"null", "none", "n/a", "na", "nan", "-", "—", "无", "空", "nil"}
 _AGGS = {"count", "sum", "mean", "min", "max", "count_distinct"}
 _OPS = {"eq", "ne", "contains", "gt", "gte", "lt", "lte", "in", "not_in"}
-_PREVIEW = 5
+_PREVIEW = 20  # v2.4.2: 5 → 20（5 行看不出表格结构，模型容易误判为无数据）
 #: 聚合分组数上限（v2.4.1：100 → 500，与 settings.aggregate_max_groups 对齐）。
 #: 原值 100 对"门店×月份"这类交叉分组不够用，会静默缺组。
 _MAX_GROUPS = 500

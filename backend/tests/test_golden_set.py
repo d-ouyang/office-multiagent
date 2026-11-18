@@ -20,7 +20,7 @@ def eval_engine():
             "CREATE TABLE task (id TEXT PRIMARY KEY, session_id TEXT, complexity INTEGER, status TEXT DEFAULT 'pending', text TEXT, result TEXT, tokens_used INTEGER, pause_reason TEXT, pause_payload TEXT, retry_of TEXT, request_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
             "CREATE TABLE message (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, trace TEXT)",
             "CREATE TABLE wallet (user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0)",
-            "CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, kind TEXT DEFAULT 'task', created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, input_tokens INTEGER, output_tokens INTEGER, cache_read INTEGER, kind TEXT DEFAULT 'task', created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
             "CREATE TABLE runtime_setting (setting_key TEXT PRIMARY KEY, setting_value TEXT)",
         ):
             c.execute(text(ddl))

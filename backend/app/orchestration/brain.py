@@ -331,6 +331,23 @@ class LlmBrain:
             return 4000
         return max(1000, budget // 2)
 
+    def _desired_output(self) -> int:
+        """本次调用预留多少输出 token（v2.4.2）。
+
+        为什么不能"按步骤分档"：ReAct 的每次调用**无法预知**是"给 JSON 决策"
+        还是"直接给终答"——同一个入口，模型自己决定。按步骤给 1024 会把长回答腰斩。
+        所以改为**按剩余预算自适应**：预算充足就给满 8192（保证长答），
+        预算吃紧时主动降到一半，避免"还没写就先把额度占死"导致提前 paused_budget。
+        """
+        full = 8192
+        try:
+            remaining = int(self._token_budget.remaining)
+        except Exception:  # noqa: BLE001 - 预算不可读时按满额
+            return full
+        if remaining < full * 2:
+            return max(1024, remaining // 2)
+        return full
+
     def _with_overflow_retry(
         self,
         call: Callable[[list[dict[str, Any]]], LlmResult],
@@ -386,7 +403,9 @@ class LlmBrain:
             # v2.3.0-p1.2：流式也要能重放——400 在首块之前返回，此时还没推过任何字
             return self._next_step_streaming(_build, self._history_budget)
         reservation = (
-            self._token_budget.reserve_call(messages)
+            self._token_budget.reserve_call(
+                messages, desired_output_tokens=self._desired_output()
+            )
             if self._token_budget is not None
             else None
         )
@@ -457,7 +476,9 @@ class LlmBrain:
 
         messages = build_messages(budget)
         reservation = (
-            self._token_budget.reserve_call(messages)
+            self._token_budget.reserve_call(
+                messages, desired_output_tokens=self._desired_output()
+            )
             if self._token_budget is not None
             else None
         )
@@ -581,7 +602,9 @@ class LlmBrain:
         messages = _build(self._history_budget)
         tools_api = self._tools.describe_openai()
         reservation = (
-            self._token_budget.reserve_call(messages)
+            self._token_budget.reserve_call(
+                messages, desired_output_tokens=self._desired_output()
+            )
             if self._token_budget is not None
             else None
         )
