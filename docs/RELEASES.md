@@ -9,6 +9,208 @@
 
 ---
 
+## v2.4.1 — 引导入口与结果完整性（2026-11-17）
+
+分支 `feature/2.4.0-routing-and-io`（接 v2.4.0），后端 **633 → 637 passed / 3 skipped**，前端 **137 → 139 passed**。详见 `docs/iterations/v2.4.1-entry-and-integrity.md`。
+
+**一句话**：2.4.0 管"能不能跑通"，2.4.1 管"跑通了结果对不对、全不全"——第一次真点引导卡逼出来的一轮修正。
+
+### 产品改动
+
+| 改动 | 内容 |
+| ---- | ---- |
+| 引导问题 3 → 4 条 | 多维图表 / 跨月报告 / **信息不全（ask_user 场景）** / 制度口径；不放 image_restore（能力未接入） |
+| 订单数据 +500 | 150 条落当月（此前 11 月无数据），350 条随机历史；`scripts/seed_orders_bulk.py` 可复现 |
+| token 明细补"输出" | `tokens_used − prompt_tokens`，实测 11,901 = 输入 11,604 + 输出 297 |
+
+### 两轮修复
+
+**A. 多维图表卡片（5/5 失败 → 2/3 成功，稳定 2 次工具调用）**
+
+四层根因：① `group_by` schema 只写 `string`；② **JSON 协议下模型只读 description、看不到 parameters**；
+③ `data_analysis` 提示词没提多维分组，模型以为只能单维度而绕路、编造工具名；
+④ 尾逗号/裸换行/JSON 带说明直接判死。修：schema + description + 提示词 + `extract_json` 四层容错 + 失败日志带 `raw=`。
+
+**B. 结果截断（分组 20 → 66 组，无截断）**
+
+五处叠加：① **`_limit()` 默认值写死 20**（城市×月份 66 组只回 20 组，热力图漏 70% 数据）；
+② `_limit` 内硬卡 `min(50)`；③ 分组与明细共用上限；④ `db_query` 静默截断；⑤ `analyze_table` 上限 100。
+修：`aggregate_max_groups=500` 与明细 50 分离 + 五处统一 `truncated`/`truncated_hint` + 协议要求"先说明给了多少再下结论"。
+
+### 部署必做
+
+- 无迁移、无新增环境变量。
+- 侧栏版本号随 tag 自动显示（v2.3.0 起生效）。
+- ⚠️ `agents.yaml` 改动走 volume 挂载，**部署后容器会读新配置，无需额外操作**。
+
+---
+
+## v2.4.0 — 路由与 IO 根治（2026-11-17）
+
+分支 `feature/2.4.0-routing-and-io`（自 `v2.3.0` 切出），后端 **598 → 621 passed / 3 skipped**，前端 **123 → 137 passed**。详见 `docs/PLAN-2.4.0.md`。
+
+**一句话**：2.3.0 让长任务不把上下文撑爆；2.4.0 让"选对人"和"读得全"不再靠人肉维护的映射表，并把大文档定位从 73 秒压到 6 秒。
+
+### 主线
+
+| 步骤 | 内容 | 判据 |
+| ---- | ---- | ---- |
+| A 意图能力声明 | `planner.yaml` 7 个意图各加 `requires`；预检合并"意图级 requires ∪ 实体级 guards"，缺任一改道 general | 工具池被改坏时订单任务自动改道（A-5）；配置自洽护栏进 CI（A-4） |
+| B 文档分段 | `read_document(offset, limit)` + `has_more/next_offset`，limit 受 `doc_read_max_chars` 二次约束 | 9.3 万字 / 20 章文档分两段读到第 20 章 |
+| C 文件名自纠 | 找不到文件时附 `difflib` 相似候选 + "直接重试，不要向用户索要已存在文件" | `smoke_md` → 提示 `smoke-long.md` |
+| p2.1 死锁修复 | `task_token_hard_limit` 50000 → 200000（须 ≥ `doc_read_max_chars × 2`） | 读 5 万字文档不再一次调用就 `paused_budget`；护栏测试锁死倍数关系 |
+| p4.0 提示统一 | 新建 `lib/apiError.ts` + `components/Notice.tsx`：解析后端 `detail.message` → `{kind,title,message,hint}` | 429 显示"余额不足 / 预计消耗 / 充值后重发"，不再是 `HTTP 429` |
+| p4.0 管理端免重登 | `adminCheckSession` 缺 admin token 时借用工作台 `office_token`（角色校验仍在） | 工作台登录后进 `/admin` 直接进入 |
+| p5.0 目录索引 | `read_document` 返回 `headings[{level,title,offset}]` + `headings_only`；无标题则 `[]` 回退分段读 | **73 秒 / 100,656 tokens → 6 秒 / 16,599 tokens**（同一句提问） |
+
+### 真链路验收（本地）
+
+| 场景 | 结果 |
+| ---- | ---- |
+| 9.3 万字 20 章文档问第 20 章 | 6 秒，16,599 tokens，答 100000 元并注明章节来源 |
+| 2.4 万字文档问第 10 章 | 一次读完（单步上限 5 万），答 200000 元 |
+| 2.3 万字文档 + 预算压到 1% | 模型如实说"只看到前几章"，不编造 |
+| 文件名写错（`smoke_md`） | 提示相近文件，模型自己重试成功 |
+| 订单 / 制度问句 | 仍走 query_orders / rag_retrieve（路由未回归） |
+
+### 部署必做
+
+- **无需迁移**（0014 已在 v2.3.0 部署时升级）。
+- 生产 `.env` 若写死 `TASK_TOKEN_HARD_LIMIT=50000`，会覆盖新默认 200000 —— 当前生产实际生效值是 **300000**（已确认），无需改。
+- 侧栏版本号随 tag 自动显示（v2.3.0 起生效）。
+
+---
+
+## v2.3.0 — 上下文预算化（C 层补全）（2026-11-17）
+
+分支 `feature/2.3.0-context-budget`（自 `v2.2.0-p1.13c` / `9218774` 切出），pytest **563 → 598 passed / 3 skipped**（新增 21 条上下文/路由测试 + 4 条版本号测试）。详见 `docs/PLAN-2.3.0.md`。
+
+**一句话**：2.2.0 解决"敢不敢交给别人用"，2.3.0 解决"长任务会不会自己把上下文撑爆"。
+
+### 三条主线
+
+| 步骤 | 内容 | 判据 |
+| ---- | ---- | ---- |
+| p1.0 阈值热开关 | 4 个上限（观察/历史步/轮数/单轮长度）从硬编码收进 `runtime_settings`，0=不限 | 改完下一个任务生效，不发版 |
+| p1.1 预算感知渲染 | 新建 `orchestration/context_budget.py`：最近优先 / 整块降级 / 末步保底 60% / seed 免疫；两条协议共用 `obs_text` 判定 | 6 步 × 3 万字渲染后 ≤ 预算，最近步完整 |
+| p1.2 超限兜底 | `ContextOverflowError` + 压缩重试一次（JSON 非流式 / JSON 流式 / tool_calls 三条路径） | 注入 provider 400 溢出 → 任务完成，日志留"压缩后重试" |
+
+### 附带修复
+
+- **p1.3 意图路由**：否定窗口（"不要检索知识库"不再命中 rag）+ 文件类能力预检（11 条组合词 → `read_document`）+ 决策模型 rag 标签收窄。真链路：两句原话从"ask_user 要文件"变成"直接读文件答对 10 章上限"。
+- **p1.4 单步上限 24000 → 50000**（与 `doc_read_max_chars` 齐平）+ **回放缺表降级**（`degraded` 字段，缺 0014 不再整页 500）。
+- **p1.5 版本号自动注入**：CI 用 `git describe --tags --always` 打进镜像 → `/health` 返回 → 前端侧栏显示。此前 `version.ts` 手写 `v2.0.0`，连续两个大版本没人改。
+
+### 真链路验收（本地）
+
+- 2.2 万字文档一次读完：答出总字数 **22,023**、10 章、每章上限（含第 10 章 10000），tokens ≈ 39,600。
+- 预算压到 1%（`history_budget_window_pct=1`）：模型如实说"只返回前 30 行（截断在第 2 章），第 3 章以后看不到"并给三个选项，**未编造**。
+- 2.4 万字文档：p1.4 前丢掉末尾 658 字（第 10 章要点），p1.4 后直接答 **200000 元**，无"推断"字样。
+
+### 部署必做
+
+- `alembic upgrade head` 到 **0014**（CI 流程已含该步）。0014 是 `tool_invocation` 幂等表；缺表时代码降级为不拦截（不阻断任务，但幂等失效）。
+- 侧栏版本号随 tag 自动显示，无需改任何前端常量。
+
+---
+
+## v2.2.0-p1.0 — ModelAdapter 契约（Phase A1）（2026-11-11）
+
+分支 `feature/2.2.0-harness`（新开，自 feature/2.1.0-hitl 切出），pytest 497 / 3 skipped。详见 `docs/iterations/v2.2.0-p1.0-model-adapter.md`、总路线 `docs/PLAN-2.2.0.md`。
+
+- **等价重构**：`core/model_adapter.py` 新增 ModelAdapter 契约（chat/chat_stream 双通道）；`llm.chat/chat_stream` 变门面转发，签名与行为零变化，brain/react 调用点零改动。
+- **测试注入**：FakeModelAdapter 脚本化（LlmResult/str/callable，耗尽即 AssertionError 防循环）；A1 判据用例=Fake 注入跑通 run_react 全链路（不出网、无 MockTransport）。
+- 将来接 LiteLLM（Phase B1）只需注册新 adapter。**无部署必做项**（行为等价）。
+
+---
+
+## v2.2.0-p1.9 — 0001 迁移修复（Phase C3 收官）（2026-11-14，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 548。详见 `docs/iterations/v2.2.0-p1.9-migration-fix.md`。
+
+- 0001 多语句 op.execute 拆为 15 个逐语句（静态护栏 test_0001_single_statement_per_execute 防回潮）；**端到端验证**：临时空库 alembic upgrade head 全链 14 迁移 / 20 表 / version=0014——纯 alembic 建库闭环。
+- step 级进度落库核实已被 C1 实质覆盖，跳过（记录于迭代文档）。⚠️ 未部署（与 p1.6/p1.7/p1.8 一起）。
+
+---
+
+## v2.2.0-p1.8 — lease / run 硬超时 / 死信（Phase C2）（2026-11-14，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 547。详见 `docs/iterations/v2.2.0-p1.8-lease-timeout-deadletter.md`。
+
+- run_id lease：同 run 并发第二实例 409/error 事件（单机内存表即真锁，GET_LOCK 注释为多副本 TODO）；run 级 watchdog 900s 到点走协作取消收尾；死信 = error 事件 + 审计 run.dead_letter（不再静默断流）。
+- 重试计入预算核实为已正确（provider usage 天然含）。⚠️ 未部署。
+
+---
+
+## v2.2.0-p1.7 — 幂等键贯穿（Phase C1）（2026-11-14，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 543。详见 `docs/iterations/v2.2.0-p1.7-invocation-idempotency.md`。
+
+- tool_invocation 去重表（UNIQUE(run_id,tool_name,args_hash)，迁移 0014 + init.sql 同步 + 护栏测试覆盖）；react 加 invocation_guard（命中复用观察、登记失败静默降级、表缺失不阻断）。
+- 判据达成：同 run 重投副作用恰好 1 次（三层防线：react 重复提示 → 硬拦 → 幂等缓存）。
+- ⚠️ 未部署：迁移 0014 随 CI alembic 执行；代码对表缺失已降级，部署顺序无耦合。
+
+---
+
+## v2.2.0-p1.6 — 三级硬预算 + 循环护栏开关化（Phase B3 收官）（2026-11-14，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 539。详见 `docs/iterations/v2.2.0-p1.6-budget-guard.md`。
+
+- per-user：POST /tasks 入口 429 短路（余额 < 预估不启动编排）；per-tenant：全站当日 token 预算（runtime_settings `tenant_daily_token_budget`，0=关）达限 429；软告警 webhook（80% 当日去重，`BUDGET_ALERT_WEBHOOK_URL` 配置）。
+- 循环护栏：`agent_max_iterations` 开关化（管理端可改，run_react 从 runtime_settings 读取，不再代码常量）。
+- 钱包 settle 下限保护（原 backlog）已在 p6.11 达成。⚠️ 未部署：含入口 429 行为变化。
+
+---
+
+## v2.2.0-p1.5 — 归因贯穿 + cache 折扣计价（Phase B2）（2026-11-14，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 532。详见 `docs/iterations/v2.2.0-p1.5-attribution-pricing.md`。
+
+- 事件归因：trace_id（=run_id）/tenant_id 注入 5 处 emitter，全部 NDJSON 事件可归因（判据用例断言）。
+- 计价：settle 补 cache_hit_tokens 折扣（billed = actual − hit + ceil(hit×ratio)，ratio 缺省 0.25 对齐 DeepSeek 价比；1.0=全价旧行为）。ledger 记 billed 口径。
+- ⚠️ 未部署：含计价行为变化（用户少扣费方向），部署前确认。
+
+---
+
+## v2.2.0-p1.4 — LLM 网关收口（Phase B1 · gateway 内置代理）（2026-11-13，未部署）
+
+分支 `feature/2.2.0-harness`，pytest 526 / gateway jest 52 / 冒烟 5/5。详见 `docs/iterations/v2.2.0-p1.4-llm-gateway.md`。
+
+- **方案修正（已与用户对齐）**：服务器 swap 打满，放弃 LiteLLM 容器 → gateway 内置 LLM 代理路由（`POST /llm/v1/chat/completions`，按 model 路由 14 模型 × 2 provider，流式透传，服务间密钥校验）。
+- backend 侧 `settings.llm_gateway_url` 开关：非空时全部模型调用重写 base_url=网关、key=服务间密钥；**models.yaml 保持直连定义**，切流量/回退=改 env + restart（秒级）。fail-closed：网关开着但密钥缺 → 响亮失败。
+- B1 判据落地：CI 收口检查（`check_llm_gateway_isolation.py`，裸 SDK/直连域名 → 阻止部署，已挂 deploy workflow）。
+- ⚠️ **尚未部署生产**：部署清单见迭代文档（分两步：.env 加开关 → 打 tag 部署 → 服务器冒烟；回退=删 env + up -d）。
+
+---
+
+## v2.2.0-p1.3 — Policy/StateSnapshot/EvalCase 三契约（Phase A4 收官）（2026-11-12）
+
+分支 `feature/2.2.0-harness`，pytest 523 / 3 skipped。详见 `docs/iterations/v2.2.0-p1.3-contracts.md`。
+
+- `core/contracts.py`：PolicyDecision+PolicyEngine（B3 判定收口的输出契约）、StateSnapshot（C2 lease / C3 恢复 / D1 回放消费；version 对齐事件流 seq）、EvalCase+Verdict（E1 golden set 入口，to_dict 即文件格式）。
+- **Phase A 完结：六契约全落地**（ModelAdapter/ToolSpec/Event/Policy/StateSnapshot/EvalCase），全程等价重构、零行为变化。纯新增，无部署必做项。
+
+---
+
+## v2.2.0-p1.2 — Event 契约 v1（Phase A3）（2026-11-12）
+
+分支 `feature/2.2.0-harness`，pytest 513 / vitest 123。详见 `docs/iterations/v2.2.0-p1.2-event-contract.md`。
+
+- `core/events.py`：Event 信封补 `trace_id/tenant_id/payload`（契约 8/8 字段，payload=横切元数据层与 data 业务体分工）；RunEventEmitter 构造注入（Phase B2 网关入口将填充）。
+- 向后兼容双面验证：老 NDJSON 行解析自动补缺省；前端流式渲染 vitest 全绿。无部署必做项。
+
+---
+
+## v2.2.0-p1.1 — ToolSpec 契约（Phase A2）（2026-11-12）
+
+分支 `feature/2.2.0-harness`，pytest 507 / 3 skipped。详见 `docs/iterations/v2.2.0-p1.1-tool-spec.md`。
+
+- `orchestration/tools.py`：ToolSpec（risk_level/side_effect/idempotent/timeout/permission）+ registry 批注/导出 API；13 工具集中批注（agents.py `_TOOL_SPECS`）；漏标注测试抓红 + 悲观兜底。
+- 唯一行为增量：**非幂等副作用工具重试时 WARNING**（write_document 等生成式写；幂等键去重 Phase C1 落）。无部署必做项。
+- 附注：p1.0 首次部署遇 runner 会话静默失效（queued→cancelled），已按铁律重启恢复并 `workflow_dispatch` 重触发；runner 健康监控记入 backlog 观察。
+
+---
+
 ## v2.1.0-p1.1 — HITL 任务中补充输入 + 查询优化（2026-11-10）
 
 分支 `feature/2.1.0-hitl`（18 commits，P1-1a~r），pytest 488 / vitest 117。详见 `docs/iterations/v2.1.0-p1.1-hitl.md`。
@@ -1592,3 +1794,43 @@ Phase 1：后端核心骨架 → `v1.0.0-p1.1`。
 ---
 
 ## v2.0.0-p2.5 — 管理端尺寸对齐 rag admin-console（2026-10-27）
+
+---
+
+## v2.2.0 — Harness 工程化：从「能跑」到「敢交给别人用」（2026-11-14~16）
+
+> 完整迭代明细见 `docs/iterations/v2.2.0-p1.*.md`（13 个迭代）；本文是版本级叙事。
+
+2.2.0 用一个月把系统从「单机自己跑得欢」改造为「每个环节可替换、可计量、可重入、
+可回放、可门禁」——五条主线：
+
+**一、契约与可替换（A 层）**：ModelAdapter 把 LLM 门面化（Fake 注入秒级测全链路）、
+ToolSpec 给 13 个工具补上风险/幂等/权限的横切元数据（缺省悲观档）、Event 8/8 字段
+贯穿（trace_id/tenant_id）、StateSnapshot 对齐事件序——恢复语义从此有据可依。
+
+**二、LLM 收口与计量（B 层）**：放弃独立 LiteLLM 容器（服务器内存不够），改 gateway
+内置 LLM 代理（14 模型 × 2 provider，流式透传，服务间密钥隔离）；usage 归因
+tenant/user/run + cache 折扣计价；per-user 入口余额预检 + tenant 日预算 + 软告警
+webhook——「钱」从此有了单一收口点。
+
+**三、重入与不死（C 层）**：tool_invocation 幂等缓存（同 run 重投副作用恰好一次）、
+run 级 lease（并发第二实例 409）+ watchdog（900s 超时置位取消）+ 死信审计
+（不再静默断流）、纯 alembic 建库闭环（0001 多语句拆分修复）。
+
+**四、可观测（D 层）**：`GET /runs/{id}/replay` 四套日志合一——events/tools/usage/
+dead_letter 一个接口拉齐一次任务的全部现场，非本人 404 防探测。
+
+**五、可门禁（E 层）**：golden set 10 条（route/tools_called/无死信三断言）+ 双入口
+（pytest 门禁 + CLI）+ **deploy workflow 挂评测门禁（构建镜像前全量单测+golden set）**
+——门禁上线第一天就拦截了两次部署环境错配（rsync root 属主 / 门禁 venv 建在只读的
+/opt），证明其价值。
+
+**F 系列收尾**：前端 lazy 分割（主包 2043KB→158KB）、tsc 8 错清零、runner 健康监控
+（queued>10min 自动重启，crontab）。
+
+**生产收官**：tag `v2.2.0-p1.13c`，生产代码 9218774。三次部署（p1.13/p1.13b 失败、
+p1.13c 成功）的完整记录见 `iterations/v2.2.0-p1.13c-deploy-gates.md`。
+
+> ⚠️ 版本流水缺口说明：v2.1.0 全程的 RELEASES 节缺失（当时未按版本补写本文档），
+> 迭代明细在 `docs/iterations/` 与 PLAN-2.1.0.md。后续版本（2.3.0 起）恢复逐版本
+> 写 RELEASES 的纪律。

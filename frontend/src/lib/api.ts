@@ -115,6 +115,22 @@ export async function getMessages(sessionId: string): Promise<Array<{
   return data.messages ?? [];
 }
 
+// v2.4.2：单条消息的完整 trace（含思考逐字流）——「查看思考过程」按需加载。
+// 列表接口默认剥离逐字流（占 97%），这里取回未剥离的完整事件流。
+export async function fetchMessageTrace(sessionId: string, messageId: number): Promise<string | null> {
+  const res = await fetch(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/${messageId}/trace`,
+    { headers: authHeaders() },
+  );
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.trace ?? null;
+}
+
 // --------------------------------------------------------------------------- //
 // v2.0.0-p2.2：消息点赞/点踩反馈（闭环：提交/覆盖/取消，DB 为真相源）
 // --------------------------------------------------------------------------- //
@@ -453,7 +469,17 @@ export async function adminLogout(): Promise<void> {
 }
 
 export async function adminCheckSession(): Promise<LoginUser | null> {
-  if (!adminGetToken()) return null;
+  let token = adminGetToken();
+  if (!token) {
+    // v2.4.1：复用工作台登录态——同一账号、同一个 JWT，进 /admin 不必再登一次。
+    // 角色校验在下面（非 admin 会被清掉并回落登录页），所以这里先"借用"是安全的。
+    const shared = getToken();
+    if (shared) {
+      adminSetToken(shared);
+      token = shared;
+    }
+  }
+  if (!token) return null;
   try {
     const res = await fetch('/api/v1/auth/me', { headers: adminAuthHeaders() });
     if (!res.ok) {

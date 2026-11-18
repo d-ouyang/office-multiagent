@@ -56,7 +56,7 @@ def test_tasks_endpoint_streams_ndjson(monkeypatch):
         c.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, trace TEXT, feedback TEXT, feedback_tags TEXT, feedback_comment TEXT, feedback_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         # p6.4：token 池真账——/tasks 现在按登录身份 reserve/settle
         c.execute(text("CREATE TABLE wallet (user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0)"))
-        c.execute(text("CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, kind TEXT DEFAULT 'task', note TEXT, amount INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        c.execute(text("CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, input_tokens INTEGER, output_tokens INTEGER, cache_read INTEGER, kind TEXT DEFAULT 'task', note TEXT, amount INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("INSERT INTO user (id, employee_id, username, role) VALUES (1,'EMP001','dev','admin')"))
         c.execute(text("INSERT INTO wallet (user_id, balance) VALUES (1, 100000)"))
     for mod in ("app.core.db", "app.core.identity", "app.core.session_repo"):
@@ -75,3 +75,32 @@ def test_tasks_endpoint_streams_ndjson(monkeypatch):
     assert events and events[-1].type == EventType.DONE
     seqs = [e.seq for e in events]
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
+
+
+# --------------------------------------------------------------------------- #
+# v2.2.0-p1.5（B2）：事件归因贯穿——trace_id/tenant_id 从入口注入全部事件
+# --------------------------------------------------------------------------- #
+
+
+def test_run_task_events_carry_trace_attribution(monkeypatch):
+    """B2 判据：run_task 产出的每个事件信封带 trace_id（=run_id）与 tenant_id。"""
+    from app.core import model_adapter
+    from app.core.config import settings
+    from app.orchestration.graph import run_task as _run_task
+
+    # planner 拿到非预期 JSON → 回落规则路由；brain 拿到 final JSON → 单步完成
+    def decide(model_id, messages, **kwargs):
+        return '{"thought":"完成","final":"好的，这是一句话介绍"}'
+
+    model_adapter.set_adapter(model_adapter.FakeModelAdapter([decide, decide, decide]))
+    monkeypatch.setattr(settings, "llm_gateway_url", "")  # 确保不走网关 env
+    run_id = "trace-attribution-run"
+    try:
+        _result, events = _run_task("用一句话介绍你自己", run_id=run_id)
+    finally:
+        model_adapter.reset_adapter()
+
+    assert events, "应产出事件流"
+    assert events[-1].type == EventType.DONE
+    assert all(e.trace_id == run_id for e in events), "每个事件都应携带 trace_id=run_id"
+    assert all(e.tenant_id == "office" for e in events)

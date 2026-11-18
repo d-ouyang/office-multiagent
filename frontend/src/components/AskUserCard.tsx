@@ -32,9 +32,7 @@ export default function AskUserCard({
 
   const q: AskQuestion = qs[Math.min(idx, total - 1)];
   const answer = answers[idx] ?? null;
-  const answered = (i: number) => answers[i] !== null;
   const last = idx === total - 1;
-  const canSubmitCurrent = Boolean(answer) || Boolean((custom[idx] ?? '').trim()) || (files[idx]?.length ?? 0) > 0;
 
   // 2.1.0 定稿交互：单问题/最后一题答完【自动进入续跑】（无确认按钮）；
   // 多题中间跳过/选择即翻页并记住（（跳过）会如实告知模型）。
@@ -124,7 +122,10 @@ export default function AskUserCard({
 
       {q.options.length > 0 && (
         <div className="ask-options" role="group" aria-label="候选选项">
-          {q.options.map((opt, i) => (
+          {/* 2.1.0-p1.10：模型仍生成"自定义/我来补充"类选项时界面过滤——"其他补充"输入框已承担该功能，避免二次交互 */}
+          {q.options
+            .filter((opt, _i, arr) => !/^(自定义|请输入|我来补充|我来填)/.test(opt.trim()) || arr.every((o) => /^(自定义|请输入|我来补充|我来填)/.test(o.trim())))
+            .map((opt, i) => (
             <button
               key={opt}
               type="button"
@@ -147,6 +148,9 @@ export default function AskUserCard({
                 {/* 提示词禁令的界面兜底：剥掉英文标识符括号技术注释（"销售额（sum_pay）"→"销售额"），保留"（推荐）"等中文 */}
                 {opt.replace(/（[a-zA-Z_][a-zA-Z0-9_.]*）/g, '').replace(/\([^)]*[a-zA-Z_][a-zA-Z0-9_]*\)/g, '').trim()}
               </span>
+              {q.expects_text && answer === opt && (
+                <span className="ask-option-need" aria-label="该选项需要补充文本">需补充</span>
+              )}
             </button>
           ))}
         </div>
@@ -226,13 +230,8 @@ export default function AskUserCard({
         >
           跳过此题
         </button>
-        {!last && (answered(idx) || canSubmitCurrent) && (
-          <button type="button" className="admin-btn ghost" onClick={() => record((custom[idx] ?? '').trim() || answer)}>
-            下一题
-          </button>
-        )}
       </div>
-      <div className="ask-hint">全部回答完成后一次性提交，任务从断点继续（已完成步骤不重跑）。</div>
+      <div className="ask-hint">每题答完自动进入下一题；全部答完后任务自动从断点继续（已完成步骤不重跑）。</div>
     </div>
   );
 }

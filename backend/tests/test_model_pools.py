@@ -17,7 +17,7 @@ def eng(monkeypatch):
     with engine.begin() as c:
         c.execute(text("CREATE TABLE `user` (id INTEGER PRIMARY KEY, employee_id TEXT, username TEXT, role TEXT, model_pool_id INTEGER, token_version INTEGER NOT NULL DEFAULT 0)"))
         c.execute(text("CREATE TABLE wallet (user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0)"))
-        c.execute(text("CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, kind TEXT DEFAULT 'task', note TEXT, amount INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        c.execute(text("CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, input_tokens INTEGER, output_tokens INTEGER, cache_read INTEGER, kind TEXT DEFAULT 'task', note TEXT, amount INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE model_pool (id INTEGER PRIMARY KEY, name TEXT)"))
         c.execute(text("CREATE TABLE pool_model (pool_id INTEGER, model_name TEXT, enabled INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (pool_id, model_name))"))
         c.execute(text("INSERT INTO model_pool (id, name) VALUES (1,'default'),(2,'staff'),(3,'admin')"))

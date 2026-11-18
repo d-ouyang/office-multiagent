@@ -8,16 +8,17 @@ def _round(i: int) -> list[dict[str, str]]:
     ]
 
 
-def test_recent_four_rounds_stay_and_older_are_compressed():
+def test_recent_eight_rounds_stay_and_older_are_summarized():
+    """v2.4.2：默认保留 8 轮原文（旧值 4 轮 + 每轮 80 字切片，第二轮就丢上文）。"""
     history = []
-    for i in range(1, 7):
+    for i in range(1, 11):
         history.extend(_round(i))
     text, parts = prepare_turn(history, "继续")
-    assert "第5个问题" in parts["recent"]
-    assert "第6个问题" in parts["recent"]
+    assert "第9个问题" in parts["recent"]
+    assert "第10个问题" in parts["recent"]
     assert "第1个问题" in parts["summary"]
     assert "第2个问题" in parts["summary"]
-    assert "第4个问题" not in parts["summary"]
+    assert "第3个问题" not in parts["summary"]   # 第 3~10 轮都在近期原文里
     assert "第1个问题" not in parts["recent"]
     assert "【历史摘要】" in text
     assert "【本轮问题】" in text

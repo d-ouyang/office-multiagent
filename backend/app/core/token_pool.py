@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from .config import settings
 from .session_repo import _iso_utc
 
 
@@ -147,6 +148,21 @@ class TokenPool:
             )
             return ReserveResult(ok=True, balance=int(row[0]) if row else None)
 
+    def daily_billed(self) -> int:
+        """当日（UTC 日，对齐 ledger created_at 时区口径）全部任务结算量之和。
+
+        v2.2.0-p1.6（B3）：tenant 级日预算的数据源——kind='task' 的 settle 列
+        即 B2 的 billed 口径（含 cache 折扣），与钱包实际扣费一致。
+        """
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT COALESCE(SUM(settle), 0) FROM token_ledger "
+                    "WHERE kind = 'task' AND DATE(created_at) = CURRENT_DATE"
+                )
+            ).first()
+            return int(row[0] or 0)
+
     def settle(
         self,
         user_id: int,
@@ -155,16 +171,32 @@ class TokenPool:
         *,
         task_id: str | None = None,
         model: str | None = None,
+        cache_hit_tokens: int = 0,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
     ) -> int:
-        """结算：把 (reserved - actual) 补回余额，落 ledger；返回最新余额。
+        """结算：把 (reserved - billed) 补回余额，落 ledger；返回最新余额。
 
         下限保护（p6.11）：actual 可能超过 reserved（如长文档通读 token 暴涨），
         此时 refund 为负，若直接 `balance + refund` 会把余额穿成负数——而 reserve 只保证
         预扣那一刻余额够，不保证实际用量不超过预扣。用 CASE 把余额钳在 0，杜绝负余额
         （负余额会破坏 /quota 展示与后续 reserve 的 `balance>=a` 判定）。
         ledger 仍如实记录 actual，余额只表示"可消费额度"。
+
+        v2.2.0-p1.5（B2）：cache 折扣计价——prompt 缓存命中部分按
+        `settings.llm_cache_price_ratio`（缺省 0.25，对齐 DeepSeek hit/miss 价比）
+        折算入账：billed = actual - hit + ceil(hit × ratio)。ledger 的 settle 列
+        记 billed（可消费额度口径）；真实用量仍以 actual 为准（steps_usage/DONE）。
+        ratio=1.0 时 billed==actual（行为与 B2 之前完全一致）。
         """
-        refund = reserved - actual
+        import math
+
+        hit = max(0, int(cache_hit_tokens or 0))
+        billed = actual
+        if hit:
+            ratio = max(0.0, min(1.0, float(settings.llm_cache_price_ratio)))
+            billed = max(0, actual - hit + math.ceil(hit * ratio))
+        refund = reserved - billed
         with self.engine.begin() as conn:
             if refund:
                 conn.execute(
@@ -177,10 +209,22 @@ class TokenPool:
                 )
             conn.execute(
                 text(
-                    "INSERT INTO token_ledger (user_id, task_id, model, reserve, settle) "
-                    "VALUES (:u, :t, :m, :res, :set)"
+                    "INSERT INTO token_ledger "
+                    "(user_id, task_id, model, reserve, settle, input_tokens, output_tokens, cache_read) "
+                    "VALUES (:u, :t, :m, :res, :set, :pin, :pout, :pcache)"
                 ),
-                {"u": user_id, "t": task_id, "m": model, "res": reserved, "set": actual},
+                # settle 列记 billed（折扣后可消费口径）；input/output/cache_read 记真实用量，
+                # 三者与 reserve/settle 一起才能对账（v2.4.2）
+                {
+                    "u": user_id,
+                    "t": task_id,
+                    "m": model,
+                    "res": reserved,
+                    "set": billed,
+                    "pin": int(prompt_tokens) if prompt_tokens is not None else None,
+                    "pout": int(completion_tokens) if completion_tokens is not None else None,
+                    "pcache": int(cache_hit_tokens) if cache_hit_tokens else None,
+                },
             )
             row = conn.execute(
                 text("SELECT balance FROM wallet WHERE user_id=:u"), {"u": user_id}

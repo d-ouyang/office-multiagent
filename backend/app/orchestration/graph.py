@@ -67,6 +67,7 @@ class TaskState(TypedDict, total=False):
     need_input: dict | None         # 2.1.0 P1-1：ask_user 载荷（question/options/need_file/file_hint）
     react_history: list             # 2.1.0 P1-1：已完成步骤回放（thought/action/input/observation）
     user_answer: str | None         # 2.1.0 P1-1：resume 注入的用户补充
+    budget_replay: list             # 2.1.0-p1.13：budget 续跑注入的已完成步骤（回放不重跑）
     ask_count: int                  # 2.1.0 P1-1：ask_user 已触发次数（≥3 不再允许，防循环）
 
 
@@ -114,6 +115,30 @@ def _json_safe_dict(value: Any) -> dict[str, Any]:
         return {str(k): str(v) for k, v in (value or {}).items()}
 
 
+def _history_budget(model_id: str | None) -> int:
+    """v2.3.0-p1.1：单次请求给历史用的 token 预算 = 模型窗口 × 百分比。
+
+    为什么按窗口而不是按任务余额：这是**单次请求**的长度约束（防 provider 400），
+    任务累计预算由 TaskTokenBudget 单独管。两者混用会让长任务在后半程"越跑越瞎"。
+    读不到窗口按 128K 兜底，读不到开关按 60%；返回 0 表示不限（回退到逐条截断）。
+    """
+    from ..core import runtime_settings
+    from ..core.model_registry import load_registry
+
+    try:
+        pct = max(0, min(90, int(runtime_settings.effective("history_budget_window_pct"))))
+    except Exception:  # noqa: BLE001 - 设置读失败回落配置
+        pct = max(0, int(settings.history_budget_window_pct))
+    if pct == 0:
+        return 0
+    window = 128000
+    mid = model_id or settings.llm_brain_model
+    entry = next((m for m in load_registry().get("models", []) if m.id == mid), None)
+    if entry is not None and int(getattr(entry, "context_window", 0) or 0) > 0:
+        window = int(entry.context_window)
+    return max(1000, int(window * pct / 100))
+
+
 def _emit_context(state: TaskState, system: str, tools, emitter: RunEventEmitter, emit: Callable[[Event], None]) -> None:
     from ..core.model_registry import load_registry
     from .brain import _PROTOCOL_TMPL
@@ -131,7 +156,7 @@ def _emit_context(state: TaskState, system: str, tools, emitter: RunEventEmitter
         window = int(entry.context_window)
     items = context_items(parts, system=system, rules=_PROTOCOL_TMPL, tools=tool_text)
     used = sum(int(item["tokens"]) for item in items)
-    emit(emitter.context_usage(window, used, items))
+    emit(emitter.context_usage(window, used, items, budget=_history_budget(state.get("model"))))
 
 
 def _validate_and_flag(
@@ -203,6 +228,9 @@ def build_graph(
         仍是逐字流（打字机），不受影响。
         """
 
+        # v2.3.0-p1.1：子任务与人共享同一个窗口预算（并行时各自独立成请求，互不影响）
+        hb = _history_budget(state.get("model"))
+
         def _run(st, upstream=None):
             spec = get_agent_spec(st.agent_type)
             spec_tools = build_registry_for_spec(spec, base)
@@ -216,6 +244,7 @@ def build_graph(
                 on_thought=lambda t: emit(emitter.thinking_delta(t)),
                 reasoning_effort=_effort_for(state),
                 token_budget=token_budget,
+                history_budget=hb,
             )
             extra_tokens = {"n": 0}  # p4.3d：强制收尾那次 LLM 调用的用量，最后并入账
 
@@ -229,6 +258,7 @@ def build_graph(
                     stream=False,
                     reasoning_effort=_effort_for(state),
                     token_budget=token_budget,
+                    history_budget=hb,
                 )
                 step = bare.next_step(
                     f"【强制收尾】{reason}。不要再调用任何工具，直接基于以上已获得的观察，"
@@ -247,6 +277,8 @@ def build_graph(
                 ),
                 brain,
                 spec_tools,
+                max_iterations=_max_iterations(),
+                invocation_guard=_invocation_guard(state.get("run_id") or rid),
                 emitter=emitter,
                 emit=emit,
                 synthesize=_synthesize,
@@ -343,12 +375,31 @@ def build_graph(
             on_thought=lambda t: emit(emitter.thinking_delta(t)),
             reasoning_effort=_effort_for(state),
             token_budget=token_budget,
+            history_budget=_history_budget(state.get("model")),
         )
         # 2.1.0 P1-1（HITL）：paused_input 续跑时回放已完成步骤 + 注入用户补充；
         # ask_count ≥ 3 后不再允许 ask_user（防问询循环），强制收敛给终答。
         ask_count = int(state.get("ask_count") or 0)
         prior_steps = _deserialize_react_history(state.get("react_history") or [])
         seed = str(state.get("user_answer") or "").strip() or None
+        # 2.1.0-p1.13：budget 重置续跑——回放已完成步骤（interrupt payload 落库→update_state 注入），
+        # 不再整个 ReAct 从头重跑；有 user_answer 的 HITL 续跑不受影响（seed 优先）。
+        budget_replay_steps = None
+        if not seed:
+            raw_replay = state.get("budget_replay")
+            if isinstance(raw_replay, list) and raw_replay:
+                from .react import Step
+
+                budget_replay_steps = [
+                    Step(
+                        thought=str(item.get("thought") or ""),
+                        action=str(item.get("action") or "") or None,
+                        action_input=item.get("action_input") or {},
+                        observation=str(item.get("observation") or "") or None,
+                    )
+                    for item in raw_replay
+                    if item.get("action") and item.get("observation")
+                ]
         # 2.1.0：token 上限触达 → interrupt 暂停（用户可继续=预算重置 / 放弃本轮）。
         # 无 checkpointer 时不可暂停（中断后无法恢复=假挂起），回落收尾终答。
         budget_interrupt_fn = None
@@ -360,11 +411,13 @@ def build_graph(
             state["text"],
             brain,
             spec_tools,
+            max_iterations=_max_iterations(),
+            invocation_guard=_invocation_guard(state.get("run_id") or rid),
             emitter=emitter,
             emit=emit,
             should_cancel=should_cancel,
             token_budget=token_budget,
-            prior_steps=prior_steps,
+            prior_steps=prior_steps or budget_replay_steps,
             seed_observation=seed,
             allow_ask_user=ask_count < 3,
             budget_interrupt=budget_interrupt_fn,
@@ -464,6 +517,8 @@ def build_graph(
                 on_thought=lambda t: emit(emitter.thinking_delta(t)),
                 reasoning_effort=_effort_for(state),
                 token_budget=token_budget,
+                # 汇总脑最容易超窗口（塞的是各子任务终答），预算必须给
+                history_budget=_history_budget(state.get("model")),
             )
             task_lines = "\n".join(f"【{k}】{(v.final or '')[:2000]}" for k, v in results.items())
             asset_block = ("\n\n生成的文件：\n" + "\n".join(deliverables)) if deliverables else ""
@@ -538,6 +593,50 @@ def build_graph(
     return g.compile(checkpointer=checkpointer)
 
 
+
+def _max_iterations() -> int:
+    """循环护栏开关化（v2.2.0-p1.6 / B3）：步数上限从 runtime_settings 读取——
+    管理端改完下一个任务生效，不再是代码常量/Prompt 叮嘱（防跑飞的硬约束）。"""
+    from ..core import runtime_settings
+
+    try:
+        return max(3, int(runtime_settings.effective("agent_max_iterations") or 10))
+    except Exception:  # noqa: BLE001 - 读取失败回落代码缺省（护栏宁紧勿松）
+        return 10
+
+
+
+def _invocation_guard(run_id: str):
+    """C1 幂等守卫工厂：同 run 内 (tool_name, args_hash) 命中 → 返回缓存 ToolResult。
+
+    表不存在（旧库未迁移）时 invocation_repo 静默降级为 None（不拦截），
+    部署顺序无耦合；先到先得语义由表的唯一键 + INSERT IGNORE 保证。
+    """
+    from ..core.db import get_engine
+    from ..core.invocation_repo import lookup, record
+
+    def guard(tool_name: str, action_input: dict) -> "ToolResult | None":
+        import json
+
+        from .tools import ToolResult
+
+        cached = lookup(get_engine(), run_id, tool_name, action_input)
+        if cached is not None:
+            # dict 结果以 JSON 存储、命中时还原——下游对 output 的类型预期与原执行一致
+            try:
+                restored = json.loads(cached)
+            except (ValueError, TypeError):
+                restored = cached
+            return ToolResult(ok=True, output=restored)
+        return None
+
+    def recorder(tool_name: str, action_input: dict, observation: str) -> None:
+        record(get_engine(), run_id, tool_name, action_input, observation)
+
+    guard.record = recorder  # type: ignore[attr-defined]
+    return guard
+
+
 def run_task(
     text: str,
     *,
@@ -564,7 +663,9 @@ def run_task(
     """
     rid = run_id or new_run_id()
     turn_id = new_run_id()
-    emitter = RunEventEmitter(rid, turn_id)
+    # v2.2.0-p1.5（B2）：归因注入——trace_id 复用 run_id（跨服务续跑同 id 可聚合），
+    # tenant_id 单租户占位（B3 多租户时改为入口注入）。
+    emitter = RunEventEmitter(rid, turn_id, trace_id=rid, tenant_id="office")
     model_id = model or settings.llm_brain_model
     events: list[Event] = []
 
@@ -643,7 +744,7 @@ def run_task(
         payload = state["__interrupt__"][0].value if state["__interrupt__"] else {}
         if payload.get("type") == "budget_paused":
             # 2.1.0：token 上限暂停——用户可继续（预算重置）或放弃本轮
-            ask_payload = {k: v for k, v in payload.items() if k != "type"}
+            ask_payload = {k: v for k, v in payload.items() if k not in ("type", "replay")}
             emit(emitter.observation("budget_paused", f"已达单任务 token 上限 {payload.get('limit')}，已暂停等待你的选择"))
             emit(emitter.done("paused_budget", model=model_id))
             if token_pool is not None and user_id is not None:
@@ -656,7 +757,7 @@ def run_task(
                     "status": "paused_budget",
                     "route": state.get("route"),
                     "result": "",
-                    "pause_payload": {"budget": ask_payload, "replay": state.get("react_history") or []},
+                    "pause_payload": {"budget": ask_payload, "replay": payload.get("replay") or []},
                     "estimate": estimate,
                     "tokens_used": int(state.get("tokens_used", 0) or 0),
                 },
@@ -712,9 +813,14 @@ def run_task(
     # 正常完成 → settle（actual=真实 LLM 用量；StubBrain 基线为 0，全额退回预扣）
     if token_pool is not None and user_id is not None:
         actual = int(state.get("tokens_used", 0))
+        prompt_total = int(state.get("prompt_tokens", 0) or 0)
         token_pool.settle(
             user_id, estimate, actual, task_id=rid,
             model=state.get("model") or settings.llm_brain_model,  # p6.4/p6.5：落账记实际模型
+            cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0),  # B2：cache 折扣计价
+            # v2.4.2：账本同时记输入/输出拆分，才能对账（此前只有预扣与折扣后结算）
+            prompt_tokens=prompt_total or None,
+            completion_tokens=max(0, actual - prompt_total) if prompt_total else None,
         )
     emit(
         emitter.done(
@@ -856,7 +962,13 @@ def resume_with_answer(
     state = graph.invoke(Command(resume=str(answer or "").strip()), cfg)
     actual = int(state.get("tokens_used", 0) or 0)
     if token_pool is not None and user_id is not None:
-        token_pool.settle(user_id, 0, actual, task_id=run_id, model=state.get("model") or model)
+        _pt = int(state.get("prompt_tokens", 0) or 0)
+        token_pool.settle(
+            user_id, 0, actual, task_id=run_id, model=state.get("model") or model,
+            cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0),
+            prompt_tokens=_pt or None,
+            completion_tokens=max(0, actual - _pt) if _pt else None,
+        )
     route = state.get("route", "single")
     if state.get("need_input"):
         # 续跑后模型又发起了一轮 ask_user——保持 paused_input，graph 重新登记

@@ -10,9 +10,11 @@ import { sortDialogueModels, toPromptModel, type DialogueModel } from '../compon
 import { useNdjsonStream } from '../hooks/useNdjsonStream';
 import type { StreamEvent } from '../types';
 import ContextRing from '../components/ContextRing';
+import Notice from '../components/Notice';
+import { describeError, parseApiError } from '../lib/apiError';
 import { deriveAskUser, deriveContextUsage, deriveCurrentAgent, agentLabel, normalizeAsk, pauseText, quotaPauseText, type AskUserPayload } from '../lib/derive';
 import AskUserCard from '../components/AskUserCard';
-import { answerTaskResponse, authHeaders, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
+import { answerTaskResponse, authHeaders, fetchMessageTrace, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
 
 const EFFORTS = ['低', '高', '最大'] as const;
 const EFFORT_API: Record<string, string> = { 低: 'low', 高: 'high', 最大: 'max' };
@@ -46,7 +48,7 @@ function parseCreatedAt(raw: string | undefined): number | undefined {
 }
 
 export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUser; onLogout: () => void; onOpenAdmin?: () => void }) {
-  const { events, status, error, start, stop, reset } = useNdjsonStream('/api/v1/demo/stream');
+  const { events, status, error, start, stop, reset, clearError } = useNdjsonStream('/api/v1/demo/stream');
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [currentId, setCurrentId] = useState<string>('');
   const [loadingSession, setLoadingSession] = useState(false); // p6.48：切会话拉消息期间不闪空态
@@ -111,8 +113,9 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
       }
       const data = await res.json();
       if (!res.ok) {
-        setUploadError(`上传失败：${data?.detail?.message ?? `HTTP ${res.status}`}`);
-        setTimeout(() => setUploadError(null), 5000);
+        // 标题由 Notice 统一给"文件上传失败"，这里只放后端 original message
+        setUploadError(parseApiError(res.status, data).message);
+        setTimeout(() => setUploadError(null), 6000);
         return null;
       }
       return String(data.file_name);
@@ -191,11 +194,19 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
               evs = undefined;
             }
           }
-          return (
-            evs
-            ? { role: 'assistant' as const, id: m.id, events: evs, streaming: false, createdAt, model: m.model ?? undefined, tokens: m.tokens ?? undefined, feedback: m.feedback ?? null }
-            : { role: 'assistant' as const, id: m.id, content: m.content, createdAt, model: m.model ?? undefined, tokens: m.tokens ?? undefined, feedback: m.feedback ?? null }
-          );
+          // v2.4.2：content 永远带上——trace 剥离逐字流后，正文兜底到这个字段
+          return {
+            role: 'assistant' as const,
+            id: m.id,
+            content: m.content,
+            hasFullTrace: Boolean(m.trace),
+            events: evs,
+            streaming: false,
+            createdAt,
+            model: m.model ?? undefined,
+            tokens: m.tokens ?? undefined,
+            feedback: m.feedback ?? null,
+          };
         }),
       );
     } catch (e) {
@@ -222,7 +233,9 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
           status: String(t.status),
           needed: Number(payload.needed ?? 0),
           message: pauseText(String(t.status), payload),
-          ask: normalizeAsk(payload.ask) ?? undefined,
+          // 2.1.0-p1.9 兼容两种 pause_payload 格式：新 {"ask": {...}} 与旧 {"questions": [...]} 直接平铺——
+          // 旧格式会话刷新后 payload.ask 为 undefined，弹窗消失（实测踩过）
+          ask: normalizeAsk(payload.ask ?? payload) ?? undefined,
         });
       }
     } catch {
@@ -385,8 +398,28 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
     [paused?.taskId, start, onLogout],
   );
 
+  // 2.1.0-p1.13：流式期间的自动滚动改为 sticky 模式——用户向上滚就不再抢滚动条；
+  // 用户滚回底部（距底 <120px）恢复跟随；流结束（非 streaming）也回一次底部。
+  const stickToBottomRef = useRef(true);
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    const el = scrollRef.current;
+    if (!el) return;
+    const onUserScroll = () => {
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      stickToBottomRef.current = nearBottom;
+    };
+    el.addEventListener('wheel', onUserScroll, { passive: true });
+    el.addEventListener('touchmove', onUserScroll, { passive: true });
+    return () => {
+      el.removeEventListener('wheel', onUserScroll);
+      el.removeEventListener('touchmove', onUserScroll);
+    };
+  }, []);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (status === 'streaming' && !stickToBottomRef.current) return; // 用户在看历史，不打扰
+    el.scrollTo({ top: el.scrollHeight });
   }, [messages.length, events.length, status]);
 
   const dispatchTask = async (text: string, paths: string[], modelId?: string, force = false, effort?: string) => {
@@ -673,12 +706,27 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
               onPreview={setPreviewPath}
               onFeedbackSubmit={onFeedbackSubmit}
               onFeedbackCancel={onFeedbackCancel}
+              sessionId={currentId}
+              onLoadThinking={async (mid) => {
+                if (!currentId) return null;
+                const trace = await fetchMessageTrace(currentId, mid);
+                return trace ? (JSON.parse(trace) as StreamEvent[]) : null;
+              }}
             />
           ))}
           </div>
         </div>
-        {uploadError && <div className="banner warn">{uploadError}</div>}
-        {error && <div className="banner err">{error}</div>}
+        {/* 2.1.0-p1.9：暂停/弹窗区块包进 chat-column——与消息列表/输入框同列左缘对齐
+            （此前弹窗在 chat-main 直接子级，全宽贴最左，与居中的列表/输入框错位） */}
+        <div className="chat-column">
+        {/* v2.4.1：统一提示条——文案由 describeError 产出，不再各写各的红条 */}
+        {uploadError && (
+          <Notice
+            notice={{ kind: 'error', title: '文件上传失败', message: uploadError }}
+            onClose={() => setUploadError(null)}
+          />
+        )}
+        {error && <Notice notice={describeError(error)} onClose={clearError} />}
         {paused && paused.status === 'paused_budget' && (
           <div className="banner warn pause-banner">
             <span>⏸ 已达单任务 token 上限，任务已暂停（{paused.needed ? `已消耗 ${paused.needed.toLocaleString('zh-CN')} tokens` : '可在余额充足后继续'}）</span>
@@ -740,6 +788,7 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
             </span>
           </div>
         )}
+        </div>
         <div
           className={`composer-wrap${dragOver ? ' drag' : ''}`}
           onDragOver={(e) => {
@@ -800,11 +849,19 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
   );
 }
 
-// 新会话示例：覆盖订单分析 / 报告产出 / 明细导出三类核心能力，点击直接发起任务
+// 新会话示例（v2.4.1）：按"能触发不同 Agent 分支且点了有结果"设计——
+//   多维图表 → data_analysis（render_chart，城市×月份×两个指标）
+//   跨月报告 → report_generation（PDF 交付）
+//   信息不全 → 只说要导出、不给时间/字段，意图缺条件时走 ask_user 反问
+//   制度口径 → rag_retrieval（知识库检索）
+// 注：image_restore 目前只有 ask_user（能力未接入），不放引导卡避免点了只得到"暂不支持"。
 const WELCOME_SUGGESTIONS = [
-  { tag: '数据', text: '帮我看看 2026 年 10 月卖得最好的前 5 个城市，画张柱状图' },
-  { tag: '报告', text: '把 9 月和 10 月的销售额对比整理成一份 PDF 报告' },
-  { tag: '导出', text: '帮我导出 10 月的全国订单明细表（Excel）' },
+  // 注：不用"看板/dashboard"这种系统里不存在的交付物名——真跑时模型会去找 dashboard 工具
+  // 并反复编造工具名（v2.4.1 实测 5 次 4 次因此失败），改成明确的一种图（热力图）。
+  { tag: '多维图表', text: '统计最近两个月各城市、各月份的销售额，画一张城市×月份的热力图' },
+  { tag: '跨月报告', text: '把 9 月、10 月、11 月的销售额和客单价做个对比，整理成一份 PDF 报告' },
+  { tag: '信息不全', text: '帮我导出一份订单明细表' },
+  { tag: '制度口径', text: '差旅报销的审批流程和金额上限是怎么规定的？' },
 ];
 
 export default WorkspacePage;

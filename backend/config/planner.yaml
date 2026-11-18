@@ -6,32 +6,44 @@
 # DAG 分解（§四.2 第三步）在 p3.2 做，本文件先覆盖意图 + 复杂度。
 
 intents:
+  # v2.4.0-p1.0：每个意图声明 `requires`——"这个意图的 Agent 必须拥有哪些工具"。
+  # 为什么显式写：以前只靠 `capability_guards`（句子里的实体 → 工具），那是"说法级"映射，
+  # 每加一个工具/每换一种说法都要人肉同步。requires 是"意图级"声明，改 agents.yaml 的
+  # 工具池时若漏配，路由会在预检阶段自动改道 general，不必等线上报错。
+  # 两者分工：requires 防"Agent 配置漂移"，guards 防"意图判错但句子明确要某能力"。
   analysis:
     keywords: [分析, 统计, 趋势, 对比, 占比, 洞察, 汇总分析, 相关性]
     agent: data_analysis
+    requires: []            # data_analysis 自带 query/analyze/render，无额外依赖
   # p5.5：订单/交易是强实体信号，必须确定性路由到带 query_orders 的 Agent。
   # 教训（2026-11-06 本地实测）：「查一下最近10笔订单」曾被 rag 的「查一下」劫持，
   # 落进知识库 Agent（无订单工具）→ 401。orders 字母序在 rag 前，同分时稳定胜出。
   orders:
     keywords: [订单, 退款, 销售额, 销量, 发货]
     agent: data_analysis
+    requires: [query_orders]
   cleaning:
     keywords: [清洗, 去重, 缺失值, 异常值, 格式化, 规范化, 补全, 脏数据]
     agent: data_cleaning
+    requires: [clean_table]
   report:
     keywords: [报表, 报告, 周报, 月报, 导出, 生成pdf, 生成excel, 生成word, ppt]
     agent: report_generation
+    requires: [write_document]
   rag:
     # p5.5：「查一下」是弱信号词，已移除——它曾把订单/数据类问句整体劫持进 rag。
     # 制度/手册/知识库类问句靠「制度/手册/检索/知识库」等强词命中，不再依赖弱词。
     keywords: [知识库, 文档里, 根据资料, 检索, 引用, 出处, 制度, 手册]
     agent: rag_retrieval
+    requires: [rag_retrieve]
   visualization:
     keywords: [图表, 画图, 可视化, 柱状图, 折线图, 饼图, 看板, 大屏]
     agent: visualization
+    requires: [render_chart]
   image_restore:
     keywords: [图片还原, 截图, 识图, ocr, 表格还原, 图片里的表格]
     agent: image_restore
+    requires: []            # 该 Agent 目前只有 ask_user（能力未接入，如实告知）
 
 complexity:
   # 多步骤连接词：每命中一个 +step_weight（多步=趋向复杂）
@@ -83,6 +95,21 @@ capability_guards:
   折线图: render_chart
   饼图: render_chart
   流程图: render_flow
+  # v2.3.0-p1.3：文件读取类。真跑事故（2026-11-16 冒烟）——文件就在用户目录里，
+  # 却因路由到工具池没有 read_document 的知识库 Agent，模型只能反问"请上传文件"。
+  # 刻意用组合词而不是裸「文件/文档」：「生成文档」要留在 report_generation，
+  # 「导出文件」也不该被改道 general。
+  读取文件: read_document
+  读取文档: read_document
+  读文件: read_document
+  读文档: read_document
+  文档文件: read_document
+  查看文件: read_document
+  打开文件: read_document
+  该文件: read_document
+  这份文件: read_document
+  上传的文件: read_document
+  附件: read_document
 
 # DAG 拆分（p3.2，§四.2 第三步）：复杂任务按意图依赖生成子任务图。
 # 只对【同时出现】的意图生效；被依赖方不在任务里则自动忽略该边。

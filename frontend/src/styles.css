@@ -73,6 +73,46 @@ body {
 .login-form input:focus {
   border-color: var(--accent);
 }
+/* 密码框：右侧眼睛 icon 切换明文/密文 */
+.login-form .password-field {
+  position: relative;
+  display: block;
+}
+.login-form .password-field input {
+  width: 100%;
+  padding-right: 44px;
+}
+.login-form .pwd-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.login-form .pwd-toggle:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+.login-form .pwd-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.login-form .pwd-toggle svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
 .login-form button {
   padding: 10px;
   border-radius: 10px;
@@ -538,10 +578,22 @@ button.attach-chip:hover,
   margin-bottom: 10px;
 }
 .account-id { min-width: 0; flex: 1; }
-.account-logout-icon {
-  margin-left: auto;
+/* 底栏用户行：个人信息 + 右侧退出 icon */
+.sidebar-user-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.sidebar-user-row .user-chip {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+.user-logout-icon {
+  flex-shrink: 0;
   width: 28px;
   height: 28px;
+  margin-right: 4px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -550,9 +602,9 @@ button.attach-chip:hover,
   place-items: center;
   cursor: pointer;
 }
-.account-logout-icon:hover {
-  color: #e7a3a0;
-  background: rgba(231, 163, 160, 0.16);
+.user-logout-icon:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
 }
 .account-name {
   font-size: 15px;
@@ -949,8 +1001,7 @@ button.account-link:hover {
 }
 .chat-column {
   width: min(1200px, 100%);
-  /* 2.1.0-p1.6：用户定稿对话列贴左（弹窗/步骤列表/输入框统一左对齐，不再居中） */
-  margin-inline: 0;
+  margin-inline: auto;
 }
 .chat-header {
   display: flex;
@@ -1436,6 +1487,86 @@ button.ghost {
   border-radius: 10px;
   padding: 8px 12px;
   font-size: 13px;
+}
+
+/* ---- 统一提示条（v2.4.1）：Notice 组件专用 -------------------------------
+   收拢此前散落在各页面的 <div className="banner err">{string}</div>。
+   结构固定为 色条 + 标题 + 正文 + 提示 + 可选按钮，样式只随 kind 换色。 */
+.notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0 0 12px;
+  padding: 12px 14px 12px 12px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.notice-mark {
+  flex: 0 0 3px;
+  align-self: stretch;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.85;
+}
+.notice-body {
+  flex: 1;
+  min-width: 0;
+}
+.notice-title {
+  font-weight: 600;
+}
+.notice-message {
+  margin-top: 3px;
+  opacity: 0.92;
+  word-break: break-word;
+}
+.notice-hint {
+  margin-top: 5px;
+  font-size: 12px;
+  opacity: 0.68;
+}
+.notice-action {
+  margin-top: 8px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.notice-action:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.notice-close {
+  border: 0;
+  background: none;
+  color: inherit;
+  opacity: 0.55;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.notice-close:hover {
+  opacity: 0.9;
+}
+.notice-error {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
+  background: color-mix(in srgb, var(--err) 8%, transparent);
+}
+.notice-warning {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+.notice-info {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .model-info {
   margin: 0 20px;
@@ -2409,3 +2540,60 @@ button.ghost {
 .ask-user-card .ask-hint { text-align: left !important; }
 .composer-wrap .prompt-bar__field input,
 .composer-wrap .prompt-bar__field textarea { text-align: left !important; }
+
+/* 2.1.0-p1.7：底部生成文件卡片——文件名完整可换行显示，不再因固定宽度截断。
+   grid 卡片覆盖 chip 的胶囊截断样式（max-width/nowrap/ellipsis 只该用于输入框预览 chip）。 */
+.msg-attachments .attach-chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  align-items: flex-start;
+}
+.msg-attachments .attach-chip > span:not(.attach-remove):not(:first-child) {
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+/* 2.1.0-p1.7：底部生成文件卡片——文件名完整可换行显示，不再因固定宽度截断。
+   grid 卡片覆盖 chip 的胶囊截断样式（max-width/nowrap/ellipsis 只该用于输入框预览 chip）。 */
+.msg-attachments .attach-chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  align-items: flex-start;
+}
+.msg-attachments .attach-chip > span:not(.attach-remove):not(:first-child) {
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+/* 2.1.0-p1.9c：Token 消耗明细浮窗（参照 rag-qa 样式：输入/命中/未命中/输出 + 命中率双色条） */
+.token-pop__head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; margin-bottom: 4px; }
+.token-pop__head--sub { font-weight: 600; opacity: 0.75; margin-top: 8px; }
+.token-pop__total { font-weight: 600; font-variant-numeric: tabular-nums; }
+.token-pop__sub .token-pop__label { padding-left: 14px; opacity: 0.8; }
+.tok-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 1px; }
+.tok-dot--in { background: #4c8dff; }
+/* v2.4.1：输出 token 用紫色，与输入（蓝）/命中（绿）/未命中（红）区分 */
+.tok-dot--out { background: #a371f7; }
+.tok-dot--hit { background: #2fbf71; }
+.tok-dot--miss { background: #f2545b; }
+.token-pop__rate { display: flex; justify-content: space-between; align-items: baseline; margin: 6px 0 4px; font-weight: 600; }
+.token-pop__rate-num { color: #2fbf71; font-variant-numeric: tabular-nums; }
+.token-pop__bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: rgba(128,128,128,0.15); }
+.token-pop__bar-hit { background: #2fbf71; }
+.token-pop__bar-miss { background: #f2545b; }
+.token-pop__legend { display: flex; gap: 14px; font-size: 11px; opacity: 0.7; margin-top: 4px; }
+
+/* 2.1.0-p1.13：交互图表图例与图区拉开间距（用户反馈叠在一块） */
+.chart-card .echart-visual { margin-bottom: 10px; }
+.chart-visual + .chart-visual { margin-top: 8px; }
+
+/* v2.4.2：思考过程按需加载的占位（面板展开时显示） */
+.thinking-loading {
+  font-size: 12px;
+  color: var(--color-text-tertiary, #8b949e);
+  padding: 2px 0 6px;
+}

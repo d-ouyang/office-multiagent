@@ -1,0 +1,40 @@
+# LLM 供应商路由表（v2.2.0-p1.4 / B1 · gateway 内置 LLM 代理）。
+#
+# 职责：把 backend 发来的 OpenAI 兼容请求（POST /llm/v1/chat/completions，body.model
+# = 真实 api_model 名）路由到对应 provider，替换 Authorization 为该 provider 的真实
+# key 后**透传**（含流式）。密钥只在网关进程 env（api_key_env 指向的环境变量），
+# 不落本文件、不进业务侧。
+#
+# 设计对齐：
+#   · 结构照搬 route-table.ts 的模式：纯函数加载 + ${ENV} 展开 + 带缓存读取。
+#   · provider 全集与 backend/config/models.yaml 的 llm_providers 一一对应（漂移会被
+#     llm-route-table.spec 的对照测试抓出）。
+#   · backend 接入是纯配置动作：models.yaml 的 llm_providers 指到网关
+#     （base_url: http://gateway:3001/llm/v1，api_key_env: INTERNAL_SHARED_SECRET），
+#     api_model 名不变——即本表 models 的键。
+#   · 分期：本表先配齐全部 14 个模型（成本一行一条，比"漏配 fail"更好排查）。
+providers:
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+  siliconflow:
+    base_url: https://api.siliconflow.cn/v1
+    api_key_env: SILICONFLOW_API_KEY
+
+models:
+  # DeepSeek 官方
+  deepseek-chat:        { provider: deepseek,    model: deepseek-chat }
+  deepseek-reasoner:    { provider: deepseek,    model: deepseek-reasoner }
+  # 硅基流动
+  deepseek-ai/DeepSeek-V3:        { provider: siliconflow, model: deepseek-ai/DeepSeek-V3 }
+  deepseek-ai/DeepSeek-R1:        { provider: siliconflow, model: deepseek-ai/DeepSeek-R1 }
+  deepseek-ai/DeepSeek-V4.1-Flash: { provider: siliconflow, model: deepseek-ai/DeepSeek-V4.1-Flash }
+  deepseek-ai/DeepSeek-V4-Flash:  { provider: siliconflow, model: deepseek-ai/DeepSeek-V4-Flash }
+  zai-org/GLM-5.3-Flash:          { provider: siliconflow, model: zai-org/GLM-5.3-Flash }
+  meituan-longcat/LongCat-2.0:    { provider: siliconflow, model: meituan-longcat/LongCat-2.0 }
+  tencent/Hy4-preview:            { provider: siliconflow, model: tencent/Hy4-preview }
+  deepseek-ai/DeepSeek-V4-Pro:    { provider: siliconflow, model: deepseek-ai/DeepSeek-V4-Pro }
+  BAAI/bge-m3:                    { provider: siliconflow, model: BAAI/bge-m3 }
+  BAAI/bge-reranker-v2-m3:        { provider: siliconflow, model: BAAI/bge-reranker-v2-m3 }
+  deepseek-ai/DeepSeek-OCR:       { provider: siliconflow, model: deepseek-ai/DeepSeek-OCR }
+  Qwen/Qwen2.5-7B-Instruct:       { provider: siliconflow, model: Qwen/Qwen2.5-7B-Instruct }

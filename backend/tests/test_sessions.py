@@ -24,7 +24,7 @@ def engine():
         c.execute(text("CREATE TABLE task (id TEXT PRIMARY KEY, session_id TEXT, complexity INTEGER, status TEXT DEFAULT 'pending', text TEXT, result TEXT, tokens_used INTEGER, pause_reason TEXT, pause_payload TEXT, retry_of TEXT, request_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, trace TEXT, feedback TEXT, feedback_tags TEXT, feedback_comment TEXT, feedback_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("CREATE TABLE wallet (user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0)"))
-        c.execute(text("CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, kind TEXT DEFAULT 'task', note TEXT, amount INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
+        c.execute(text("CREATE TABLE token_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, task_id TEXT, model TEXT, reserve INTEGER, settle INTEGER, input_tokens INTEGER, output_tokens INTEGER, cache_read INTEGER, kind TEXT DEFAULT 'task', note TEXT, amount INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"))
         c.execute(text("INSERT INTO `user` (id, employee_id, username, role, model_pool_id) VALUES (1,'EMP001','dev','admin',3)"))
         c.execute(text("INSERT INTO wallet (user_id, balance) VALUES (1, 100000)"))
     return eng
@@ -215,7 +215,16 @@ def test_trace_persisted_and_readable(client):
     SessionRepo(get_engine()).append_message(sid, "assistant", "答", trace=trace)
     msgs = client.get(f"/api/v1/sessions/{sid}/messages", headers=_auth(_token())).json()["messages"]
     assert msgs[-1]["trace"] is not None
-    assert _json.loads(msgs[-1]["trace"])[0]["type"] == "thinking_delta"
+    # v2.4.2：列表 trace 默认剥离逐字流（content_delta/thinking_delta，占 97%）
+    slim = _json.loads(msgs[-1]["trace"])
+    assert all(e["type"] not in ("content_delta", "thinking_delta") for e in slim)
+    # 完整 trace（含逐字流）经按需接口取回——数据仍完整落库，随时可回放
+    full = client.get(
+        f"/api/v1/sessions/{sid}/messages/{msgs[-1]['id']}/trace", headers=_auth(_token())
+    ).json()["trace"]
+    full_events = _json.loads(full)
+    assert full_events[0]["type"] == "thinking_delta"
+    assert any(e["type"] == "content_delta" for e in full_events)
 
 
 # ---------- p6.7 trace 过程落库 ----------
@@ -236,7 +245,16 @@ def test_trace_persisted_and_readable(client):
     SessionRepo(get_engine()).append_message(sid, "assistant", "答", trace=trace)
     msgs = client.get(f"/api/v1/sessions/{sid}/messages", headers=_auth(_token())).json()["messages"]
     assert msgs[-1]["trace"] is not None
-    assert _json.loads(msgs[-1]["trace"])[0]["type"] == "thinking_delta"
+    # v2.4.2：列表 trace 默认剥离逐字流（content_delta/thinking_delta，占 97%）
+    slim = _json.loads(msgs[-1]["trace"])
+    assert all(e["type"] not in ("content_delta", "thinking_delta") for e in slim)
+    # 完整 trace（含逐字流）经按需接口取回——数据仍完整落库，随时可回放
+    full = client.get(
+        f"/api/v1/sessions/{sid}/messages/{msgs[-1]['id']}/trace", headers=_auth(_token())
+    ).json()["trace"]
+    full_events = _json.loads(full)
+    assert full_events[0]["type"] == "thinking_delta"
+    assert any(e["type"] == "content_delta" for e in full_events)
 
 
 def test_rewind_keeps_prefix_and_drops_the_rest(client):

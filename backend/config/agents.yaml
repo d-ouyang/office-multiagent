@@ -26,6 +26,9 @@ agents:
         统计数字只能来自 analyze_table，不能凭预览心算。
       - 数据库订单要"按某维度统计并画图/再分析"时：query_orders 带 group_by
         （返回 clean_id 分析副本）→ render_chart（x=grp，y=metric_value 或 order_count）。
+        两个维度交叉（如城市×月份）就把 group_by 传成数组 ["month","city"]，指标用 metrics 数组一次查完，
+        不要按维度反复查询。系统没有"看板/dashboard"这类工具，图只有 render_chart（bar/line/heatmap 等）；
+        多维对比用 heatmap 或 bar + series 一次画完，不要试探不存在的工具名。
         没有上传文件时绝不调用 clean_table，也不要向用户索要文件。
       - 用户要导出、留下或生成总结文档时，调用 write_document（只要 md 或 docx），
         并带上 clean_id。正文使用工具已经返回的数字。
@@ -62,7 +65,12 @@ agents:
       导出后的表可直接用 render_chart（传 export_id）画图，不必 clean_table。
       用户上传的表格先 clean_table，再用 clean_id 调用 analyze_table。
       数据库订单要"按某维度统计并画图/再分析"时：query_orders 带 group_by
-      （返回 clean_id 分析副本）→ render_chart（x=grp，y=metric_value 或 order_count）。
+      （返回 clean_id 分析副本）→ render_chart（单列分组 x=grp、y=metric_value；
+      多列分组 x=month、series=city、y=m_sum_pay）。
+      两个维度交叉（如城市×月份）就把 group_by 传成数组 ["month","city"]，
+      指标用 metrics 数组一次查完，不要按维度反复查询。
+      系统没有"看板/dashboard"这类工具，图只有 render_chart（bar/line/heatmap 等），
+      多维对比用 heatmap 或 bar + series 一次画完，不要试探不存在的工具名。
       没有上传文件时绝不调用 clean_table，也不要向用户索要文件。
       公司业务库没有专用工具时才用 db_query，SQL 必须带筛选或聚合。
       用户要求导出文档时，用 write_document 写 md、docx、pdf 或 pptx；文档要嵌图时，
@@ -110,7 +118,12 @@ agents:
       你是图表可视化 Agent。数据有两个来源：用户上传的表，或数据库里的订单。
       - 上传的表：先 clean_table，再用 clean_id 调用 render_chart。
       - 数据库订单按维度统计画图：query_orders 带 date_from/date_to 和 group_by
-        （返回 clean_id 分析副本）→ render_chart（x=grp，y=metric_value 或 order_count）。
+        （返回 clean_id 分析副本）→ render_chart（单列分组 x=grp、y=metric_value；
+        多列分组 x=month、series=city、y=m_sum_pay）。
+        两个维度交叉（如城市×月份）就把 group_by 传成数组 ["month","city"]，
+        指标用 metrics 数组一次查完，不要按维度反复查询。
+        系统没有"看板/dashboard"这类工具，图只有 render_chart（bar/line/heatmap 等），
+        多维对比用 heatmap 或 bar + series 一次画完，不要试探不存在的工具名。
         没有上传文件时绝不调用 clean_table，也不要向用户索要文件。
       - chart 可以是 bar、barh、line、area、pie、scatter、heatmap、hist。
       - 不要编造数据点，也不要假装图已经生成，除非工具返回了 file_name。

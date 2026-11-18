@@ -32,17 +32,27 @@ export function ProcessTrace({
   steps,
   durationMs,
   streaming,
+  onExpand,
+  loadingExtra,
 }: {
   steps: ProcessStep[];
   durationMs?: number;
   streaming: boolean;
+  /** v2.4.2：面板从收起 → 展开时触发一次（思考过程按需加载挂在这里） */
+  onExpand?: () => void;
+  loadingExtra?: boolean;
 }) {
   const [open, setOpen] = useState(streaming);
-  if (!steps.length) return null;
+  if (!steps.length && !loadingExtra) return null;
   const title = streaming ? '进行中' : durationMs != null ? `已完成 ${formatDuration(durationMs)}` : '过程';
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && onExpand) onExpand();   // 收起 → 展开（含首次）时触发；收起不触发
+  };
   return (
     <div className="process">
-      <button type="button" className="fold-head" onClick={() => setOpen((v) => !v)}>
+      <button type="button" className="fold-head" onClick={toggle}>
         <span className={`arrow ${open ? 'open' : ''}`}>▸</span>
         {title}
         {streaming && <span className="live-dot" />}
@@ -50,6 +60,7 @@ export function ProcessTrace({
       </button>
       {open && (
         <div className="process-body">
+          {loadingExtra && <div className="thinking-loading">思考过程加载中…</div>}
           {steps.map((step, index) => {
             if (step.kind === 'thinking') {
               return <ThinkingBlock key={`t-${index}`} text={step.text} durationMs={step.durationMs} />;

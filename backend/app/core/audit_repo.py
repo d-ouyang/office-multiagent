@@ -48,6 +48,8 @@ ACTION_LABELS: Final[dict[str, str]] = {
     # 用户与额度
     "admin.recharge": "给用户充值",
     "admin.user.pool.change": "分配用户模型池",
+    # v2.2.0-p1.8（C2）：死信——编排异常未被暂停/完成语义接住时登记，管理端可查
+    "run.dead_letter": "任务异常死信",
     # 模型池
     "admin.pool.create": "新建模型池",
     "admin.pool.delete": "删除模型池",

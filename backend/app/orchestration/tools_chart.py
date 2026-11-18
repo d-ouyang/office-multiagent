@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import re
+
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .orders_seed import COLUMN_LABELS
 from .tools_store import finish_output, new_output_id, output_file
 from .tools_table import _as_list, _load_clean, _match_filter, _parse_number
 
@@ -61,9 +63,35 @@ def _columns(value: Any) -> list[str]:
     return [str(item) for item in _as_list(value)]
 
 
+#: 指标列别名（v2.4.1）。query_orders 的列名随分组列数变化：
+#:   单列分组（group_by=month）→ grp / order_count / **metric_value**
+#:   多列分组（group_by=month,city）→ month / city / order_count / **m_sum_pay**
+#: 模型经常混用（真跑 2026-11-17：y 填 metric_value，而实际列是 m_sum_pay，
+#: 整条任务卡在"数值列不存在"）。这里做一次兜底解析，别让用户为列名重来一遍。
+_Y_ALIASES = ("metric_value", "value", "metric", "y", "amount", "pay_amount")
+
+
+def _resolve_column(name: str, headers: list[str]) -> str:
+    """把模型惯用的别名映射到实际列名；解析不了就原样返回，交给 _require 报错。"""
+    if not name or name in headers:
+        return name
+    if name in _Y_ALIASES:
+        metric_cols = [h for h in headers if h.startswith("m_")]
+        if len(metric_cols) == 1:  # 只有一个指标列时无歧义，直接用
+            return metric_cols[0]
+    if name.startswith("m_") and name[2:] in headers:
+        return name[2:]
+    if f"m_{name}" in headers:
+        return f"m_{name}"
+    return name
+
+
 def _require(headers: list[str], name: str, label: str) -> None:
     if not name or name not in headers:
-        raise ValueError(f"{label}不存在：{name or '（未填）'}。现有列：{'、'.join(headers)}")
+        # 列名缺失最常见的原因是"单列/多列分组的指标列名不同"，把正确写法直接告诉模型
+        metric_cols = [h for h in headers if h.startswith("m_")]
+        hint = f"。多列分组时指标列名带 m_ 前缀，如 {metric_cols[0]}" if metric_cols else ""
+        raise ValueError(f"{label}不存在：{name or '（未填）'}。现有列：{'、'.join(headers)}{hint}")
 
 
 def _reduce(values: list[float], agg: str) -> float | None:
@@ -193,6 +221,8 @@ def _draw(path: Path, chart: str, title: str, payload: dict[str, Any], *, fmt: s
 def _prepare(records: list[dict[str, str]], headers: list[str], chart: str, x: str, y_cols: list[str], series: str, agg: str, top_n: int, bins: int) -> tuple[dict[str, Any], int, int]:
     skipped = 0
     used = 0
+    # v2.4.1：先把别名解析成实际列名（metric_value → m_sum_pay），再进各图表分支校验
+    y_cols = [_resolve_column(col, headers) for col in y_cols]
     if chart == "hist":
         column = y_cols[0] if y_cols else x
         _require(headers, column, "直方图的列")
@@ -325,6 +355,35 @@ def chart_visual(kind: str, title: str, payload: dict[str, Any]) -> dict[str, An
     return spec
 
 
+# 2.1.0：指标/字段中文映射——图表轴标签与标题面向用户，不再出现 grp/m_sum_pay/query_orders
+_METRIC_ZH = {
+    "count": "订单数",
+    "sum_pay": "实付金额",
+    "sum_total": "订单总额",
+    "sum_discount": "优惠金额",
+    "sum_refund": "退款金额",
+    "avg_pay": "客单价",
+    "sum_goods": "商品件数",
+    "sum_goods_amount": "商品金额",
+    "sum_delivery_fee": "配送费",
+    "sum_packing_fee": "包装费",
+    "sum_coupon": "券面额",
+    "sum_points": "积分",
+}
+
+
+def _zh_col(col: str, meta: dict) -> str:
+    """列名 → 中文标注：grp=分组维度名，m_<指标>=指标中文名，其余走 COLUMN_LABELS。"""
+    c = str(col)
+    if c == "grp":
+        return COLUMN_LABELS.get(str(meta.get("group_by") or ""), "分组")
+    if c == "order_count":
+        return "订单数"
+    if c.startswith("m_"):
+        return _METRIC_ZH.get(c[2:], c[2:])
+    return COLUMN_LABELS.get(c, c)
+
+
 def _load_table(base: Path, table_id: str) -> tuple[list[str], list[list[str]], dict[str, Any]]:
     """p6.30：clean_id（清洗表）与 export_id（订单明细导出）统一加载入口。"""
     if _EXPORT_ID_RE.match(table_id or ""):
@@ -383,7 +442,22 @@ def make_render_chart_tool(
         limit = max(3, min(int(top_n or 12), 30))
         bin_count = max(3, min(int(bins or 10), 30))
         payload, used, skipped = _prepare(matched, headers, kind, str(x or ""), y_cols, serie, how, limit, bin_count)
-        heading = (title or f"{meta.get('source') or '图表'}").strip()[:40] or "图表"
+        # 2.1.0：轴标签中文化（grp/指标列 → 中文）+ series 名映射
+        if "xlabel" in payload:
+            payload["xlabel"] = _zh_col(payload["xlabel"], meta)
+        if "ylabel" in payload:
+            payload["ylabel"] = _zh_col(payload["ylabel"], meta)
+        if isinstance(payload.get("series"), list):
+            for se in payload["series"]:
+                if isinstance(se, dict) and se.get("name"):
+                    se["name"] = _zh_col(str(se["name"]), meta)
+        # 标题兜底：模型传了工具名/英文名（无中文字符）或没传 → 用维度+指标生成中文标题
+        title_in = (title or "").strip()
+        if not re.search(r"[\u4e00-\u9fff]", title_in):
+            dim = _zh_col("grp", meta) if meta.get("group_by") else ""
+            met = _zh_col(f"m_{(meta.get('metrics') or [meta.get('metric') or 'count'])[0]}", meta)
+            title_in = f"按{dim}的{met}" if dim else f"{met}概览"
+        heading = title_in.strip()[:40] or "图表"
         doc_id = new_output_id("g")
         filename = f"{doc_id}.svg"
         target = output_file(base, filename)

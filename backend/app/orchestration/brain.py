@@ -19,6 +19,7 @@ from typing import Any, Protocol
 
 from ..core.config import settings
 from ..core.llm import (
+    ContextOverflowError,
     LlmError,
     LlmResult,
     chat as default_chat,
@@ -26,6 +27,7 @@ from ..core.llm import (
     resolve_model,
 )
 from ..core.token_budget import TaskTokenBudget
+from .context_budget import budget_steps
 from .react import Brain, Step, StubBrain
 from .tools import ToolRegistry
 
@@ -34,6 +36,34 @@ logger = logging.getLogger(__name__)
 
 def looks_like_json(text: str) -> bool:
     return (text or "").lstrip().startswith("{")
+
+
+def _overflow_final_text() -> str:
+    """上下文超限后的用户可见文案（v2.3.0-p1.2）。
+
+    说清"发生了什么 + 该怎么办"，不甩 provider 原文——用户看到 `maximum context
+    length is 131072 tokens` 只会来问人，看到"把文档拆小"才会自己解决。
+    """
+    return (
+        "这次任务要处理的内容超出了模型一次能接收的范围（已自动压缩一次仍未通过）。"
+        "建议把文档拆小、或分成几步来问——已查到的结果不受影响。"
+    )
+
+
+def history_step_limit(limit: int | None = None) -> int:
+    """v2.3.0-p1.0：历史渲染时每步观察的上限（0=不限）。
+
+    两条协议（JSON / 原生 tool_calls）共用同一个值——否则灰度期同一任务换协议
+    就换行为，排障无法归因。显式参数 > 运行时设置 > 配置缺省。
+    """
+    if limit is not None:
+        return max(0, int(limit))
+    try:
+        from ..core import runtime_settings
+
+        return max(0, int(runtime_settings.effective("history_step_max_chars")))
+    except Exception:  # noqa: BLE001 - 设置读失败回落代码缺省
+        return max(0, int(settings.history_step_max_chars))
 
 
 def resolve_react_protocol(mode: str | None, model_id: str, tools: ToolRegistry) -> str:
@@ -78,8 +108,10 @@ def resolve_react_protocol(mode: str | None, model_id: str, tools: ToolRegistry)
 #: p6.7：显式禁止 action=none/无效名（真跑见证 LLM 幻觉 "none" 导致空转终止）。
 _PROTOCOL_TMPL = """你的每一步【只能二选一输出】：
   A. 需要调用工具：输出一个 JSON 对象（除此之外不要有任何文字）：
-     {{"thought": "你的思考", "action": "工具名", "action_input": {{...}}}}
+     {{"thought": "一句话判断", "action": "工具名", "action_input": {{...}}}}
      action 只能是上面工具清单里的名字，禁止使用 "none" 或任何不存在的工具名。
+     thought 只写"我要做什么/为什么"一句（不超过 80 字），**不要复述数据、不要罗列字段清单**——
+     真跑见证（v2.4.1）：thought 越写越长会把整个 JSON 撑到截断，任务直接判"无法解析"。
   B. 任务已完成：直接写面向用户的最终回答（自然语言，中文，可直接使用；不要包 JSON、不要复述结构）
      总结/分析/问答/整理类任务不需要调用任何工具——直接把答案写给用户。
 
@@ -89,6 +121,8 @@ _PROTOCOL_TMPL = """你的每一步【只能二选一输出】：
 纪律：
   · 工具不存在/调用失败/观察结果为空时，在最终回答里【如实说明】，绝不编造数据或结论。
   · 观察里已经有报表、数字或正文时，下一步按 B 写分析和建议，不要用相同参数再调同一个工具。
+  · 结果里 `truncated=true` 或带 `truncated_hint` 时：**先说明"只拿到多少、总共多少"**，
+    再决定是补查（加筛选/换维度）还是就此下结论——不要把截断结果当成完整数据。
   · 数据确实缺失时，说明缺什么并停止。不要自己发明新的取数流程，也不要反复重试同一个工具。
   · 尽快给出最终回答，通常不超过 {max_steps} 步。
   · 绝不允许出现 "action": "none" / "action": null——想结束就按 B 直接写答案。
@@ -106,28 +140,84 @@ _TOOLCALLS_TMPL = """你可以通过 function calling 调用上面传入的工�
 """
 
 
+#: 尾逗号：模型在 JSON 最后一项后多写一个逗号是高频错误（`{"a":1,}`）
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def _loads_lenient(raw: str) -> dict[str, Any] | None:
+    """尽量把一段文本解析成 dict：容忍字符串内控制字符与尾逗号。
+
+    为什么宽容（v2.4.1）：模型偶尔在 JSON 字符串里放裸换行、或末项后多一个逗号，
+    严格 `json.loads` 直接失败 → 整条任务被判"模型输出无法解析"终止。
+    真跑见证（2026-11-17 多维图表卡片）：3 次里 1 次死在这里，而模型其实给出了完整决策。
+    """
+    for candidate in (raw, _TRAILING_COMMA_RE.sub(r"\1", raw)):
+        try:
+            data = json.loads(candidate, strict=False)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _balanced_object(text: str) -> str | None:
+    """截出第一个配平的 `{...}`（跳过字符串内的括号与转义）。
+
+    为什么不用 `rfind("}")`：模型常在 JSON 后追加一句说明、甚至再给一个示例对象，
+    取"第一个 { 到最后一个 }"会把两段黏在一起。
+    """
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
 def extract_json(text: str) -> dict[str, Any] | None:
-    """从 LLM 回复里提取第一个 JSON 对象；失败返回 None（不猜、不编）。"""
+    """从 LLM 回复里提取第一个 JSON 对象；失败返回 None（不猜、不编）。
+
+    四层尝试（v2.4.1 补齐后两层）：全文 → ```json 代码块 → 配平括号截取 → 去尾逗号。
+    """
     s = (text or "").strip()
-    try:
-        data = json.loads(s)
-        return data if isinstance(data, dict) else None
-    except (json.JSONDecodeError, ValueError):
-        pass
+    if not s:
+        return None
+    found = _loads_lenient(s)
+    if found is not None:
+        return found
     m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", s, re.DOTALL)
     if m:
-        try:
-            data = json.loads(m.group(1))
-            return data if isinstance(data, dict) else None
-        except (json.JSONDecodeError, ValueError):
-            pass
+        found = _loads_lenient(m.group(1))
+        if found is not None:
+            return found
+    balanced = _balanced_object(s)
+    if balanced:
+        found = _loads_lenient(balanced)
+        if found is not None:
+            return found
     start, end = s.find("{"), s.rfind("}")
     if start != -1 and end > start:
-        try:
-            data = json.loads(s[start : end + 1])
-            return data if isinstance(data, dict) else None
-        except (json.JSONDecodeError, ValueError):
-            return None
+        return _loads_lenient(s[start : end + 1])
     return None
 
 
@@ -182,6 +272,7 @@ class LlmBrain:
         reasoning_effort: str | None = None,
         token_budget: TaskTokenBudget | None = None,
         protocol: str | None = None,
+        history_budget: int = 0,
     ) -> None:
         self.model_id = model_id
         self._tools = tools
@@ -195,6 +286,10 @@ class LlmBrain:
         self._on_thought = on_thought
         self._effort = reasoning_effort or None
         self._token_budget = token_budget
+        # v2.3.0-p1.1：单次请求给历史用的 token 预算（0=不限，回退到逐条截断）。
+        # 由 graph 按"模型窗口 × 百分比"注入——放在 brain 上是因为渲染在 brain 里发生，
+        # 而预算属于任务上下文（同一任务的多步共享同一个值）。
+        self._history_budget = max(0, int(history_budget))
         # v2.0.0-p1.3：协议解析一次定终身（构造时按 model+工具集判定，运行期不变）。
         self.protocol = resolve_react_protocol(protocol, model_id, tools)
         self.usage: dict[str, int] = {
@@ -221,37 +316,96 @@ class LlmBrain:
         role = self._custom_system or "你是企业办公助手系统中一个业务 Agent（ReAct 模式）。"
         return f"{role}\n\n{_PROTOCOL_TMPL.format(tools=tools, max_steps=self._max_steps_hint)}"
 
+    def _obs_limit(self) -> int:
+        """v2.3.0-p1.0：本实例渲染历史时用的观察上限（见模块级 history_step_limit）。"""
+        return history_step_limit()
+
     @staticmethod
-    def _render_history(history: list[Step]) -> str:
+    def _squeeze_budget(budget: int) -> int:
+        """超限后的紧急预算：腰斩，但不低于 1000；原本不限则给 4000。
+
+        为什么不一压到底：压缩太狠会让模型"忘掉"已经查过的数据，重试成功也答不对；
+        腰斩是"再给一次机会"，不是"保证过"。
+        """
+        if budget <= 0:
+            return 4000
+        return max(1000, budget // 2)
+
+    def _desired_output(self) -> int:
+        """本次调用预留多少输出 token（v2.4.2）。
+
+        为什么不能"按步骤分档"：ReAct 的每次调用**无法预知**是"给 JSON 决策"
+        还是"直接给终答"——同一个入口，模型自己决定。按步骤给 1024 会把长回答腰斩。
+        所以改为**按剩余预算自适应**：预算充足就给满 8192（保证长答），
+        预算吃紧时主动降到一半，避免"还没写就先把额度占死"导致提前 paused_budget。
+        """
+        full = 8192
+        try:
+            remaining = int(self._token_budget.remaining)
+        except Exception:  # noqa: BLE001 - 预算不可读时按满额
+            return full
+        if remaining < full * 2:
+            return max(1024, remaining // 2)
+        return full
+
+    def _with_overflow_retry(
+        self,
+        call: Callable[[list[dict[str, Any]]], LlmResult],
+        build: Callable[[int], list[dict[str, Any]]],
+        budget: int,
+    ) -> LlmResult:
+        """调模型；上下文超限时压缩历史、重建 messages 再试一次（v2.3.0-p1.2）。
+
+        只重试一次：压缩有损，连压两次的收益远小于"如实失败 + 给用户可操作的提示"；
+        也避免 provider 持续拒绝时把预算烧光。
+        """
+        try:
+            return call(build(budget))
+        except ContextOverflowError as e:
+            squeezed = self._squeeze_budget(budget)
+            logger.warning(
+                "上下文超限，压缩历史后重试一次（预算 %s → %s）| %s", budget, squeezed, e
+            )
+            return call(build(squeezed))
+
+    @staticmethod
+    def _render_history(
+        history: list[Step], limit: int | None = None, budget: int = 0
+    ) -> str:
+        """把历史步骤渲染成一段文本。
+
+        limit=None 取运行时设置（0=不截）；budget>0 时按 token 预算降级旧步
+        （v2.3.0-p1.1），0=不限、行为与 p1.0 完全一致（回退路径）。
+        """
         if not history:
             return "（尚无步骤）"
-        lines = []
-        for i, st in enumerate(history, 1):
-            line = f"{i}. 思考：{st.thought or '（无）'}"
-            if st.action:
-                line += f" | 动作：{st.action}({json.dumps(st.action_input, ensure_ascii=False)})"
-            if st.observation is not None:
-                # p6.9：400 → 24000——原 400 字截断让 LLM"通读"时只看到文档开头
-                # （真跑见证：2 万字文档读到"一句话价值"即断，LLM 以为工具只返回片段）
-                obs = st.observation[:24000]
-                line += f" | 观察：{obs}{'…（已截断）' if len(st.observation) > 24000 else ''}"
-            lines.append(line)
-        return "\n".join(lines)
+        plan = budget_steps(history, budget, step_cap=history_step_limit(limit))
+        return "\n".join(plan.lines)
 
     def next_step(self, task: str, history: list[Step]) -> Step:  # noqa: D102 - 见类注释
         if self.protocol == "tool_calls":
             return self._next_step_tool_calls(task, history)
-        messages = [
-            {"role": "system", "content": self._system_prompt()},
-            {
-                "role": "user",
-                "content": f"任务：{task}\n\n已执行步骤：\n{self._render_history(history)}\n\n请给出下一步 JSON。",
-            },
-        ]
+        def _build(budget: int) -> list[dict[str, Any]]:
+            return [
+                {"role": "system", "content": self._system_prompt()},
+                {
+                    "role": "user",
+                    "content": (
+                        f"任务：{task}\n\n已执行步骤：\n"
+                        f"{self._render_history(history, self._obs_limit(), budget)}\n\n"
+                        "请给出下一步 JSON。"
+                    ),
+                },
+            ]
+
+        messages = _build(self._history_budget)
         if self._stream:
-            return self._next_step_streaming(messages)
+            # v2.3.0-p1.2：流式也要能重放——400 在首块之前返回，此时还没推过任何字
+            return self._next_step_streaming(_build, self._history_budget)
         reservation = (
-            self._token_budget.reserve_call(messages)
+            self._token_budget.reserve_call(
+                messages, desired_output_tokens=self._desired_output()
+            )
             if self._token_budget is not None
             else None
         )
@@ -262,12 +416,18 @@ class LlmBrain:
             }
             if reservation is not None:
                 kwargs["max_tokens"] = reservation.max_output_tokens
-            res = self._chat(self.model_id, messages, **kwargs)
+            res = self._with_overflow_retry(
+                lambda msgs: self._chat(self.model_id, msgs, **kwargs),
+                _build,
+                self._history_budget,
+            )
         except Exception as e:
             if reservation is not None:
                 reservation.cancel()
             if not isinstance(e, LlmError):
                 raise
+            if isinstance(e, ContextOverflowError):
+                return Step(thought="上下文超限", final=_overflow_final_text())
             logger.warning("LLM brain 调用失败，如实给阶段结论 | %s", e)
             return Step(thought="模型调用失败", final=f"模型暂不可用，无法继续完成该任务：{e}")
         if reservation is not None:
@@ -278,7 +438,10 @@ class LlmBrain:
         if data is None:
             if looks_like_json(res.content):
                 # 以 { 开头但不是合法 JSON → 真解析失败，如实停止（不编造）
-                logger.warning("LLM brain 输出无法解析为 JSON，如实停止（不编造）")
+                logger.warning(
+                    "LLM brain 输出无法解析为 JSON，如实停止（不编造）| raw=%r",
+                    (res.content or "")[:300],
+                )
                 return Step(
                     thought="模型输出无法解析",
                     final="模型输出无法解析为决策 JSON，已停止本次任务（未编造结论）。请稍后重试。",
@@ -288,8 +451,14 @@ class LlmBrain:
             return Step(thought="", final=res.content, streamed=False)
         return self._step_from_json(data, thought_streamed=False)
 
-    def _next_step_streaming(self, messages: list[dict[str, str]]) -> Step:
-        """p6.3：流式下一步。自然语言输出边收边推 on_content；JSON 等完整解析。"""
+    def _next_step_streaming(
+        self, build_messages: Callable[[int], list[dict[str, Any]]], budget: int
+    ) -> Step:
+        """p6.3：流式下一步。自然语言输出边收边推 on_content；JSON 等完整解析。
+
+        v2.3.0-p1.2：接收 build 函数而非成品 messages——上下文超限时要能以更小的预算
+        重建消息并重放一次（400 发生在首块之前，此时一个 chunk 都还没推给用户）。
+        """
         parts: list[str] = []
         thought_streamed = False
 
@@ -305,8 +474,11 @@ class LlmBrain:
             if self._on_content is not None and not looks_like_json("".join(parts)):
                 self._on_content(c)
 
+        messages = build_messages(budget)
         reservation = (
-            self._token_budget.reserve_call(messages)
+            self._token_budget.reserve_call(
+                messages, desired_output_tokens=self._desired_output()
+            )
             if self._token_budget is not None
             else None
         )
@@ -319,12 +491,20 @@ class LlmBrain:
             }
             if reservation is not None:
                 kwargs["max_tokens"] = reservation.max_output_tokens
-            res = self._chat_stream(self.model_id, messages, **kwargs)
+            res = self._with_overflow_retry(
+                lambda msgs: self._chat_stream(self.model_id, msgs, **kwargs),
+                build_messages,
+                budget,
+            )
         except Exception as e:
             if reservation is not None:
                 reservation.cancel()
             if not isinstance(e, LlmError):
                 raise
+            parts.clear()  # 重试前可能已收过思考片段，不能混进终答
+            if isinstance(e, ContextOverflowError):
+                logger.warning("上下文超限且压缩重试仍失败 | %s", e)
+                return Step(thought="上下文超限", final=_overflow_final_text())
             logger.warning("LLM brain 流式调用失败，如实给阶段结论 | %s", e)
             return Step(thought="模型调用失败", final=f"模型暂不可用，无法继续完成该任务：{e}")
         if reservation is not None:
@@ -337,7 +517,7 @@ class LlmBrain:
             return Step(thought="", final=text, streamed=True)
         data = extract_json(text)
         if data is None:
-            logger.warning("LLM brain 输出无法解析为 JSON，如实停止（不编造）")
+            logger.warning("LLM brain 输出无法解析为 JSON，如实停止（不编造）| raw=%r", text[:300])
             return Step(
                 thought="模型输出无法解析",
                 final="模型输出无法解析为决策 JSON，已停止本次任务（未编造结论）。请稍后重试。",
@@ -352,24 +532,32 @@ class LlmBrain:
         return f"{role}\n\n{_TOOLCALLS_TMPL.format(max_steps=self._max_steps_hint)}"
 
     @staticmethod
-    def _messages_for_tool_calls(task: str, history: list[Step]) -> list[dict[str, Any]]:
+    def _messages_for_tool_calls(
+        task: str, history: list[Step], limit: int | None = None, budget: int = 0
+    ) -> list[dict[str, Any]]:
         """历史消息形态：assistant(tool_calls) → tool(tool_call_id)。
 
         红线（历史双写禁忌）：tool_calls 路径绝不把观察拼进 user 文本——观察只走
         role=tool 消息；同一轮也不存在两种历史形态。
+        v2.3.0-p1.0：观察上限与 JSON 协议同源；p1.1 起预算判定也同源——用
+        `plan.obs_text` 决定每步发原文还是降级文案，被整块省掉的步连 assistant 一起不发。
         """
+        plan = budget_steps(history, budget, step_cap=history_step_limit(limit))
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": ""},
             {"role": "user", "content": f"任务：{task}"},
         ]
         for i, st in enumerate(history, 1):
+            body = plan.obs_text.get(i)
+            if body is None:  # 预算省掉的步
+                continue
             if st.action is None:
                 # 2.1.0 P1-1n hotfix：无工具调用的观察步（HITL 续跑 seed"用户已补充输入：…"）
                 # 以 user 消息进入——生产实测该 Step 被跳过导致模型永远收不到用户回答，
                 # 在 ask_user 后直接给终答。seed 是用户说的话，走 user 消息语义正确；
                 # 工具观察仍只走 role=tool（红线不变）。
-                if st.observation:
-                    messages.append({"role": "user", "content": st.observation})
+                if body:
+                    messages.append({"role": "user", "content": body})
                 continue
             if st.observation is None:
                 continue
@@ -389,7 +577,7 @@ class LlmBrain:
             messages.append({
                 "role": "tool",
                 "tool_call_id": call_id,
-                "content": (st.observation or "")[:24000],
+                "content": body,
             })
         return messages
 
@@ -406,46 +594,58 @@ class LlmBrain:
         return Step(thought=res.content or "", calls=calls, streamed=streamed)
 
     def _next_step_tool_calls(self, task: str, history: list[Step]) -> Step:
-        messages = self._messages_for_tool_calls(task, history)
-        messages[0]["content"] = self._toolcalls_system_prompt()
+        def _build(budget: int) -> list[dict[str, Any]]:
+            msgs = self._messages_for_tool_calls(task, history, self._obs_limit(), budget)
+            msgs[0]["content"] = self._toolcalls_system_prompt()
+            return msgs
+
+        messages = _build(self._history_budget)
         tools_api = self._tools.describe_openai()
         reservation = (
-            self._token_budget.reserve_call(messages)
+            self._token_budget.reserve_call(
+                messages, desired_output_tokens=self._desired_output()
+            )
             if self._token_budget is not None
             else None
         )
-        try:
-            kwargs: dict[str, Any] = {
-                "timeout": self._timeout,
-                "reasoning_effort": self._effort,
-                "tools": tools_api,
-            }
-            if reservation is not None:
-                kwargs["max_tokens"] = reservation.max_output_tokens
+        kwargs: dict[str, Any] = {
+            "timeout": self._timeout,
+            "reasoning_effort": self._effort,
+            "tools": tools_api,
+        }
+        if reservation is not None:
+            kwargs["max_tokens"] = reservation.max_output_tokens
+        if self._stream:
+            thought_parts: list[str] = []
+
+            def _on_chunk(piece: str) -> None:
+                thought_parts.append(piece)
+                # tool_calls 路径：正文先按"可能是终答"逐字推（真打字机）。
+                # 若流末发现模型其实带了 tool_calls，已推片段归为思考（厂商惯例
+                # 工具轮 content 为空；见迭代文档已知限制）。
+                if self._on_content is not None:
+                    self._on_content(piece)
+
+            kwargs.update({
+                "on_chunk": _on_chunk,
+                "on_thought": self._on_thought,
+                "on_tool_call": lambda _call: None,
+            })
+
+        def _call(msgs: list[dict[str, Any]]) -> LlmResult:
             if self._stream:
-                thought_parts: list[str] = []
+                return self._chat_stream(self.model_id, msgs, **kwargs)
+            return self._chat(self.model_id, msgs, **kwargs)
 
-                def _on_chunk(piece: str) -> None:
-                    thought_parts.append(piece)
-                    # tool_calls 路径：正文先按"可能是终答"逐字推（真打字机）。
-                    # 若流末发现模型其实带了 tool_calls，已推片段归为思考（厂商惯例
-                    # 工具轮 content 为空；见迭代文档已知限制）。
-                    if self._on_content is not None:
-                        self._on_content(piece)
-
-                kwargs.update({
-                    "on_chunk": _on_chunk,
-                    "on_thought": self._on_thought,
-                    "on_tool_call": lambda _call: None,
-                })
-                res = self._chat_stream(self.model_id, messages, **kwargs)
-            else:
-                res = self._chat(self.model_id, messages, **kwargs)
+        try:
+            res = self._with_overflow_retry(_call, _build, self._history_budget)
         except Exception as e:
             if reservation is not None:
                 reservation.cancel()
             if not isinstance(e, LlmError):
                 raise
+            if isinstance(e, ContextOverflowError):
+                return Step(thought="上下文超限", final=_overflow_final_text())
             logger.warning("LLM brain（%s 协议）调用失败，如实给阶段结论 | %s", self.protocol, e)
             return Step(thought="模型调用失败", final=f"模型暂不可用，无法继续完成该任务：{e}")
         if reservation is not None:
@@ -489,6 +689,7 @@ def make_brain(
     reasoning_effort: str | None = None,
     token_budget: TaskTokenBudget | None = None,
     protocol: str | None = None,
+    history_budget: int = 0,
 ) -> Brain:
     """配置驱动的 Brain 工厂：模型+密钥就绪 → LlmBrain；否则回落 StubBrain（可测基线）。
 
@@ -523,4 +724,5 @@ def make_brain(
         reasoning_effort=reasoning_effort,
         token_budget=token_budget,
         protocol=protocol,
+        history_budget=history_budget,
     )

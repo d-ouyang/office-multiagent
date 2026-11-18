@@ -19,8 +19,10 @@ _CLEAN_ID = re.compile(r"^c-[0-9a-f]{16}$")
 _NULL_TOKENS = {"null", "none", "n/a", "na", "nan", "-", "—", "无", "空", "nil"}
 _AGGS = {"count", "sum", "mean", "min", "max", "count_distinct"}
 _OPS = {"eq", "ne", "contains", "gt", "gte", "lt", "lte", "in", "not_in"}
-_PREVIEW = 5
-_MAX_GROUPS = 100
+_PREVIEW = 20  # v2.4.2: 5 → 20（5 行看不出表格结构，模型容易误判为无数据）
+#: 聚合分组数上限（v2.4.1：100 → 500，与 settings.aggregate_max_groups 对齐）。
+#: 原值 100 对"门店×月份"这类交叉分组不够用，会静默缺组。
+_MAX_GROUPS = 500
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -377,6 +379,13 @@ def make_analyze_table_tool(*, base_dir: str, owner: str | None = None) -> Calla
             "group_by": groups,
             "groups": result_rows[:cap],
             "truncated": len(result_rows) > cap,
+            "group_count": len(result_rows),
+            # v2.4.1：截断要让模型能说清"给了多少/共多少"，而不是当作全部
+            "truncated_hint": (
+                f"共 {len(result_rows)} 组，只返回前 {cap} 组；请先说明这一点，再按需缩小维度或加筛选"
+                if len(result_rows) > cap
+                else None
+            ),
             "skipped_non_numeric": skipped,
             "note": "数字只来自清洗后的表。不能转成数字的格子已从 sum/mean/min/max 中跳过，没有当成 0。",
         }

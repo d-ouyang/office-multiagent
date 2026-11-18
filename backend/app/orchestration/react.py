@@ -46,35 +46,58 @@ class Step:
     parse_error: str | None = None  # p1.2 落下的 arguments 解析错误（该 call 不真执行）
 
 
-def _summarize_observation(obs: Any, *, max_chars: int = 24000) -> str:
+def _obs_max_chars() -> int:
+    """v2.3.0-p1.0：单步观察写进 history 的上限（0=不限）。
+
+    热开关优先（管理端可调，下一个任务生效），读不到就回落配置——设置层不该阻断任务。
+    """
+    try:
+        from ..core import runtime_settings
+
+        return max(0, int(runtime_settings.effective("observation_max_chars")))
+    except Exception:  # noqa: BLE001 - 设置读失败回落代码缺省
+        from ..core.config import settings
+
+        return max(0, int(settings.observation_max_chars))
+
+
+def _summarize_observation(obs: Any, *, max_chars: int | None = None) -> str:
     """p6.7：工具结果进 LLM 上下文的可读摘要——不是 str(dict) 全文。
     p6.9：content 截断 1200 → 24000（read_document max_chars 同步 50000，
     "通读整篇"场景 2 万字文档全量进上下文；deepseek-chat 128K 装得下）。
+    v2.3.0-p1.0：上限不再写死——max_chars=None 走运行时设置，0 表示不限制
+    （回退开关：线上出问题时改配置即刻回到旧行为，不必发版）。
 
     原实现把含 8000 字 content 的 dict repr 原样塞进 history，LLM 下一轮上下文
     被垃圾撑爆（真跑见证：read_document 成功后 LLM 幻觉出 action="none"）。
     现在：dict 取关键字段、content 截断、截断如实标注。
     """
+    limit = _obs_max_chars() if max_chars is None else max(0, int(max_chars))
+    field_cap = 10**9 if limit == 0 else min(8000, limit)
+    total_cap = 10**9 if limit == 0 else limit * 2
     if isinstance(obs, dict):
         parts = []
         for key, value in obs.items():
             if key == "content" and isinstance(value, str):
-                shown = value[:max_chars]
+                shown = value if limit == 0 else value[:limit]
                 tail = (
-                    f"…（原文共 {obs.get('total_chars', len(value))} 字，已截断展示）"
-                    if len(value) > max_chars
+                    # v2.4.2：不只说"被截断"，还要说"怎么继续拿"——否则模型只知道信息不全，
+                    # 却不知道 read_document 支持 offset 续读 / headings 定位
+                    f"…（原文共 {obs.get('total_chars', len(value))} 字，已截断展示；"
+                    "需要更多就对同一文件传 offset 续读，或先看 headings 定位章节）"
+                    if limit > 0 and len(value) > limit
                     else ""
                 )
                 parts.append(f"content={shown}{tail}")
                 continue
             rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
-            if len(rendered) > 8000:
-                rendered = rendered[:8000] + "…（已截断）"
+            if len(rendered) > field_cap:
+                rendered = rendered[:field_cap] + "…（已截断）"
             parts.append(f"{key}={rendered}")
         text = "；".join(parts)
     else:
         text = str(obs)
-    return text[:max_chars * 2]
+    return text if total_cap == 10**9 else text[:total_cap]
 
 
 def _same_call(left: Step, name: str, action_input: dict[str, Any]) -> bool:
@@ -117,6 +140,20 @@ class StubBrain:
         return Step(thought=f"理解任务：{task[:40]}", final=self.answer)
 
 
+def _serialize_steps(steps: list["Step"]) -> list[dict[str, Any]]:
+    """已完成步骤 → 可回放 dict（thought/action/action_input/observation）。"""
+    return [
+        {
+            "thought": st.thought or "",
+            "action": st.action,
+            "action_input": st.action_input,
+            "observation": st.observation,
+        }
+        for st in steps
+        if getattr(st, "action", None) and getattr(st, "observation", None)
+    ]
+
+
 def run_react(
     task: str,
     brain: Brain,
@@ -132,6 +169,7 @@ def run_react(
     seed_observation: str | None = None,
     allow_ask_user: bool = False,
     budget_interrupt: Callable[[dict[str, Any]], str] | None = None,
+    invocation_guard: Callable[[str, dict[str, Any]], "ToolResult | None"] | None = None,
 ) -> AgentResult:
     """跑 ReAct 循环；超 max_iterations 强制给阶段结论（§四.4 防跑飞）。
 
@@ -191,6 +229,9 @@ def run_react(
                         "used": int(getattr(token_budget, "used", 0) or 0),
                         "limit": int(token_budget.limit if token_budget else 0),
                         "done_steps": len(done_steps),
+                        # 2.1.0-p1.13：携带已完成步骤（含观察）——重置预算续跑时回放，
+                        # 不再整个 ReAct 重跑（实测：重跑且效果更差、token 重复扣）
+                        "replay": _serialize_steps(done_steps),
                     }
                 )
                 if choice == "continue":
@@ -331,8 +372,23 @@ def run_react(
 
             if emitter is not None:
                 _emit(emitter.tool_call_start(tool_id, name, unit.action_input))
-            res: ToolResult = tools.call(name, **unit.action_input)
+            # v2.2.0-p1.7（C1）：幂等守卫——命中缓存（同 run 同工具同参数已执行过）
+            # 直接复用观察，fn 不执行（副作用零重复）；guard 返回 None 才真正调用。
+            guarded = invocation_guard(name, unit.action_input) if invocation_guard else None
+            res = guarded if guarded is not None else tools.call(name, **unit.action_input)
             obs = res.output if res.ok else (res.error or "工具调用失败")
+            # C1：真执行（非缓存命中）且非 ask_user 哨兵时登记进幂等表。dict 结果
+            # （query_orders 等）序列化为 JSON 存储、命中后还原为 dict——与原执行
+            # 的下游行为一致。登记失败由 repo 静默降级。
+            if guarded is None and invocation_guard is not None and res.ok and not (
+                isinstance(obs, dict) and obs.get("__ask_user__")
+            ):
+                _record = getattr(invocation_guard, "record", None)
+                if _record is not None:
+                    _record(
+                        name, unit.action_input,
+                        json.dumps(obs, ensure_ascii=False) if isinstance(obs, dict) else str(obs),
+                    )
             # 2.1.0 P1-1（HITL）：ask_user sentinel——模型请求用户补充输入。
             # single（allow_ask_user=True）→ 发 ask_user 事件并终止本轮，任务转
             # paused_input（graph 层 interrupt 落 checkpoint）；multi 层内并行无法

@@ -144,12 +144,18 @@ def _date(raw: Any, label: str) -> str | dict[str, str]:
     return value
 
 
-def _limit(raw: Any) -> int:
+def _limit(raw: Any, default: int) -> int:
+    """模型没传 limit 时用调用方给的上限（分组与明细不同），不再写死 20。
+
+    v2.4.1 修：原默认值 20 让"没传 limit"的所有查询只回 20 行——
+    比明细上限 50 还小，多维分组几乎必然 truncated（真跑：城市×月份只有 20 组）。
+    """
     try:
         number = int(raw)
     except (TypeError, ValueError):
-        number = 20
-    return min(_MAX_ROWS, max(1, number))
+        number = default
+    # 上限由调用方 min(row_cap, ...) 负责（明细 50 / 聚合 500），这里不再硬卡 50
+    return max(1, number)
 
 
 def _month_expr(dialect: str) -> str:
@@ -320,7 +326,7 @@ def compile_order_filters(raw: dict[str, Any], *, require_dates: bool = False) -
 
 
 def make_query_orders_tool(
-    engine: Engine | None, *, max_rows: int = _MAX_ROWS, base_dir: str | None = None
+    engine: Engine | None, *, max_rows: int = _MAX_ROWS, aggregate_max_groups: int = 500, base_dir: str | None = None
 ) -> Callable[..., Any]:
     def query_orders(**raw: Any) -> dict[str, Any]:
         import json as _json
@@ -360,14 +366,24 @@ def make_query_orders_tool(
         params = built["params"]
         applied = built["applied"]
 
-        group_by = _text(raw.get("group_by"))
-        if group_by and group_by not in _GROUPABLE:
+        # 2.1.0-p1.13：group_by 多列复合分组（数组/逗号分隔，≤2 列）——一次查询解决
+        # 交叉维度（如 ['store_name','month']：门店×月份矩阵，曲线图 series 直接画）。
+        gb_raw = raw.get("group_by")
+        if isinstance(gb_raw, (list, tuple)):
+            group_cols = [_text(g) for g in gb_raw if _text(g)]
+        else:
+            group_cols = _as_list(gb_raw)  # str 或 None：逗号分隔多列也收
+        group_cols = [g for g in group_cols if g][:2]
+        bad_gb = [g for g in group_cols if g not in _GROUPABLE]
+        if bad_gb:
             return {
                 "error": (
-                    f"不能按 {group_by} 分组。可以用 month、city，"
+                    f"不能按 {bad_gb} 分组。可以用 month、city，"
                     "或订单表里除手机号、真实姓名、收货地址以外的字段。"
                 )
             }
+        group_by = ",".join(group_cols)  # 兼容旧逻辑（单列时与原值一致）
+        multi_group = len(group_cols) > 1
         metric = _text(raw.get("metric")) or ("sum_pay" if group_by else "")
         if metric and metric not in _METRICS:
             return {"error": f"metric 只能是 {'、'.join(_METRICS)}"}
@@ -381,7 +397,10 @@ def make_query_orders_tool(
         if bad:
             return {"error": f"metrics 里的 {bad} 不支持。可选：{'、'.join(_METRICS)}"}
         metrics = list(dict.fromkeys(metrics))[:6]  # 去重，最多 6 个指标
-        limit = min(max_rows, _limit(raw.get("limit")))
+        # v2.4.1：分组行数是"维度组合数"，不能与明细行共用 50 的上限——
+        # 城市 20 × 月份 2 = 40、门店 34 × 月份 2 = 68，用 50 卡会静默缺组。
+        row_cap = aggregate_max_groups if group_by else max_rows
+        limit = min(row_cap, _limit(raw.get("limit"), row_cap))
 
         if not clauses and not group_by and not metric:
             return {"error": "查询必须带时间、城市、门店、字段筛选或分组，避免整表读取"}
@@ -390,12 +409,33 @@ def make_query_orders_tool(
         dialect = engine.dialect.name
         hint = "/*+ MAX_EXECUTION_TIME(3000) */ " if dialect == "mysql" else ""
         if group_by or (metric and "order_no" not in applied):
-            if group_by == "city":
+            # 多列：各自取表达式；输出列名用维度原名（store_name/month）——语义化，
+            # render_chart 的 x/series 可直接引用且中文映射可用
+            if multi_group:
+                # 多列：输出列名用维度原名（派生列加 AS 别名）——语义化，
+                # render_chart 的 x/series 可直接引用且中文映射可用
+                labels = []
+                for g in group_cols:
+                    if g == "city":
+                        labels.append(f"{city_expr(dialect)} AS city")
+                    elif g == "month":
+                        labels.append(f"{_month_expr(dialect)} AS month")
+                    else:
+                        labels.append(g)
+                group_exprs = [e.rsplit(" AS ", 1)[0] if " AS " in e else e for e in labels]
+                out_cols = group_cols
+            elif group_by == "city":
                 label = city_expr(dialect)
+                labels = [label]
+                out_cols = ["grp"]
             elif group_by == "month":
                 label = _month_expr(dialect)
+                labels = [label]
+                out_cols = ["grp"]
             else:
                 label = group_by
+                labels = [label]
+                out_cols = ["grp"]
             # 单值 metric（兼容路径）沿用 metric_value 列名——compare_orders/旧测试/旧 clean 依赖它；
             # 显式 metrics 数组（新用法）才用 m_<指标> 前缀。
             single = bool(not raw.get("metrics") and metric)
@@ -409,7 +449,15 @@ def make_query_orders_tool(
                 metric_cols = ""
                 first = "order_count"
             sel = f"COUNT(*) AS order_count{(', ' + metric_cols) if metric_cols else ''}"
-            if group_by:
+            if multi_group:
+                # 多列复合分组：SELECT 维度（带别名）× 指标，GROUP BY 表达式（矩阵宽表）
+                sel_parts = ", ".join(labels)
+                group_parts = ", ".join(group_exprs)
+                sql = (
+                    f"SELECT {hint}{sel_parts}, {sel} "
+                    f"FROM guoquan_orders{where} GROUP BY {group_parts} ORDER BY {first} DESC LIMIT {limit}"
+                )
+            elif group_by:
                 sql = (
                     f"SELECT {hint}{label} AS grp, {sel} "
                     f"FROM guoquan_orders{where} GROUP BY {label} ORDER BY {first} DESC LIMIT {limit}"
@@ -426,27 +474,31 @@ def make_query_orders_tool(
 
                     from .tools_table import _write_clean
 
-                    base_cols = (
-                        ["grp", "order_count", "metric_value"]
-                        if single
-                        else ["grp", "order_count", *[f"m_{m}" for m in metrics]]
-                    )
-                    if group_by == "month":
-                        # p6.48：月份分组的 clean 副本补 year/month 两列——
-                        # 同比对比直接 series=year、x=month 画双系列（两条线/并排柱），
-                        # 不再只能画单系列时间线。
-                        cols = ["grp", "year", "month", *base_cols[1:]]
-                        chart_rows = []
-                        for r in rows:
-                            m = _re.match(r"^(\d{4})-(\d{1,2})$", str(r.get("grp", "")))
-                            year, month = (m.group(1), str(int(m.group(2)))) if m else ("", "")
-                            chart_rows.append(
-                                [str(r.get("grp", "")), year, month]
-                                + [str(r.get(c, "")) for c in base_cols[1:]]
-                            )
-                    else:
-                        cols = base_cols
+                    if multi_group:
+                        cols = [*out_cols, "order_count", *[f"m_{m}" for m in metrics]] if metrics else [*out_cols, "order_count"]
                         chart_rows = [[str(r.get(c, "")) for c in cols] for r in rows]
+                    else:
+                        # p6.48（hot1）：单列 month 分组的 clean 副本补 year/month 两列——
+                        # 同比对比 series=year、x=month 画双系列（两条线/并排柱），
+                        # 不再只能画单系列时间线；p1.13b 的语义化列名只在多列分组用。
+                        base_cols = (
+                            ["grp", "order_count", "metric_value"]
+                            if single
+                            else ["grp", "order_count", *[f"m_{m}" for m in metrics]]
+                        )
+                        if group_by == "month":
+                            cols = ["grp", "year", "month", *base_cols[1:]]
+                            chart_rows = []
+                            for r in rows:
+                                m = _re.match(r"^(\d{4})-(\d{1,2})$", str(r.get("grp", "")))
+                                year, month = (m.group(1), str(int(m.group(2)))) if m else ("", "")
+                                chart_rows.append(
+                                    [str(r.get("grp", "")), year, month]
+                                    + [str(r.get(c, "")) for c in base_cols[1:]]
+                                )
+                        else:
+                            cols = base_cols
+                            chart_rows = [[str(r.get(c, "")) for c in cols] for r in rows]
                     chart_id = _write_clean(
                         Path(base_dir),
                         cols,
@@ -455,8 +507,10 @@ def make_query_orders_tool(
                             "source": "query_orders",
                             "group_by": group_by,
                             "metric": metric or "count",
+                            "metrics": metrics,
                             "filters": applied,
                             "rows": len(rows),
+                            "columns": cols,  # 产物索引用：模型直接知道实际列名，不猜
                         },
                     )
                 except Exception:  # noqa: BLE001 - 存副本失败不影响查询本身
@@ -464,11 +518,19 @@ def make_query_orders_tool(
             return {
                 "filters": applied,
                 "group_by": group_by or None,
+                "group_cols": group_cols or None,
                 "metric": metric or "count",
                 "metrics": metrics,  # 2.1.0：本次聚合的指标清单（列名 m_<metric>）
                 "scope": "全部已入库订单" if not applied else "按筛选汇总",
                 "truncated": bool(group_by) and len(rows) >= limit,
                 "row_count": len(rows),
+                # v2.4.1：截断必须"可感知 + 可补齐"——模型要先说明只给了多少组，再决定怎么补
+                "truncated_hint": (
+                    f"分组结果已达上限 {limit} 组，可能还有组合未返回；"
+                    "先说明这是前几组，再按需加筛选（时间/城市/门店）或换更粗的维度重查"
+                    if bool(group_by) and len(rows) >= limit
+                    else None
+                ),
                 "rows": rows,
                 "clean_id": chart_id,
                 "chart_hint": (
@@ -533,6 +595,13 @@ def make_query_orders_tool(
             "truncated": total > len(rows),
             "total_matched": total,
             "row_count": len(rows),
+            # v2.4.1：明细截断引导到 export（不要反复加 limit 硬拉）
+            "truncated_hint": (
+                f"明细共 {total} 行，只返回前 {len(rows)} 行；"
+                "要全量明细请用 export_orders 导出，或加筛选缩小范围"
+                if total > len(rows)
+                else None
+            ),
             "rows": rows,
             "omitted": list(_HIDDEN),
         }

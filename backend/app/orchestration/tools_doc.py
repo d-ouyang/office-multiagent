@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
@@ -20,8 +21,15 @@ from typing import Any
 SUPPORTED_SUFFIXES = (".md", ".txt", ".json", ".csv", ".docx", ".xlsx", ".pdf", ".png", ".jpg", ".jpeg", ".webp")
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 _IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
-TABLE_PREVIEW_ROWS = 20
+TABLE_PREVIEW_ROWS = 50  # v2.4.2: 20 → 50（配合列统计，样本够看格式即可）
 _SUPPORTED = SUPPORTED_SUFFIXES
+
+#: v2.4.0-p5.0 目录索引：Markdown 标题（# ~ ######）
+_MD_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(\S.*)$")
+#: 中文章节行（"第3章 xxx" / "第三节" / "第二十条"），无 # 也能认——业务文档大多这种
+_CN_CHAPTER_RE = re.compile(r"^第[0-9一二三四五六七八九十百千零两]{1,6}[章节条篇部](?:[ \t　]|$)")
+#: 目录条数上限：再多对模型也是噪音，且会挤占正文预算
+MAX_HEADINGS = 80
 
 
 def normalize_doc_name(file_name: str, owner: str | None = None) -> str:
@@ -69,17 +77,56 @@ def _decode_text(path: Path) -> str:
         return raw.decode("gbk", errors="replace")
 
 
+def _to_number(value: str) -> float | None:
+    raw = (value or "").strip().replace(",", "").replace("¥", "").replace("￥", "")
+    if not raw or raw in {"-", "—", "/"}:
+        return None
+    percent = raw.endswith("%")
+    if percent:
+        raw = raw[:-1]
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _column_stats(headers: list[str], rows: list[list[str]], *, max_cols: int = 8) -> str:
+    """每列一句话统计（v2.4.2）。
+
+    为什么加这个：模型看 50 行样本也说不清"这张表值不值得分析"——它需要的是
+    min/max/均值/不同值个数这类**聚合事实**。列统计让模型用少量 token 建立全局印象，
+    比"再多给几百行原文"有效得多，也不会稀释注意力。
+    """
+    lines: list[str] = []
+    for idx, name in enumerate(headers[:max_cols]):
+        values = [_cell(r[idx]) for r in rows if idx < len(r) and _cell(r[idx])]
+        if not values:
+            continue
+        numbers = [n for n in (_to_number(v) for v in values) if n is not None]
+        if len(numbers) >= max(3, int(len(values) * 0.8)):
+            lines.append(
+                f"{name}: 最小 {min(numbers):g} / 最大 {max(numbers):g} / 均值 {sum(numbers) / len(numbers):.2f}"
+            )
+        else:
+            lines.append(f"{name}: {len(set(values))} 个不同值")
+    return "\n".join(lines)
+
+
 def _table_preview(headers: list[str], rows: list[list[str]], *, sheet: str | None = None) -> str:
     title = f"工作表 {sheet}\n" if sheet else ""
     shown = rows[:TABLE_PREVIEW_ROWS]
     head = "列：" + ("、".join(headers) if any(headers) else "（无表头）")
     lines = [f"{i}. " + " | ".join(row) for i, row in enumerate(shown, 1)]
     if len(rows) > TABLE_PREVIEW_ROWS:
-        tail = f"共 {len(rows)} 行，这里只给出前 {TABLE_PREVIEW_ROWS} 行"
+        tail = f"共 {len(rows)} 行，这里给出前 {TABLE_PREVIEW_ROWS} 行"
     else:
         tail = f"共 {len(rows)} 行"
+    stats = _column_stats(headers, rows)
     body = "\n".join(lines)
-    return f"{title}{head}\n{body}\n{tail}".strip()
+    out = f"{title}{head}\n{body}\n{tail}"
+    if stats:
+        out += "\n列统计：\n" + stats
+    return out.strip()
 
 
 def load_table_grid(
@@ -289,29 +336,146 @@ def extract_document_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace").strip()
 
 
+def _similar_files(base: Path, name: str, *, limit: int = 3, scan: int = 300) -> list[str]:
+    """给"文件名写得不准"的场景提供候选（v2.4.0-p3.0）。
+
+    为什么需要：文件明明在目录里，模型却回"没找到，请上传"——除了路由错（p1.3 已修），
+    另一类变体是文件名差一两个字符（`smoke_md` vs `smoke-long.md`）。给出候选能让模型
+    自己纠正重试，而不是把"信息缺失"甩回给用户。
+    """
+    import difflib
+
+    try:
+        files: list[str] = []
+        for i, p in enumerate(base.rglob("*")):
+            if i >= scan:
+                break
+            if p.is_file():
+                files.append(p.name)
+    except OSError:
+        return []
+    return difflib.get_close_matches(Path(name).name, files, n=limit, cutoff=0.6)
+
+
+def extract_headings(text: str, *, limit: int = MAX_HEADINGS) -> tuple[list[dict[str, Any]], bool]:
+    """扫出目录索引（v2.4.0-p5.0）：标题行 + 它在正文中的字符偏移。
+
+    为什么需要：9.3 万字文档问"第 20 章多少"，模型只能整段读 → 两轮 prefill 共 15 万
+    token → 73 秒。有了 offset 索引，模型可以一次定位目标章节，prefill 降到 1 万量级。
+    兼容两类写法：Markdown `## 标题`，以及业务文档常见的 `第3章 xxx`（没有 # 号）。
+
+    返回 (headings, truncated)。**没有标题的文档返回空列表**——调用方照旧分段读，
+    行为与 v2.4.0-p2.0 完全一致（目录是增量信息，不是替代品）。
+    """
+    out: list[dict[str, Any]] = []
+    truncated = False
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        level = 0
+        title = ""
+        if stripped.startswith("#"):
+            m = _MD_HEADING_RE.match(stripped)
+            if m:
+                level = len(m.group(1))
+                title = m.group(2).strip()
+        elif len(stripped) <= 80 and _CN_CHAPTER_RE.match(stripped):
+            level = 1
+            title = stripped
+        if title:
+            if len(out) < limit:
+                out.append({"level": level, "title": title[:80], "offset": pos})
+            else:
+                truncated = True
+        pos += len(line)
+    return out, truncated
+
+
 def make_read_document_tool(
     *, base_dir: str, max_chars: int = 8000, owner: str | None = None
 ) -> Callable[..., Any]:
     """base_dir 是查找根目录。owner 有值时根目录应已是该用户的上传目录，file_name 只写文件名。"""
     base = Path(base_dir).resolve()
 
-    def read_document(file_name: str) -> dict[str, Any]:
+    def read_document(
+        file_name: str, offset: int = 0, limit: int = 0, headings_only: bool = False
+    ) -> dict[str, Any]:
+        """读文档正文，支持分段与目录索引（v2.4.0-p2.0 / p5.0）。
+
+        分段：整读超过单步上限只能截尾，末尾章节模型永远看不到（真跑事故 2026-11-17：
+        2.4 万字文件的第 10 章被切）。offset/limit 允许续读，has_more/next_offset 指路。
+
+        目录：返回里带 `headings`（标题 + 字符偏移），模型可直接定位目标章节精读，
+        不必整段扫描——9.3 万字文档"读第 20 章"从 73 秒降到 20 秒量级。
+        `headings_only=True` 只给目录不给正文（token 极省）。
+        没有标题的文档 `headings=[]`，退回分段读，行为与 p2.0 一致。
+
+        offset：起始字符位（从 0 开始）；limit：本次最多返回多少字，0=用默认上限。
+        """
         name = normalize_doc_name(file_name, owner)
         target = check_inside_base(base, name)
         if not target.is_file():
             where = "当前用户上传目录" if owner else "文档目录"
-            raise FileNotFoundError(f"文件不存在：{file_name}（已在{where}查找）")
+            hints = _similar_files(base, name)
+            tail = (
+                f"；目录里有相近的文件：{'、'.join(hints)}。"
+                "请核对文件名后直接重试，不要向用户索要这些已经存在的文件"
+                if hints
+                else ""
+            )
+            raise FileNotFoundError(f"文件不存在：{file_name}（已在{where}查找）{tail}")
         suffix = target.suffix.lower()
         if suffix not in _SUPPORTED:
             raise ValueError(f"暂不支持该格式：{suffix}（当前支持 {'/'.join(_SUPPORTED)}）")
         content = extract_document_text(target)
         if not content:
             raise ValueError(f"文档内容为空：{file_name}")
+
+        total = len(content)
+        headings, headings_truncated = extract_headings(content)
+
+        if headings_only:
+            # 只看目录：content 为空、不消耗正文预算。has_more 提示"正文还没读"。
+            return {
+                "file_name": file_name,
+                "no_artifact": True,
+                "total_chars": total,
+                "headings": headings,
+                "headings_truncated": headings_truncated,
+                "content": "",
+                "offset": 0,
+                "returned_chars": 0,
+                "has_more": total > 0,
+                "next_offset": 0,
+                "truncated": True,
+            }
+
+        start = max(0, int(offset or 0))
+        if start >= total:
+            raise ValueError(
+                f"offset {start} 超出文档长度（该文档共 {total} 字，偏移从 0 开始）"
+            )
+        cap = int(limit or 0)
+        if cap <= 0 or (max_chars > 0 and cap > max_chars):
+            cap = max_chars if max_chars > 0 else total
+        end = min(total, start + cap)
+        chunk = content[start:end]
+        has_more = end < total
         return {
             "file_name": file_name,
-            "total_chars": len(content),
-            "content": content[:max_chars],
-            "truncated": len(content) > max_chars,
+            "no_artifact": True,  # 2.1.0-p1.7：读的是用户上传的输入文件，不是生成产物——
+            # 不发 artifact（此前被误当"生成文件"进对话文件区，模型也跟着说"已生成文件"）
+            "total_chars": total,
+            "offset": start,
+            "returned_chars": len(chunk),
+            "has_more": has_more,
+            "next_offset": end if has_more else None,
+            "content": chunk,
+            # 兼容旧字段：仍表示"还有内容没给到"，但语义从"超上限"变成"可分页继续读"
+            "truncated": has_more,
+            # v2.4.0-p5.0：目录索引（无标题时为空数组，模型退回分段读）
+            "headings": headings,
+            "headings_truncated": headings_truncated,
         }
 
     read_document.__name__ = "read_document"

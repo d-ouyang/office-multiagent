@@ -81,6 +81,56 @@ describe('回复信息行', () => {
     expect(screen.getByText('耗时 3.2s')).toBeInTheDocument();
   });
 
+  it('token 明细同时给出输入与输出（v2.4.1：此前只有输入侧）', () => {
+    render(
+      <ChatMessage
+        index={1}
+        msg={{
+          role: 'assistant',
+          id: 12,
+          createdAt: clock,
+          events: [
+            ev('content_delta', { delta: '好的' }, 1000, 1),
+            ev(
+              'done',
+              {
+                status: 'single',
+                tokens_used: 12000,
+                prompt_tokens: 9000,
+                model: 'deepseek-chat',
+                steps: [{ label: '第 1 步', tokens: 12000 }],
+              },
+              4200,
+              2,
+            ),
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText('输入')).toBeInTheDocument();
+    expect(screen.getByText('输出')).toBeInTheDocument();
+    expect(screen.getByText('9,000')).toBeInTheDocument();
+    expect(screen.getByText('3,000')).toBeInTheDocument(); // 12000 - 9000
+  });
+
+  it('没有 prompt_tokens 时不显示输出行（历史消息缺字段不猜数）', () => {
+    render(
+      <ChatMessage
+        index={1}
+        msg={{
+          role: 'assistant',
+          id: 13,
+          createdAt: clock,
+          events: [
+            ev('content_delta', { delta: '好的' }, 1000, 1),
+            ev('done', { status: 'single', tokens_used: 5000, steps: [{ label: '第 1 步', tokens: 5000 }] }, 4200, 2),
+          ],
+        }}
+      />,
+    );
+    expect(screen.queryByText('输出')).toBeNull();
+  });
+
   it('没有消息 id 或回调时不渲染反馈按钮（流式刚结束的本地消息）', () => {
     render(
       <ChatMessage index={1} msg={{ role: 'assistant', content: '好', createdAt: clock }} />,
@@ -105,7 +155,7 @@ describe('回复信息行', () => {
   });
 
   it('点赞直接落库，激活后再点 = 取消', async () => {
-    const onSubmit = vi.fn(() => Promise.resolve({ rating: 'like', tags: [], comment: null, at: null }));
+    const onSubmit = vi.fn(() => Promise.resolve({ rating: 'like' as const, tags: [], comment: null, at: null }));
     const onCancel = vi.fn(() => Promise.resolve(true));
     render(
       <ChatMessage
@@ -132,7 +182,7 @@ describe('回复信息行', () => {
   });
 
   it('点踩走弹窗：tag 多选 + 其他原因展开输入，提交带原因', async () => {
-    const onSubmit = vi.fn(() => Promise.resolve({ rating: 'dislike', tags: ['数据或数字有误'], comment: '', at: null }));
+    const onSubmit = vi.fn(() => Promise.resolve({ rating: 'dislike' as const, tags: ['数据或数字有误'], comment: '', at: null }));
     render(
       <ChatMessage
         index={1}
@@ -194,7 +244,7 @@ describe('回复信息行', () => {
   it('提交成功后父级重渲染（旧 props 回来）也不把激活态打回空心', async () => {
     // p2.8 回归锚：useEffect 不能依赖 msg.feedback——本地乐观态会被父级重渲染冲掉
     const onSubmit = vi.fn(() =>
-      Promise.resolve({ rating: 'like', tags: [], comment: null, at: '2026-10-29T06:00:00' }),
+      Promise.resolve({ rating: 'like' as const, tags: [], comment: null, at: '2026-10-29T06:00:00' }),
     );
     const { rerender } = render(
       <ChatMessage
@@ -250,7 +300,7 @@ describe('回复信息行', () => {
     // p2.11 回归锚：线上实测请求往返 ~100ms 比连点间隔还快，只有在途锁时
     // 6 连点会发出 6 个请求（每个都等上一个完成后合法发出）
     const onSubmit = vi.fn(() =>
-      Promise.resolve({ rating: 'like', tags: [], comment: null, at: null }),
+      Promise.resolve({ rating: 'like' as const, tags: [], comment: null, at: null }),
     );
     const onCancel = vi.fn(() => Promise.resolve(true));
     render(

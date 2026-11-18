@@ -114,6 +114,19 @@ CREATE TABLE IF NOT EXISTS `agent_run` (
   KEY `idx_agent_run_subtask` (`subtask_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS `tool_invocation` (
+  `id`           BIGINT       NOT NULL AUTO_INCREMENT,
+  `run_id`       VARCHAR(64)  NOT NULL,
+  `tool_name`    VARCHAR(128) NOT NULL,
+  `args_hash`    CHAR(64)     NOT NULL,
+  `args_preview` VARCHAR(512) NULL,
+  `observation`  TEXT         NULL,
+  `created_at`   DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_tool_invocation` (`run_id`, `tool_name`, `args_hash`),
+  KEY `idx_tool_invocation_run` (`run_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `tool_call_log` (
   `id`           VARCHAR(64) NOT NULL,
   `agent_run_id` VARCHAR(64) NULL,
@@ -233,9 +246,10 @@ INSERT IGNORE INTO `pool_model` (`pool_id`, `model_name`) VALUES
   (2, 'deepseek-chat'), (2, 'qwen-plus'), (2, 'glm-4'), (2, 'deepseek-reasoner'),
   (3, 'deepseek-chat'), (3, 'qwen-plus'), (3, 'glm-4'), (3, 'kimi'), (3, 'deepseek-reasoner');
 
--- dev 种子：密码 Office@2026（bcrypt cost12，仅本地开发；生产改密/换 hash）
+-- dev 种子（bcrypt cost12）：明文密码不落仓库，见团队密库/交接文档；既有环境请用
+-- POST /api/v1/auth/change-password 或直接 UPDATE user.password_hash 轮换。
 INSERT IGNORE INTO `user` (`id`, `employee_id`, `username`, `password_hash`, `role`, `model_pool_id`) VALUES
-  (1, 'EMP001', 'dev', '$2b$12$bKWdpuPQGPIxCXoWyzhHaeVlvkE3eRXiiuH2Gqp6VOJDrFcVwrJrS', 'admin', 3);
+  (1, 'EMP001', 'dev', '$2b$12$OaNJ3Eiz2QNU/QE5vvrAtOoXhomVbe5U9Bwo4EFLgxwS/DUoosu1O', 'admin', 3);
 
 -- token 池种子（p6.4）：dev 用户初始额度 100000（生产按需调整）
 INSERT IGNORE INTO `wallet` (`user_id`, `balance`) VALUES (1, 100000);
@@ -302,4 +316,17 @@ CREATE TABLE IF NOT EXISTS `runtime_setting` (
   `setting_value` VARCHAR(255) NOT NULL,
   `updated_at`    DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ===== 会话轮次结构化摘要（v2.4.2 / 迁移 0015）：一轮一条，生成后永久复用 =====
+-- 替代旧实现 `answer[:80]` 的切片"摘要"——那种做法会把 730 字的回答砍成 "- 时…"，
+-- 结尾「需要我导出成文档吗」直接丢失，用户回「需要」时模型无从对上。
+CREATE TABLE IF NOT EXISTS `session_summary` (
+  `session_id` VARCHAR(64)  NOT NULL,
+  `turn_no`    INT          NOT NULL,
+  `payload`    JSON         NOT NULL,
+  `rendered`   TEXT         NULL,
+  `engine`     VARCHAR(16)  NOT NULL DEFAULT 'rule',
+  `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`session_id`, `turn_no`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

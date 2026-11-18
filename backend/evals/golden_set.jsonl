@@ -1,0 +1,10 @@
+{"id": "gs-001-orders-count", "text": "统计一下全部订单的总量", "expect": {"route": "single", "tools": ["query_orders"]}}
+{"id": "gs-002-orders-city", "text": "查一下上海最近的订单", "expect": {"route": "single", "tools": ["query_orders"]}}
+{"id": "gs-003-compare", "text": "对比一下销售额的同比情况", "expect": {"route": "single", "tools": ["compare_orders"]}}
+{"id": "gs-004-report", "text": "给我一份销售报表", "expect": {"route": "single", "tools": ["sales_report"]}}
+{"id": "gs-005-export", "text": "把订单明细导出成表格文件", "expect": {"route": "single", "tools": ["export_orders"]}}
+{"id": "gs-006-rag", "text": "知识库里关于退款的制度是什么", "expect": {"route": "single", "tools": ["rag_retrieve"]}}
+{"id": "gs-007-orders-hijack-regression", "text": "查一下最近10笔订单", "expect": {"route": "single", "tools": ["query_orders"]}}
+{"id": "gs-008-multi", "text": "根据知识库资料分析订单趋势并生成报表", "expect": {"route": "multi", "tools": []}}
+{"id": "gs-009-analysis-multi-intent", "text": "分析订单趋势并且生成月报", "expect": {"route": "single", "tools": ["query_orders"]}}
+{"id": "gs-010-general", "text": "用一句话介绍你自己，不要调用任何工具", "expect": {"route": "single", "tools": []}}

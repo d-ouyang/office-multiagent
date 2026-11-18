@@ -20,7 +20,7 @@ import yaml
 from sqlalchemy.engine import Engine
 
 from ..core.config import settings
-from .tools import ToolRegistry
+from .tools import ToolRegistry, ToolSpec
 from .tools_db import make_db_query_tool
 from .tools_compare import make_compare_orders_tool
 from .tools_export import make_export_orders_tool
@@ -74,7 +74,17 @@ _ORDER_METRIC = {
         "items": {"type": "string", "enum": _METRIC_ENUM},
         "description": "一次聚合多个指标（宽表，各指标一列 m_<指标>），最多 6 个。要多个指标时优先用这个，别按指标逐个查询。相同参数的重复查询会直接返回缓存结果（结果里 cached=true），不要反复查同一样东西",
     },
-    "group_by": {"type": "string", "description": "month、city 或订单表字段"},
+    # v2.4.1：原来只声明 string，模型据此认为"不能同时按城市和月份分组"，
+    # 于是绕路导明细、越试越偏（真跑见证：5 次里 4 次死于编造工具名）。
+    # 代码早就支持 ≤2 列的数组分组，schema 必须如实说明。
+    "group_by": {
+        "type": ["string", "array"],
+        "items": {"type": "string"},
+        "description": (
+            "分组维度，最多 2 列。传单个字符串（month）或数组（[\"month\",\"city\"]）都可以；"
+            "两个维度交叉（城市×月份矩阵）就传数组，会返回 clean_id 宽表，可直接交给 render_chart。"
+        ),
+    },
 }
 
 
@@ -118,12 +128,26 @@ def build_default_registry(
     )
     reg.register(
         "query_orders",
-        make_query_orders_tool(engine, max_rows=settings.db_query_max_rows, base_dir=str(doc_base)),
+        make_query_orders_tool(
+            engine,
+            max_rows=settings.db_query_max_rows,
+            # v2.4.1：分组行数与明细行分开——维度组合数用独立上限
+            aggregate_max_groups=settings.aggregate_max_groups,
+            base_dir=str(doc_base),
+        ),
         description=(
+            "【指标映射纪律】用户说'销售/销售额/金额'→ metric 用 sum_pay；'订单量/单量/订单数'→ count；'客单价'→ avg_pay。"
+            "按用户原话映射指标，不要自作主张换成订单数；确实不明确就先 ask_user 让用户选（销售金额还是订单数量）。"
+
             "查询已入库的锅圈食汇订单。不要写 SQL，也不要读订单 CSV。"
             "至少要带一个条件：date_from、date_to（YYYY-MM-DD，按下单时间）、"
             "order_no、store_name（包含匹配）、city、order_status、order_channel、"
             "order_type、fulfillment_type、member_level、group_by，或 filters。"
+            # v2.4.1：JSON 协议路径下模型只读得到 description（看不到 parameters schema），
+            # 多维分组的能力必须写在这里，否则它会认为"一次只能按一个维度分组"而绕路。
+            "group_by 支持 1~2 列：单列传字符串（month），两个维度交叉传数组 [\"month\",\"city\"]，"
+            "返回带 clean_id 的宽表（列如 month、city、order_count、m_sum_pay），可直接交给 render_chart 画 heatmap。"
+            "多个指标用 metrics 数组一次查完。"
             "city 按门店地址包含匹配：传「上海」或「上海市」都能命中，不限制城市名单。"
             "状态、渠道、类型、履约方式、会员等级按表里的实际值相等匹配，可传一个值或列表，"
             "不要用写死的可选值；表里没有该值时结果就是 0 行。"
@@ -206,6 +230,10 @@ def build_default_registry(
             "表格只返回表头、行数和前 20 行，不是整表。"
             "参数 file_name 只写文件名，例如 网站备案办事指南.pdf。"
             "查找目录由系统按当前用户确定，不要传本机绝对路径；写成「用户名/文件名」也可以。"
+            "长文档优先用目录定位：返回里若带 headings（标题+字符偏移），先看标题找到目标章节，"
+            "再用该条目的 offset 精读那一段，不要整篇通读；传 headings_only=true 可以只取目录不取正文。"
+            "headings 为空说明文档没有标题，此时按 has_more/next_offset 分段读到底，"
+            "不要因为看到 has_more 就声称已读全文。"
             "文件不存在时不要反复重试，直接如实告知用户。"
         )
     else:
@@ -214,6 +242,8 @@ def build_default_registry(
             "表格只返回表头、行数和前 20 行。"
             "参数: file_name（文档目录内的相对路径；当前登录用户上传的文件在 "
             "'<用户名>/' 子目录下，例如 dev/handbook.md）。"
+            "长文档优先用目录定位：headings 里有标题和字符偏移，用目标章节的 offset 精读，"
+            "别整篇通读；headings 为空时按 has_more/next_offset 分段读。"
             "适用于需要引用某份文档原文/做摘要的场景。"
             "注意：文件不存在时不要反复重试，直接如实告知用户文件名可能不对。"
         )
@@ -224,7 +254,21 @@ def build_default_registry(
         ),
         description=read_desc,
         parameters=_params(
-            {"file_name": {"type": "string", "description": "上传目录内的文件名（或 用户名/文件名）"}},
+            {
+                "file_name": {"type": "string", "description": "上传目录内的文件名（或 用户名/文件名）"},
+                "offset": {
+                    "type": "integer",
+                    "description": "起始字符位，默认 0；续读时用上一次返回的 next_offset，或 headings 里该章节的 offset",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "本次最多返回多少字，默认 0 = 用系统上限（通常 5 万字）",
+                },
+                "headings_only": {
+                    "type": "boolean",
+                    "description": "只返回目录（标题+偏移）不返回正文，适合先看结构再精读",
+                },
+            },
             ["file_name"],
         ),
     )
@@ -335,7 +379,7 @@ def build_default_registry(
             {
                 "title": {"type": "string", "description": "文档标题"},
                 "content": {"type": "string", "description": "正文，数字必须来自此前工具结果"},
-                "format": {"type": "string", "enum": ["md", "docx", "pdf", "pptx"]},
+                "format": {"type": "string", "enum": ["md", "docx", "pdf", "pptx"], "description": "必须与用户明确选择的格式一致（用户在补充输入里选了 Markdown（.md）就传 md）——不要自作主张把用户要的 md 升级成 pdf"},
                 "clean_id": {"type": "string", "description": "结论来自清洗表时传，用于文末标注来源"},
                 "image_file": {"type": "string", "description": "render_chart 返回的 png_file，嵌入文档"},
             },
@@ -368,10 +412,10 @@ def build_default_registry(
                 "clean_id": {"type": "string", "description": "clean_id（c- 开头）或 export_id（e- 开头）"},
                 "chart": {"type": "string", "enum": ["bar", "barh", "line", "area", "pie", "scatter", "heatmap", "hist"]},
                 "x": {"type": "string", "description": "分类列"},
-                "y": {"type": ["string", "array"], "items": {"type": "string"}, "description": "数值列，可一个或列表"},
+                "y": {"type": ["string", "array"], "items": {"type": "string"}, "description": "数值列——必须用数据表的实际列名（看上一步 query_orders/产物索引给出的列，如 grp、order_count、m_sum_pay、metric_value），禁止编造列名"},
                 "series": {"type": "string", "description": "分组列，与多个 y 互斥"},
                 "agg": {"type": "string", "enum": ["sum", "mean", "count", "min", "max"]},
-                "title": {"type": "string"},
+                "title": {"type": "string", "description": "图表标题——必须用中文业务名称（如'各门店实付金额对比'），禁止工具名/字段名/英文（如 query_orders、sum_pay）"},
                 "filters": {"type": "array", "items": _ORDER_FILTER_SCHEMA},
                 "top_n": {"type": "integer", "minimum": 1},
                 "bins": {"type": "integer", "minimum": 2},
@@ -464,8 +508,6 @@ def build_default_registry(
             "【禁止】把上传动作做成选项（如'上传 csv 文件'/'上传 excel 文件'分开罗列）——"
             "需要文件时设 need_file=true 并在 file_hint 写清格式即可，上传控件由界面提供，"
             "文件解析由读取工具自动完成，不区分格式。"
-            "有多个独立信息缺口（如日期口径+指标+输出格式）时，用 questions 一次问全（≤4 个），"
-            "不要挤在一个 question 里。能从数据库或知识库拿到的数据不要问。"
             "【严禁重复提问】回放历史里你已经问过的问题，用户已回答过——绝不再问第二遍；"
             "继续任务时直接使用已确认的口径。"
         ),
@@ -490,7 +532,11 @@ def build_default_registry(
                             "file_hint": {"type": "string"},
                             "expects_text": {
                                 "type": "boolean",
-                                "description": "该题需要用户填写文本补充（如'自定义时间区间'类选项——选了必须给出具体值，否则等于没回答）。设 true 时界面会强制展开输入框",
+                                "description": "该题需要用户填写文本补充。设 true 时界面会强制展开输入框，选选项后必须输入具体值",
+                            },
+                            "key": {
+                                "type": "string",
+                                "description": "该题的语义键（如 format、metric）——用户的选择会以【用户已定】key=答案 形式注入后续上下文，生成文档/图表时必须遵守",
                             },
                         },
                     },
@@ -500,7 +546,41 @@ def build_default_registry(
             ["question"],
         ),
     )
+    _apply_tool_specs(reg)
     return reg
+
+
+# --------------------------------------------------------------------------- #
+# v2.2.0-p1.1（Phase A2）：ToolSpec 集中批注表——全部工具的横切元数据一处声明。
+# 可审计、diff 小；漏标注由 test_tool_spec 的 unannotated()==[] 判据抓红，
+# 且运行期兜底是悲观档（side_effect=True / idempotent=False）。
+# 消费方：Phase C1 幂等去重、C2 分级超时、B3 权限网关。
+# --------------------------------------------------------------------------- #
+_TOOL_SPECS: dict[str, ToolSpec] = {
+    # 只读查询类（无副作用，同参重放安全）
+    "query_orders": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=10, permission="db:read"),
+    "compare_orders": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=10, permission="db:read"),
+    "sales_report": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=10, permission="db:read"),
+    "db_query": ToolSpec(risk_level="medium", side_effect=False, idempotent=True, timeout=3, permission="db:read"),
+    "analyze_table": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=30, permission="fs:read"),
+    "read_document": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=30, permission="fs:read"),
+    "rag_retrieve": ToolSpec(risk_level="low", side_effect=False, idempotent=True, timeout=60, permission="rag:query"),
+    # 写文件类（副作用=写产物；同名覆盖语义，同参重放结果一致）
+    "clean_table": ToolSpec(risk_level="medium", side_effect=True, idempotent=True, timeout=60, permission="fs:write"),
+    "export_orders": ToolSpec(risk_level="medium", side_effect=True, idempotent=True, timeout=60, permission="fs:write"),
+    "render_chart": ToolSpec(risk_level="medium", side_effect=True, idempotent=True, timeout=30, permission="fs:write"),
+    "render_flow": ToolSpec(risk_level="medium", side_effect=True, idempotent=True, timeout=30, permission="fs:write"),
+    # 生成式写（LLM 生成内容，重试=重烧钱+内容漂移）：非幂等，Phase C1 幂等键是唯一护栏
+    "write_document": ToolSpec(risk_level="medium", side_effect=True, idempotent=False, timeout=120, permission="fs:write"),
+    # HITL：挂起状态落库（副作用）；重复挂起=二次挂起语义，幂等
+    "ask_user": ToolSpec(risk_level="low", side_effect=True, idempotent=True, timeout=None, permission="hitl:ask"),
+}
+
+
+def _apply_tool_specs(reg: ToolRegistry) -> None:
+    for name, spec in _TOOL_SPECS.items():
+        if reg.has(name):
+            reg.set_spec(name, spec)
 
 
 def build_registry_for_spec(spec: AgentSpec, base: ToolRegistry) -> ToolRegistry:

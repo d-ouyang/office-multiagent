@@ -40,7 +40,11 @@ x-office-defaults: &office-defaults
 services:
   office-backend:
     <<: *office-defaults
-    build: ./backend
+    # v2.3.0-p1.5：版本号由 CI 注入（git describe --tags --always）；缺省 dev
+    build:
+      context: ./backend
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
     container_name: office-backend
     env_file: .env
     # v2.0.0-p2.7：内存上限 2GB——泄漏再次发生时由 backend 自己的 cgroup OOM

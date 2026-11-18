@@ -20,11 +20,19 @@ _RUNNING: dict[str, tuple[threading.Event, int | None]] = {}
 _LOCK = threading.Lock()
 
 
-def register(run_id: str, owner_id: int | None = None) -> threading.Event:
-    """登记一个运行中的任务，返回它的取消事件；owner_id 用于暂停接口的归属校验
-    （运行中的任务还没有 task 行，没法 join session 查 owner）。"""
+def register(run_id: str, owner_id: int | None = None) -> threading.Event | None:
+    """登记一个运行中的任务，返回它的取消事件；**该 run 已在跑 → 返回 None（lease 冲突）**。
+
+    v2.2.0-p1.8（C2）：从无条件覆盖升级为 lease 语义——同一 run 被并发触发
+    （双击发送 / 重试与手动续跑赛跑）时，第二个实例直接 409 拒绝，不再双跑
+    （双份副作用 + 双份扣费）。单机单进程下内存表即真锁；将来多副本部署时
+    换 MySQL GET_LOCK（连接级，需专用连接持有全程），调用方接口不变。
+    owner_id 用于暂停接口的归属校验（运行中的任务还没有 task 行）。
+    """
     ev = threading.Event()
     with _LOCK:
+        if run_id in _RUNNING:
+            return None
         _RUNNING[run_id] = (ev, owner_id)
     return ev
 

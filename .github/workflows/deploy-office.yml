@@ -24,8 +24,34 @@ jobs:
         run: |
           rsync -a --delete \
             --exclude ".env" --exclude ".env.*" \
+            --exclude ".github-token" \
             --exclude "backend/data" \
             ./ /opt/office/
+
+      # v2.2.0-p1.4（B1）：LLM 收口检查——绕过网关的调用存在则阻止部署
+      - name: LLM 收口检查（禁止绕过网关）
+        run: python3 backend/scripts/check_llm_gateway_isolation.py
+
+      # v2.2.0-p1.12（E3）：评测门禁——golden set 编排行为 + 后端全量单测，不过不部署。
+      # runner 宿主持久 venv（首次安装后缓存），mysql 用部署目录里在跑的容器。
+      - name: 评测门禁（golden set）+ 后端单测
+        run: |
+          VENV="$HOME/office-test-venv"   # /opt 对 runner 用户只读——venv 放 HOME
+          if [ ! -x "$VENV/bin/pytest" ]; then
+            python3 -m venv "$VENV"
+            "$VENV/bin/pip" install -q -i https://mirrors.cloud.tencent.com/pypi/simple -r backend/requirements.txt pytest
+          fi
+          cd backend
+          # 全部测试自建 sqlite 表（不连 MySQL、conftest 保证不真调 LLM）
+          "$VENV/bin/python" -m pytest -q tests/
+
+      # v2.3.0-p1.5：版本号随 tag 注入镜像（此前前端手写常量，连着两个版本停在 v2.0.0）。
+      # 用 git describe 而不是解析 tag 名：带提交后缀时还能看出"tag 之后又更了几次"。
+      - name: 注入版本号
+        working-directory: /opt/office
+        run: |
+          echo "APP_VERSION=$(git describe --tags --always)" >> "$GITHUB_ENV"
+          echo "本次构建版本：$(git describe --tags --always)"
 
       - name: 构建镜像
         working-directory: /opt/office

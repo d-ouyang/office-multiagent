@@ -175,10 +175,12 @@ def classify_with_model(
         "orders=查询订单、退款、销售额、销量、发货等交易记录；"
         "cleaning=清洗上传表格、去重、处理缺失；"
         "report=明确要求生成报表、报告或交付文件；"
-        "rag=查公司制度、手册、知识库等非结构化资料；"
+        "rag=查公司制度、手册、知识库里的既有资料内容（通过检索获得，不读取用户上传的文件）；"
         "visualization=主要交付物就是图表或流程图；"
         "image_restore=识别图片、截图或扫描件；"
-        "general=闲聊、改写、翻译等不需要上述专用能力。"
+        "general=读取用户上传的本地文件、闲聊、改写、翻译等不需要上述专用能力的事。"
+        "注意区分：用户说“读取/打开某个文件”（如 读取 合同.docx、读取文档 smoke.md）属于 general，"
+        "因为那要调用文件读取工具，不是查知识库；只有向公司知识库提问（制度、手册、规定怎么写）才是 rag。"
         "只要问题包含城市/门店/时间/商品并询问销量、金额、订单或经营表现，优先判 analysis 或 orders，不能判 general。"
         "mode只能是single或multi。只有任务存在真实的跨能力交接、一个Agent无法顺序完成时才选multi；"
         "分析后导出、画图、写文档通常是single。"
@@ -186,6 +188,7 @@ def classify_with_model(
         '“看看上海卖得怎么样”→{"intents":["analysis"],"mode":"single"}；'
         '“查一下最近10笔订单”→{"intents":["orders"],"mode":"single"}；'
         '“查报销制度”→{"intents":["rag"],"mode":"single"}；'
+        '“读取上传的 smoke-long.md 并统计章节”→{"intents":["general"],"mode":"single"}；'
         '“先查制度，再按制度分析订单”→{"intents":["rag","analysis"],"mode":"multi"}。'
         '只输出JSON：{"intents":["analysis"],"mode":"single","reason":"一句话","confidence":0.9}，'
         "confidence 必须是 0 到 1 的判断置信度。"

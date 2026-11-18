@@ -2,8 +2,10 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { APP_BLURB, APP_VERSION } from '../version';
+import { LogOut } from 'lucide-react';
 import { AccountPanel, type AccountSurface, type UsageSummary } from './AccountPanel';
 import { MemoryDialog, PasswordDialog, SettingsDialog, UsageDialog } from './AccountSurfaces';
+import ConfirmDialog from './ui/ConfirmDialog';
 import type { DialogueModel } from './ModelPicker';
 
 export interface SessionMeta {
@@ -97,13 +99,14 @@ export function AppSidebar(props: {
   const [renamingId, setRenamingId] = useState('');
   const [renameText, setRenameText] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [appVersion, setAppVersion] = useState(APP_VERSION);
   const accountRef = useRef<HTMLDivElement>(null);
   const visible = props.sessions.slice(0, visibleCount);
   const remaining = props.sessions.length - visible.length;
 
   useEffect(() => {
-    if (!accountOpen && !menuId) return undefined;
-    const onDown = (e: PointerEvent) => {
+    if (!accountOpen && !menuId) return undefined;    const onDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement;
       if (target.closest?.('.ui-confirm-mask, .workspace-dialog-mask')) return;
       if (accountOpen && !accountRef.current?.contains(target)) setAccountOpen(false);
@@ -112,6 +115,25 @@ export function AppSidebar(props: {
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
   }, [accountOpen, menuId]);
+
+  // v2.3.0-p1.5：版本号以后端 /health 为准（构建时由 git describe 注入），
+  // 常量只是兜底——打 tag 部署后侧栏立即显示新版本，不需要改前端代码。
+  useEffect(() => {
+    let alive = true;
+    if (typeof fetch !== 'function') return undefined;
+    fetch('/api/v1/health')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (alive && d && typeof d.version === 'string' && d.version) {
+          setAppVersion(d.version);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -120,7 +142,7 @@ export function AppSidebar(props: {
           <div className="brand-name">锅圈 Agent</div>
           <div className="brand-blurb">{APP_BLURB}</div>
           <div className="brand-product">office-multiagent</div>
-          <div className="brand-version">{APP_VERSION}</div>
+          <div className="brand-version">{appVersion}</div>
         </div>
       </div>
       <button className="new-chat" onClick={props.onNew}>
@@ -245,13 +267,24 @@ export function AppSidebar(props: {
             onOpenSurface={setSurface}
           />
         )}
-        <button type="button" className="user-chip" onClick={() => setAccountOpen((v) => !v)} aria-expanded={accountOpen}>
-          <span className="account-avatar sm" aria-hidden="true">{(props.user.username || '?').slice(0, 1).toUpperCase()}</span>
-          <span className="user-info">
-            <span className="user-name">{props.user.username}</span>
-            <span className="user-meta">{props.user.employee_id} · {props.user.role}</span>
-          </span>
-        </button>
+        <div className="sidebar-user-row">
+          <button type="button" className="user-chip" onClick={() => setAccountOpen((v) => !v)} aria-expanded={accountOpen}>
+            <span className="account-avatar sm" aria-hidden="true">{(props.user.username || '?').slice(0, 1).toUpperCase()}</span>
+            <span className="user-info">
+              <span className="user-name">{props.user.username}</span>
+              <span className="user-meta">{props.user.employee_id} · {props.user.role}</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className="user-logout-icon"
+            aria-label="退出当前账号"
+            title="退出登录"
+            onClick={() => setConfirmLogout(true)}
+          >
+            <LogOut size={16} />
+          </button>
+        </div>
       </div>
       {surface === 'usage' && (
         <UsageDialog
@@ -266,6 +299,16 @@ export function AppSidebar(props: {
       {surface === 'memory' && <MemoryDialog onClose={() => setSurface(null)} />}
       {surface === 'settings' && <SettingsDialog onClose={() => setSurface(null)} />}
       {surface === 'password' && <PasswordDialog onClose={() => setSurface(null)} />}
+      <ConfirmDialog
+        spec={confirmLogout ? {
+          title: '确定退出登录？',
+          text: '退出后需要重新登录才能继续。',
+          confirmText: '退出',
+          dangerSoft: true,
+        } : null}
+        onConfirm={props.onLogout}
+        onCancel={() => setConfirmLogout(false)}
+      />
       {deleteTarget && (
         <div className="confirm-mask" onClick={() => setDeleteTarget(null)}>
           <div

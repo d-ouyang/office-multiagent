@@ -46,6 +46,10 @@ app = FastAPI(title="office-multiagent", version="1.0.0-p4.2", lifespan=lifespan
 app.add_middleware(CorrelationMiddleware)
 app.include_router(router, prefix="/api/v1")
 
+from .api.runs_api import router as runs_router  # noqa: E402 - 事件流回放（Phase D）
+
+app.include_router(runs_router, prefix="/api/v1")
+
 
 @app.get("/")
 def root():

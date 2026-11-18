@@ -475,3 +475,41 @@ def test_chat_stream_retries_429_before_first_chunk(monkeypatch):
     )
     assert got == ["你好"]  # 首块前 429 可重试，无重复输出
     assert calls["n"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# v2.2.0-p1.4（B1）：LLM 网关收口开关（settings.llm_gateway_url）
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_model_gateway_rewrite(monkeypatch):
+    """llm_gateway_url 非空：base_url 重写为网关、key 重写为服务间密钥，api_model 不变。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "llm_gateway_url", "http://gateway:3000/llm/v1")
+    monkeypatch.setattr(settings, "internal_shared_secret", "it-secret")
+    base_url, api_key, api_model = resolve_model("deepseek-chat")
+    assert base_url == "http://gateway:3000/llm/v1"
+    assert api_key == "it-secret"
+    assert api_model == "deepseek-chat"
+
+
+def test_resolve_model_gateway_without_secret_fails_closed(monkeypatch):
+    """网关开着但服务间密钥未配置：响亮失败，绝不静默直连。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "llm_gateway_url", "http://gateway:3000/llm/v1")
+    monkeypatch.setattr(settings, "internal_shared_secret", "")
+    with pytest.raises(LlmNotConfigured, match="INTERNAL_SHARED_SECRET"):
+        resolve_model("deepseek-chat")
+
+
+def test_resolve_model_direct_mode_unchanged(monkeypatch):
+    """开关留空（B1 之前现状）：直连行为零变化。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "llm_gateway_url", "")
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    base_url, api_key, api_model = resolve_model("deepseek-chat")
+    assert base_url == "https://api.deepseek.com/v1"
+    assert api_key == "sk-test"

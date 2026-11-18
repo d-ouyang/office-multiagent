@@ -25,6 +25,8 @@ export interface ChatMessageData {
   events?: StreamEvent[];
   streaming?: boolean;
   createdAt?: number;
+  /** v2.4.2：后端留有完整 trace（含思考逐字流），界面上可按需加载 */
+  hasFullTrace?: boolean;
   /** 账本补上的模型 id（trace 的 done 事件没有 model 时用） */
   model?: string;
   tokens?: number;
@@ -87,6 +89,8 @@ export function ChatMessage({
   onPreview,
   onFeedbackSubmit,
   onFeedbackCancel,
+  sessionId,
+  onLoadThinking,
 }: {
   msg: ChatMessageData;
   index: number;
@@ -103,6 +107,10 @@ export function ChatMessage({
   ) => Promise<MessageFeedback | null>;
   /** v2.0.0-p2.2：取消反馈。成功返回 true。 */
   onFeedbackCancel?: (messageId: number) => Promise<boolean>;
+  /** v2.4.2：当前会话 id（思考过程按需加载用） */
+  sessionId?: string;
+  /** v2.4.2：加载某条消息的完整 trace（含思考逐字流） */
+  onLoadThinking?: (messageId: number) => Promise<StreamEvent[] | null>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(msg.text ?? '');
@@ -237,8 +245,25 @@ export function ChatMessage({
     );
   }
 
-  const events = msg.events;
+  // v2.4.2：思考过程按需加载——历史消息的 trace 默认剥离逐字流（占 97%），
+  // 工具明细仍随列表下发；点「查看思考过程」才拉完整 trace 覆盖渲染。
+  const [loadedTrace, setLoadedTrace] = useState<StreamEvent[] | null>(null);
+  const [loadingTrace, setLoadingTrace] = useState(false);
+  const events = loadedTrace ?? msg.events;
   const process = events ? deriveProcess(events) : null;
+  const hasThinking = events?.some((e) => e.type === 'thinking_delta') ?? false;
+  const canLoadThinking =
+    !msg.streaming && !hasThinking && !!msg.hasFullTrace && !!msg.id && !!sessionId && !!onLoadThinking;
+  const loadThinking = async () => {
+    if (!msg.id || !sessionId) return;
+    setLoadingTrace(true);
+    try {
+      const traceEvents = await onLoadThinking?.(msg.id);
+      if (traceEvents) setLoadedTrace(traceEvents);
+    } finally {
+      setLoadingTrace(false);
+    }
+  };
   // 2.1.0：交付物暂存——流式期间与挂起/失败中间态不显示，任务终态 done 后统一展示
   // （用户反馈：中途产物一直挂在对话框最下面，等完全回复之后再显示）
   const finalStatus = events
@@ -258,11 +283,19 @@ export function ChatMessage({
   const artifacts = events && showDeliverables ? deriveArtifacts(events) : [];
   // 2.1.0 定稿：图表/流程图改为过程时间线内实时渲染（ProcessTrace visual 项），
   // 消息级不再渲染 visual——最终回答不重复显示图。底部只保留文件级 artifacts。
-  const content = process ? process.result : (msg.content ?? '');
+  // v2.4.2：历史 trace 已剥离逐字流（answer 步骤为空），正文兜底到 content 字段
+  const content = process?.result?.trim() || msg.content || '';
   const failure = events ? deriveFailure(events) : null;
   const meta = events ? deriveReplyMeta(events) : {};
+  // 2.1.0-p1.9c：缓存命中率（参照 rag-qa token 明细样式）
+  const hitPct =
+    meta.cacheHitTokens != null && meta.promptTokens ? Math.min(100, Math.round((meta.cacheHitTokens / meta.promptTokens) * 100)) : null;
   const modelId = meta.model || msg.model;
   const tokens = meta.tokens ?? msg.tokens;
+  // v2.4.1：输出 = 总消耗 − 输入。done 事件同时带 tokens_used 与 prompt_tokens，
+  // 相减即生成侧成本；此前明细只列输入，用户看不出"回答本身花了多少"。
+  const outputTokens =
+    tokens != null && meta.promptTokens != null ? Math.max(0, tokens - meta.promptTokens) : 0;
   const clock = formatClock(msg.createdAt || meta.endedAt);
   const copyText = () => {
     if (content) return content;
@@ -330,7 +363,13 @@ export function ChatMessage({
     <div className="msg-row assistant">
       <div className="assistant-block">
         {process && process.steps.length > 0 && (
-          <ProcessTrace steps={process.steps} durationMs={process.durationMs ?? meta.durationMs} streaming={!!msg.streaming} />
+          <ProcessTrace
+            steps={process.steps}
+            durationMs={process.durationMs ?? meta.durationMs}
+            streaming={!!msg.streaming}
+            onExpand={canLoadThinking ? () => void loadThinking() : undefined}
+            loadingExtra={loadingTrace}
+          />
         )}
         {failure && (
           <div className={`msg-failure ${failure.kind}`}>
@@ -390,22 +429,50 @@ export function ChatMessage({
                     ? '⏸ 任务未完结（等待你的输入/选择后从断点继续）'
                     : `共消耗 ${formatTokens(tokens)}`}
                 </span>
-                {meta.cacheHitTokens != null && meta.promptTokens != null && (
-                  <span className="cache-hit" role="note">
-                    <span className="cache-hit-bar" aria-hidden="true">
-                      <span
-                        className="cache-hit-fill"
-                        style={{ width: `${Math.min(100, Math.round((meta.cacheHitTokens / meta.promptTokens) * 100))}%` }}
-                      />
-                    </span>
-                    <span className="cache-hit-text">
-                      缓存命中 {Math.min(100, Math.round((meta.cacheHitTokens / meta.promptTokens) * 100))}%
-                    </span>
-                  </span>
-                )}
                 {meta.steps && meta.steps.length > 0 && (
                   <span className="token-pop" role="tooltip">
-                    <span className="token-pop__head">逐步用量</span>
+                    <span className="token-pop__head">
+                      Token 消耗明细
+                      <span className="token-pop__total">总计 {formatTokens(tokens)}</span>
+                    </span>
+                    {meta.promptTokens != null && (
+                      <span className="token-pop__row">
+                        <span className="token-pop__label"><span className="tok-dot tok-dot--in" /> 输入</span>
+                        <span className="token-pop__num">{formatTokens(meta.promptTokens)}</span>
+                      </span>
+                    )}
+                    {/* v2.4.1：输出 = 总消耗 − 输入。此前明细只有输入侧，用户看不出生成花了多少 */}
+                    {outputTokens > 0 && (
+                      <span className="token-pop__row">
+                        <span className="token-pop__label"><span className="tok-dot tok-dot--out" /> 输出</span>
+                        <span className="token-pop__num">{formatTokens(outputTokens)}</span>
+                      </span>
+                    )}
+                    {meta.cacheHitTokens != null && meta.promptTokens != null && (
+                      <>
+                        <span className="token-pop__row token-pop__sub">
+                          <span className="token-pop__label"><span className="tok-dot tok-dot--hit" /> 缓存命中</span>
+                          <span className="token-pop__num">{formatTokens(meta.cacheHitTokens)}</span>
+                        </span>
+                        <span className="token-pop__row token-pop__sub">
+                          <span className="token-pop__label"><span className="tok-dot tok-dot--miss" /> 缓存未命中</span>
+                          <span className="token-pop__num">{formatTokens(Math.max(0, meta.promptTokens - meta.cacheHitTokens))}</span>
+                        </span>
+                        <span className="token-pop__rate">
+                          <span className="token-pop__rate-label">⚡ 缓存命中率</span>
+                          <span className="token-pop__rate-num">{hitPct}%</span>
+                        </span>
+                        <span className="token-pop__bar" aria-hidden="true">
+                          <span className="token-pop__bar-hit" style={{ width: `${hitPct}%` }} />
+                          <span className="token-pop__bar-miss" style={{ width: `${100 - (hitPct ?? 0)}%` }} />
+                        </span>
+                        <span className="token-pop__legend">
+                          <span><span className="tok-dot tok-dot--hit" /> 命中</span>
+                          <span><span className="tok-dot tok-dot--miss" /> 未命中</span>
+                        </span>
+                      </>
+                    )}
+                    <span className="token-pop__head token-pop__head--sub">逐步用量</span>
                     {meta.steps.map((s, i) => (
                       <span key={i} className="token-pop__row">
                         <span className="token-pop__label">{s.label}</span>

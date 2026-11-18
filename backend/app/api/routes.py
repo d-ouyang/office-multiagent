@@ -12,10 +12,13 @@ from ..core import chroma_client, db, redis_client
 from ..core.config import settings
 from ..core.events import EventType, RunEventEmitter, encode_line, iter_ndjson, new_run_id
 from ..core.internal_auth import require_internal
+from ..core import runtime_settings
+from ..core.budget_alert import fire_budget_alert
 from ..core.decomposer import decompose
 from ..core.model_registry import get_dialogue_models
 from ..core.planner import plan as make_plan
 from ..core.router import decide
+from ..core.version import app_version
 
 router = APIRouter()
 
@@ -59,6 +62,9 @@ def health():
         "services": services,
         "open_fds": open_fds,
         "rss_mb": rss_mb,
+        # v2.3.0-p1.5：版本号由构建注入（git describe），前端侧栏直接显示这个值，
+        # 不再手写常量——此前从 v2.0.0 之后连续两个版本忘了改。
+        "version": app_version(),
     }
 
 
@@ -330,6 +336,29 @@ def session_messages(session_id: str, authorization: str | None = Header(default
     if not repo.session_belongs_to(session_id, user["id"]):
         raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"})
     return {"messages": repo.list_messages(session_id)}
+
+
+@router.get("/sessions/{session_id}/messages/{message_id}/trace")
+def message_trace(
+    session_id: str, message_id: int, authorization: str | None = Header(default=None)
+):
+    """单条消息的**完整** trace（含逐字流）——「查看思考过程」按需加载（v2.4.2）。
+
+    messages 列表默认剥离 thinking_delta / content_delta（占单条 trace 的 97%），
+    回答正文与工具明细仍在列表里；思考过程流在这里取全量。
+    """
+    user = _current_user(authorization)
+    from ..core.session_repo import SessionRepo
+
+    repo = SessionRepo()
+    if not repo.session_belongs_to(session_id, user["id"]):
+        raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"})
+    trace = repo.get_message_trace(session_id, message_id)
+    if trace is None:
+        raise HTTPException(
+            404, detail={"code": "NOT_FOUND", "message": "消息不存在或没有过程数据"}
+        )
+    return {"trace": trace}
 
 
 @router.patch("/sessions/{session_id}")
@@ -767,6 +796,47 @@ _MAX_RECHARGE = 10_000_000
 _RESUMABLE = {"paused_insufficient_quota", "paused_user", "paused_error", "failed", "paused_budget"}  # 2.1.0：paused_budget 走真断点续跑（重置预算）
 
 
+def _summarize_and_store(session_id: str, question: str, answer: str) -> None:
+    """生成并落库本轮的结构化摘要（v2.4.2）。
+
+    规则抽取打底（**数字/产物/问句必须原样**，模型改写数字是摘要在本场景最危险的失真），
+    模型归纳只负责"意图 + 结论"两层的可读性；模型失败就只留规则版。
+    """
+    from sqlalchemy import text as _text
+
+    from ..core.config import settings
+    from ..core.db import get_engine
+    from ..core.session_summary_repo import SessionSummaryRepo
+    from ..orchestration.summary import (
+        merge_summaries,
+        render_summary,
+        summarize_round,
+        summarize_with_llm,
+    )
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        turn_no = int(
+            conn.execute(
+                _text("SELECT COUNT(*) FROM message WHERE session_id=:s AND role='user'"),
+                {"s": session_id},
+            ).scalar()
+            or 0
+        )
+    if turn_no <= 0:
+        return
+    rule = summarize_round(turn_no, question, answer)
+    llm = summarize_with_llm(turn_no, question, answer)
+    payload = merge_summaries(rule, llm)
+    SessionSummaryRepo(eng).upsert(
+        session_id,
+        turn_no,
+        payload,
+        render_summary(payload, max_chars=int(settings.history_round_chars)),
+        engine_name="llm" if llm else "rule",
+    )
+
+
 def _build_asset_index(prior: list[dict[str, Any]]) -> str:
     """2.1.0 P0 轻档：从会话历史 assistant trace 里提取可复用的数据副本（clean_id）索引。
 
@@ -893,6 +963,34 @@ async def tasks_stream(body: TaskRequest, authorization: str | None = Header(def
         raise HTTPException(400, detail={"code": "BAD_EFFORT", "message": f"未知力度：{body.effort}"})
     # p6.12：随消息附件——fail-closed 校验（自己目录内且存在），以 prompt 前缀注入任务文本
     validated_attachments = _validate_attachments(body.attachments, str(user["username"]))
+
+    # v2.2.0-p1.6（B3）：入口硬预算短路——不够扣的任务不启动编排（429，省算力省预扣）。
+    # per-user 余额检查 + per-tenant 当日总预算；graph 内的 quota_node 保留（续跑/并发窗口兜底）。
+    from ..core.token_pool import TokenPool
+
+    _estimate = int(body.estimate or settings.token_estimate_default)
+    pool = TokenPool(get_engine())
+    _balance = pool.balance(int(user["id"]))
+    if _balance < _estimate:
+        raise HTTPException(
+            429,
+            detail={"code": "BALANCE_INSUFFICIENT", "message": f"钱包余额不足：余额 {_balance}，本次预估 {_estimate}，请充值后重试"},
+        )
+    _daily_budget = int(runtime_settings.effective("tenant_daily_token_budget") or 0)
+    if _daily_budget > 0:
+        _used = pool.daily_billed()
+        if _used >= _daily_budget:
+            raise HTTPException(
+                429,
+                detail={"code": "TENANT_BUDGET_EXCEEDED", "message": f"全站当日 token 预算已用尽（{_used}/{_daily_budget}），明日自动恢复"},
+            )
+        # 软告警：用量达预算比例（缺省 80%）时 webhook 提示一次（当日去重；未配置则静默）
+        if _used + _estimate >= _daily_budget * float(settings.budget_alert_ratio):
+            fire_budget_alert(
+                "tenant_daily_budget",
+                {"used": _used, "budget": _daily_budget, "ratio": settings.budget_alert_ratio},
+            )
+
     return _stream_task(
         user=user,
         session_id=session_id,
@@ -1140,8 +1238,14 @@ def _stream_answer(
 
     def worker():
         try:
-            runs.register(run_id, owner_id=int(user["id"]))
-            emitter = RunEventEmitter(run_id, run_id)
+            if runs.register(run_id, owner_id=int(user["id"])) is None:
+                _err = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office").error(
+                    "任务正在执行中，请勿重复发起（lease 冲突）", code="LEASE_CONFLICT"
+                )
+                q.put(_err)
+                q.put(None)
+                return
+            emitter = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office")  # B2 归因注入
             result, events = resume_with_answer(
                 run_id,
                 user_answer,
@@ -1247,8 +1351,14 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
 
     def worker():
         try:
-            runs.register(run_id, owner_id=owner_id)
-            emitter = RunEventEmitter(run_id, run_id)
+            if runs.register(run_id, owner_id=owner_id) is None:
+                _err = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office").error(
+                    "任务正在执行中，请勿重复续跑（lease 冲突）", code="LEASE_CONFLICT"
+                )
+                q.put(_err)
+                q.put(None)
+                return
+            emitter = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office")  # B2 归因注入
             backend = (settings.checkpointer_backend or "memory").strip().lower()
             checkpointer = _take_live_checkpointer(run_id)
             if checkpointer is None and backend == "sqlite":
@@ -1279,7 +1389,23 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
                 task_id=run_id,
                 should_cancel=None,
             )
-            state = graph.invoke(Command(resume="continue"), {"configurable": {"thread_id": run_id}})
+            # 2.1.0-p1.13：重置预算续跑前注入已完成步骤（interrupt payload 里的 replay 落过库）——
+            # LangGraph interrupt 是 node 级重跑：不注入回放，single_node 会整个 ReAct 从头重跑
+            # （实测：用户点继续后全部重走一遍、token 重复扣、效果更差）。
+            try:
+                payload_raw = task.get("pause_payload")
+                payload = (
+                    _json.loads(str(payload_raw))
+                    if isinstance(payload_raw, str) and str(payload_raw).strip()
+                    else (payload_raw if isinstance(payload_raw, dict) else {})
+                )
+                replay = (payload or {}).get("replay") or []
+            except Exception:  # noqa: BLE001
+                replay = []
+            cfg = {"configurable": {"thread_id": run_id}}
+            if replay:
+                graph.update_state(cfg, {"budget_replay": replay})
+            state = graph.invoke(Command(resume="continue"), cfg)
             actual = int(state.get("tokens_used", 0) or 0)
 
             def _trace_json() -> str:
@@ -1305,7 +1431,7 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
                         )
                     )
                     q.put(emitter.done("paused_budget", model=state.get("model")))
-                    pool.settle(owner_id, 0, actual, task_id=run_id, model=state.get("model"))
+                    pool.settle(owner_id, 0, actual, task_id=run_id, model=state.get("model"), cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0))
                     _register_live_checkpointer(run_id, checkpointer)
                     try:
                         repo.append_message(session_id, "user", "【继续】完成上一轮未完成的任务")
@@ -1335,7 +1461,7 @@ def _stream_budget_resume(task: dict[str, Any], *, operator_id: int | None = Non
                         logger.exception("budget 续跑二次暂停落库失败 task_id=%s", task_id)
                     return
 
-            pool.settle(owner_id, 0, actual, task_id=run_id, model=state.get("model"))
+            pool.settle(owner_id, 0, actual, task_id=run_id, model=state.get("model"), cache_hit_tokens=int(state.get("cache_hit_tokens", 0) or 0))
             result_text = str(state.get("result", ""))
             try:
                 repo.append_message(session_id, "user", "【继续】完成上一轮未完成的任务")
@@ -1428,8 +1554,14 @@ def _stream_quota_resume(task: dict[str, Any], *, operator_id: int | None = None
 
     def worker():
         try:
-            runs.register(run_id, owner_id=owner_id)
-            emitter = RunEventEmitter(run_id, run_id)
+            if runs.register(run_id, owner_id=owner_id) is None:
+                _err = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office").error(
+                    "任务正在执行中，请勿重复续跑（lease 冲突）", code="LEASE_CONFLICT"
+                )
+                q.put(_err)
+                q.put(None)
+                return
+            emitter = RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office")  # B2 归因注入
             backend = (settings.checkpointer_backend or "memory").strip().lower()
             checkpointer = _take_live_checkpointer(run_id)
             if checkpointer is None and backend == "sqlite":
@@ -1663,7 +1795,15 @@ def _stream_task(
     pool = TokenPool(get_engine())
 
     prior = repo.list_messages(session_id)
-    remembered, context_parts = prepare_turn(prior, text)
+    # v2.4.2：已落库的轮次摘要直接复用（未命中的轮次由 prepare_turn 现算规则摘要）。
+    # 读失败不影响任务——摘要只是增强，不是依赖。
+    try:
+        from ..core.session_summary_repo import SessionSummaryRepo
+
+        summaries = SessionSummaryRepo(get_engine()).list_rendered(session_id)
+    except Exception:  # noqa: BLE001
+        summaries = []
+    remembered, context_parts = prepare_turn(prior, text, summaries=summaries)
     effective_text = _compose_task_text(remembered, attachments, _recognize_images(attachments))
     if attachments:
         context_parts["current"] = effective_text
@@ -1696,7 +1836,14 @@ def _stream_task(
 
     q: _queue.Queue = _queue.Queue()
     run_id = new_run_id()
+    # v2.2.0-p1.8（C2）：lease 预检——同 run 已在跑（双击/重试赛跑）→ 409 拒绝，
+    # 双跑会双份副作用 + 双份扣费（幂等表挡工具，挡不住 LLM 调用与预算）。
     cancel_ev = runs.register(run_id, user["id"])
+    if cancel_ev is None:
+        raise HTTPException(
+            409,
+            detail={"code": "LEASE_CONFLICT", "message": "该任务正在执行中，请等待完成或暂停后再操作"},
+        )
 
     def worker() -> None:
         try:
@@ -1783,6 +1930,13 @@ def _stream_task(
                     )
                     repo.append_message(session_id, "user", text, trace=user_trace)
                     repo.append_message(session_id, "assistant", body, trace=trace)
+                # v2.4.2：本轮落库之后再生成摘要——turn_no 取自 user 消息计数，
+                # 放在落库之前会读到上一轮的计数（首轮为 0 直接跳过）。
+                if status == "done":
+                    try:
+                        _summarize_and_store(session_id, text, str(result.get("result") or ""))
+                    except Exception:  # noqa: BLE001
+                        logging.getLogger(__name__).exception("生成会话摘要失败（忽略）")
                 payload = None
                 if status == "paused_budget":
                     payload = _json.dumps(result.get("pause_payload") or {}, ensure_ascii=False)
@@ -1829,11 +1983,36 @@ def _stream_task(
                 )
             except Exception:  # noqa: BLE001 - 落库失败：ERROR 级记录，流照常结束
                 logger.exception("会话落库失败 session_id=%s（任务结果已推给用户，但历史将缺失）", session_id)
-        except Exception:  # noqa: BLE001 - worker 兜底：流以 None 收尾，异常进日志
+        except Exception as e:  # noqa: BLE001 - worker 兜底：死信登记 + 流以 None 收尾
             logger.exception("run_task worker 异常")
+            # v2.2.0-p1.8（C2）：死信——异常未被暂停/完成语义接住时，给用户一条
+            # error 事件（不再静默断流），并落审计（管理端可查；失败原因截断）。
+            try:
+                q.put(
+                    RunEventEmitter(run_id, run_id, trace_id=run_id, tenant_id="office").error(
+                        "任务执行出现异常，已中止（未产生完整结论）。可重试。", code="RUN_DEAD_LETTER"
+                    )
+                )
+                from ..core.audit_repo import record as _audit
+
+                _audit(
+                    actor_user_id=user["id"], actor_username=str(user["username"]),
+                    actor_role=str(user.get("role") or ""), action="run.dead_letter",
+                    target_type="task", target_id=run_id,
+                    detail={"error": str(e)[:500]},
+                )
+            except Exception:  # noqa: BLE001 - 死信登记失败不影响流收尾
+                logger.exception("死信登记失败 run_id=%s", run_id)
         finally:
+            _watchdog.cancel()
             runs.finish(run_id)
             q.put(None)  # 哨兵：流结束
+
+    # v2.2.0-p1.8（C2）：run 级硬超时 watchdog——到点置位取消事件，编排走协作取消
+    # 收尾（paused_user + settle），防任务挂死占住 worker 线程；正常完成则提前取消定时器。
+    _watchdog = threading.Timer(settings.run_hard_timeout_seconds, cancel_ev.set)
+    _watchdog.daemon = True
+    _watchdog.start()
 
     threading.Thread(target=worker, daemon=True, name="run_task").start()
 

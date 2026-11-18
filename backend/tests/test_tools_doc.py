@@ -42,14 +42,16 @@ def test_read_pdf_returns_empty_page_text_or_ok(doc_dir):
 
 
 def test_read_csv_previews_header_and_limits_rows(doc_dir):
-    lines = ["姓名,城市"] + [f"人{i},上海" for i in range(1, 26)]
+    # v2.4.2：预览行数 20 → 50，并追加列统计
+    lines = ["姓名,城市"] + [f"人{i},上海" for i in range(1, 61)]
     (doc_dir / "orders.csv").write_text("\n".join(lines), encoding="utf-8")
     tool = make_read_document_tool(base_dir=str(doc_dir))
     out = tool("orders.csv")
     assert "列：姓名、城市" in out["content"]
-    assert "共 25 行，这里只给出前 20 行" in out["content"]
-    assert "人20" in out["content"]
-    assert "人21" not in out["content"]
+    assert "共 60 行，这里给出前 50 行" in out["content"]
+    assert "人50" in out["content"]
+    assert "人51" not in out["content"]
+    assert "列统计" in out["content"]
 
 
 def test_read_json_and_invalid_json(doc_dir):

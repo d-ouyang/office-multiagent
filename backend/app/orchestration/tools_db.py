@@ -82,6 +82,15 @@ def make_db_query_tool(engine: Engine | None, *, max_rows: int = 50) -> Callable
             "columns": columns,
             "rows": data,
             "row_count": len(data),
+            # v2.4.1：此前是静默截断——模型看到 50 行会当成完整结果。
+            # 行数正好等于上限时无法区分"正好 50 行"与"被截断"，用 >= 保守提示。
+            "truncated": len(rows) >= max_rows,
+            "truncated_hint": (
+                f"结果行数达到上限 {max_rows}，可能还有更多；"
+                "请加 WHERE 缩小范围或改成聚合（GROUP BY），不要当作完整结果"
+                if len(rows) >= max_rows
+                else None
+            ),
             "sql": checked,
         }
 

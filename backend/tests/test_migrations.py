@@ -116,3 +116,16 @@ def test_init_sql_columns_cover_required():
     for table, required in REQUIRED_COLUMNS.items():
         missing = required - cols.get(table, set())
         assert not missing, f"init.sql 的 `{table}` 缺列（迁移已加、init.sql 没同步）：{sorted(missing)}"
+
+
+def test_0001_single_statement_per_execute():
+    """C3（v2.2.0-p1.9）：0001 的每个 op.execute 必须是单条语句——MySQL 单次
+    execute 不允许多语句，此前的大块导致纯 alembic 全新装必炸（已拆分修复）。"""
+    src = (MIG_DIR / "versions" / "0001_initial_baseline.py").read_text(encoding="utf-8")
+    blocks = re.findall(r'op\.execute\(\s*"""(.*?)"""', src, re.S)
+    assert blocks, "0001 应包含 op.execute 语句"
+    for i, b in enumerate(blocks):
+        body = b.strip().rstrip(";")
+        assert ";" not in body, (
+            f"0001 第 {i} 个 op.execute 含多条语句（分号分隔）——纯 alembic 全新装会炸，必须逐语句拆分：{body[:80]}..."
+        )

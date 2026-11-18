@@ -20,6 +20,25 @@ def new_session_id() -> str:
     return f"s-{secrets.token_hex(8)}"
 
 
+#: trace 里的逐字流事件（v2.4.2 剥离）：content_delta 与 content 字段重复，
+#: thinking_delta 占单条 trace 的 76%。数据仍完整落库，按需经 get_message_trace 取回。
+_STREAMING_EVENT_TYPES = {"content_delta", "thinking_delta"}
+
+
+def _slim_trace(trace: str) -> str:
+    """剥离 trace 里的逐字流事件；解析失败原样返回（坏数据不该让列表挂掉）。"""
+    try:
+        events = json.loads(trace)
+    except (ValueError, TypeError):
+        return trace
+    if not isinstance(events, list):
+        return trace
+    slim = [e for e in events if isinstance(e, dict) and e.get("type") not in _STREAMING_EVENT_TYPES]
+    if len(slim) == len(events):
+        return trace
+    return json.dumps(slim, ensure_ascii=False)
+
+
 def _iso_utc(v: Any) -> str:
     """时间字段统一输出带 UTC 标记的 ISO（如 '2026-10-21T13:40:13.380547Z'）。
 
@@ -139,7 +158,17 @@ class SessionRepo:
                 {"s": session_id, "r": role, "c": content, "t": trace},
             )
 
-    def list_messages(self, session_id: str, limit: int = 200) -> list[dict[str, Any]]:
+    def list_messages(
+        self, session_id: str, limit: int = 200, *, slim_trace: bool = True
+    ) -> list[dict[str, Any]]:
+        """会话消息。
+
+        v2.4.2：`slim_trace=True`（默认）把 trace 里的**逐字流事件**剥掉
+        （`content_delta` 与 `content` 字段完全重复；`thinking_delta` 占单条 trace 的
+        76%，实测 20 条消息 2.4MB 里占 2.1MB，导致会话窗口打开慢）。
+        工具调用/观察/产物等"过程明细"事件只有几 KB，保留——前端默认就能渲染。
+        剥掉的逐字流通过 `get_message_trace` 按需取，数据本身仍完整落库，随时可回放。
+        """
         with self.engine.connect() as conn:
             rows = conn.execute(
                 text(
@@ -151,11 +180,14 @@ class SessionRepo:
             ).mappings().all()
         out = []
         for r in rows:
+            trace = r["trace"]
+            if slim_trace and trace:
+                trace = _slim_trace(trace)
             item = {
                 "id": r["id"],
                 "role": r["role"],
                 "content": r["content"],
-                "trace": r["trace"],
+                "trace": trace,
                 "created_at": _iso_utc(r["created_at"]),
             }
             # v2.0.0-p2.1：assistant 消息带反馈当前态（前端渲染点赞/点踩激活态）
@@ -170,6 +202,18 @@ class SessionRepo:
             out.append(item)
         self._attach_turn_usage(session_id, out)
         return out
+
+    def get_message_trace(self, session_id: str, message_id: int) -> str | None:
+        """取单条消息的**完整** trace（含逐字流，供"查看思考过程"按需加载）。"""
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT trace FROM message "
+                    "WHERE id = :m AND session_id = :s AND role = 'assistant'"
+                ),
+                {"m": message_id, "s": session_id},
+            ).first()
+        return str(row[0]) if row and row[0] else None
 
     def _attach_turn_usage(self, session_id: str, messages: list[dict[str, Any]]) -> None:
         """给还没有模型信息的助手消息补上账本里的 model / tokens。

@@ -20,6 +20,7 @@ from typing import Any
 import httpx
 
 from .config import settings
+from .model_adapter import get_adapter
 from .model_registry import load_registry
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,16 @@ class LlmError(RuntimeError):
 
 class LlmNotConfigured(LlmError):
     """模型未配置（不在注册表 / 缺密钥）。调用方应如实告知能力不可用。"""
+
+
+class ContextOverflowError(LlmError):
+    """上下文超出模型窗口（provider 返回 400/413）。
+
+    为什么单独成类（v2.3.0-p1.2）：它不是网络抖动、也不是参数写错，而是**可恢复**的
+    ——把历史压小后重试一次通常就能过。混在普通 LlmError 里只会走进两条错路：
+    要么被当成 4xx 直接抛（用户看到"模型暂不可用"），要么被瞬时重试逻辑盲目重试三次
+    （每次更贵、结果一样）。调用方（brain）据此触发一次紧急压缩。
+    """
 
 
 @dataclass
@@ -123,17 +134,30 @@ def load_api_key(api_key_env: str) -> str:
 
 
 def resolve_model(model_id: str) -> tuple[str, str, str]:
-    """model_id → (base_url, api_key, api_model)。未就绪抛 LlmNotConfigured。"""
+    """model_id → (base_url, api_key, api_model)。未就绪抛 LlmNotConfigured。
+
+    v2.2.0-p1.4（B1）：`settings.llm_gateway_url` 非空时收口到 LLM 网关——
+    base_url 重写为网关地址、key 重写为 INTERNAL_SHARED_SECRET（服务间密钥，
+    网关侧再替换真实 provider key）。models.yaml 保持直连定义不变：
+    切流量/回退都是改一个环境变量 + restart backend（秒级，不碰代码）。
+    """
     registry = load_registry()
     entry = next((m for m in registry.get("models", []) if m.id == model_id), None)
     if entry is None:
         raise LlmNotConfigured(f"模型 {model_id} 不在注册表中（config/models.yaml）")
+    api_model = str(entry.api_model or model_id)
+    gateway_url = str(settings.llm_gateway_url or "").strip()
+    if gateway_url:
+        secret = str(settings.internal_shared_secret or "")
+        if not secret:
+            # fail-closed：网关开着却没有服务间密钥，等于裸奔——响亮失败而不是静默直连
+            raise LlmNotConfigured("LLM 网关已启用（llm_gateway_url）但 INTERNAL_SHARED_SECRET 未配置")
+        return gateway_url.rstrip("/"), secret, api_model
     provider = registry.get("providers", {}).get(entry.provider)
     base_url = str(provider.base_url) if provider else ""
     api_key = load_api_key(
         str(getattr(entry, "api_key_env", "") or getattr(provider, "api_key_env", "") or "")
     )
-    api_model = str(entry.api_model or model_id)
     if not base_url or not api_key:
         raise LlmNotConfigured(
             f"模型 {model_id} 未就绪：base_url={'有' if base_url else '缺'}，key 缺（见注册表 api_key_env）"
@@ -142,6 +166,37 @@ def resolve_model(model_id: str) -> tuple[str, str, str]:
 
 
 def chat(
+    model_id: str,
+    messages: list[dict[str, str]],
+    *,
+    timeout: float | None = None,
+    temperature: float = 0.2,
+    reasoning_effort: str | None = None,
+    max_tokens: int | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> LlmResult:
+    """调一次 /chat/completions（v2.2.0-p1.0 起为契约门面，转发当前 ModelAdapter）。
+
+    签名与行为不变（等价重构）：缺省 adapter = OpenAI 兼容直连（含网络类失败重试）。
+    测试可用 `model_adapter.set_adapter(FakeModelAdapter([...]))` 注入假模型，
+    无需 MockTransport。任何失败抛 LlmError（含 LlmNotConfigured）。
+    """
+    return get_adapter().chat(
+        model_id,
+        messages,
+        timeout=timeout,
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
+        max_tokens=max_tokens,
+        tools=tools,
+        tool_choice=tool_choice,
+        transport=transport,
+    )
+
+
+def _chat_impl(
     model_id: str,
     messages: list[dict[str, str]],
     *,
@@ -190,6 +245,33 @@ def chat(
 #: 可重试的 HTTP 状态码——限流与服务端瞬时错误；其余 4xx（鉴权/参数）重试无意义。
 _TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 
+#: 各家 provider 报"上下文超限"的措辞（OpenAI / DeepSeek / 硅基流动 / Qwen 不一致）。
+#: 只认"上下文 / 长度"相关组合词——裸"超出"会误伤"超出配额"这类业务错误，
+#: 把可恢复的溢出判成别的错误、或反过来把业务错误当溢出压缩重试，都是事故。
+_OVERFLOW_HINTS = (
+    "context length",
+    "context_length",
+    "context window",
+    "context_window",
+    "maximum context",
+    "reduce the length",
+    "too many tokens",
+    "maximum token",
+    "上下文长度",
+    "上下文超出",
+    "上下文过长",
+    "输入过长",
+    "token 数量超出",
+)
+
+
+def _is_context_overflow(status: int, body: str) -> bool:
+    """400/413 且错误体命中上下文超限措辞 → 可压缩重试的错误（v2.3.0-p1.2）。"""
+    if status not in (400, 413):
+        return False
+    lowered = (body or "").lower()
+    return any(hint in lowered for hint in _OVERFLOW_HINTS)
+
 
 def _status_code_of(e: LlmError) -> int | None:
     """从 `_chat_once` 的 `LLM 返回 <code>: <body>` 错误里提取状态码（无则 None）。"""
@@ -206,7 +288,10 @@ def _is_transient(e: LlmError) -> bool:
     p5.1：原先纯字符串匹配只覆盖 502/503/504，**429 与 500 完全不重试**——而 multi
     层内并行（dag_max_concurrency=3）多个子任务同时打同一模型时，限流 429 恰是最需要
     退避重试的场景。现在状态码优先结构化判定，网络类错误保留字符串兜底。
+    v2.3.0-p1.2：上下文超限**显式排除**——重试三次还是同样的输入、同样的拒绝，只会更贵。
     """
+    if isinstance(e, ContextOverflowError):
+        return False
     code = _status_code_of(e)
     if code is not None:
         return code in _TRANSIENT_STATUS
@@ -251,7 +336,10 @@ def _chat_once(
     except httpx.HTTPError as e:
         raise LlmError(f"LLM 请求失败：{type(e).__name__}: {e}") from e
     if resp.status_code != 200:
-        raise LlmError(f"LLM 返回 {resp.status_code}: {resp.text[:200]}")
+        body = resp.text or ""
+        if _is_context_overflow(resp.status_code, body):
+            raise ContextOverflowError(f"上下文超限（{resp.status_code}）：{body[:300]}")
+        raise LlmError(f"LLM 返回 {resp.status_code}: {body[:200]}")
     try:
         data = resp.json()
         message = data["choices"][0]["message"]
@@ -278,6 +366,42 @@ def _chat_once(
 
 
 def chat_stream(
+    model_id: str,
+    messages: list[dict[str, str]],
+    *,
+    on_chunk: Callable[[str], None] | None = None,
+    on_thought: Callable[[str], None] | None = None,
+    timeout: float | None = None,
+    temperature: float = 0.2,
+    reasoning_effort: str | None = None,
+    max_tokens: int | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    on_tool_call: Callable[[ToolCall], None] | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> LlmResult:
+    """流式 /chat/completions（v2.2.0-p1.0 起为契约门面，转发当前 ModelAdapter）。
+
+    签名与行为不变（等价重构）。流式语义（首块前重试、已出字不重试、
+    tool_calls 增量、usage 末块结算）由 OpenAICompatAdapter 委托的 `_chat_stream_impl` 保证。
+    """
+    return get_adapter().chat_stream(
+        model_id,
+        messages,
+        on_chunk=on_chunk,
+        on_thought=on_thought,
+        timeout=timeout,
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
+        max_tokens=max_tokens,
+        tools=tools,
+        tool_choice=tool_choice,
+        on_tool_call=on_tool_call,
+        transport=transport,
+    )
+
+
+def _chat_stream_impl(
     model_id: str,
     messages: list[dict[str, str]],
     *,
@@ -330,9 +454,10 @@ def chat_stream(
             with httpx.Client(timeout=timeout or settings.llm_timeout, transport=transport) as client:
                 with client.stream("POST", url, json=payload, headers=headers) as resp:
                     if resp.status_code != 200:
-                        raise LlmError(
-                            f"LLM 返回 {resp.status_code}: {resp.read().decode('utf-8', 'replace')[:200]}"
-                        )
+                        body = resp.read().decode("utf-8", "replace")
+                        if _is_context_overflow(resp.status_code, body):
+                            raise ContextOverflowError(f"上下文超限（{resp.status_code}）：{body[:300]}")
+                        raise LlmError(f"LLM 返回 {resp.status_code}: {body[:200]}")
                     for line in resp.iter_lines():
                         if not line.startswith("data:"):
                             continue
