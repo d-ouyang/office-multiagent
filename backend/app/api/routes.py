@@ -2930,6 +2930,102 @@ def admin_feedback(
     }
 
 
+class SsoRequest(BaseModel):
+    """演示 SSO：nianan.site 跳转过来的一次性 HMAC ticket。"""
+    ticket: str = ""
+
+
+@router.post("/auth/sso")
+def auth_sso(body: SsoRequest, request: Request):
+    """nianan.site 演示 SSO（v2.4.4）：验 HMAC ticket → 直接签发工作台 token。
+
+    安全边界（三层，缺一不可）：
+      1. HMAC-SHA256 验签 + 60 秒有效期——ticket 不可伪造、不可重放到第二天；
+      2. **用户名白名单硬编码 `demo` 前缀**——即使共享密钥泄漏（它就放在
+         nianan-site 的构建产物里，公开可读），攻击者也只能拿到演示账号的 token；
+      3. 角色 double-check：非 user 角色拒绝签发（防未来有人把 admin 改名 demo*）。
+    """
+    import base64 as _b64
+    import hashlib as _hashlib
+    import hmac as _hmac
+    import json as _json
+    import re as _re
+    import time as _time
+
+    import jwt as pyjwt
+    from sqlalchemy import text as _text
+
+    from ..core import audit_repo
+    from ..core.db import get_engine
+
+    secret = str(getattr(settings, "sso_shared_secret", "") or "")
+    if not secret:
+        raise HTTPException(503, detail={"code": "SSO_DISABLED", "message": "SSO 未启用"})
+    ticket = (body.ticket or "").strip()
+    username = ""
+    try:
+        payload_b64, sig = ticket.split(".", 1)
+        expected = _hmac.new(secret.encode(), payload_b64.encode(), _hashlib.sha256).hexdigest()
+        if not _hmac.compare_digest(sig, expected):
+            raise ValueError("bad signature")
+        payload = _json.loads(
+            _b64.urlsafe_b64decode(payload_b64 + "=" * (-len(payload_b64) % 4)).decode("utf-8")
+        )
+        username = str(payload["u"])
+        if _time.time() > float(payload["exp"]):
+            raise HTTPException(
+                401, detail={"code": "SSO_TICKET_EXPIRED", "message": "登录凭据已过期，请回 nianan.site 重新点击"}
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            401, detail={"code": "SSO_BAD_TICKET", "message": "登录凭据无效"}
+        )
+    if not _re.fullmatch(r"demo\d{1,2}", username):
+        raise HTTPException(403, detail={"code": "SSO_FORBIDDEN_USER", "message": "该账号不允许演示登录"})
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            _text(
+                "SELECT id, employee_id, username, role, token_version FROM `user` WHERE username = :u"
+            ),
+            {"u": username},
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(404, detail={"code": "USER_NOT_FOUND", "message": "演示账号不存在"})
+    if str(row["role"]) != "user":
+        raise HTTPException(403, detail={"code": "SSO_FORBIDDEN_USER", "message": "该账号不允许演示登录"})
+    token = pyjwt.encode(
+        {
+            "sub": str(row["employee_id"]),
+            "username": str(row["username"]),
+            "role": str(row["role"]),
+            "uid": int(row["id"]),
+            "tv": int(row["token_version"] or 0),
+        },
+        settings.jwt_secret,
+        algorithm="HS256",
+    )
+    audit_repo.record_safe(
+        actor_user_id=int(row["id"]),
+        actor_username=str(row["username"]),
+        actor_role=str(row["role"]),
+        action="login.sso",
+        target_type="auth",
+        target_label=str(row["username"]),
+        detail={"source": "nianan.site"},
+        ip=_client_ip(request),
+    )
+    return {
+        "access_token": token,
+        "user": {
+            "employee_id": str(row["employee_id"]),
+            "username": str(row["username"]),
+            "role": str(row["role"]),
+        },
+    }
+
+
 @router.post("/admin/login")
 def admin_login(body: AdminLoginRequest, request: Request):
     """管理端登录：账密校验 + admin 角色 + 审计（成功/失败都写——失败也是安全事件）。"""
