@@ -116,7 +116,8 @@ class Settings(BaseSettings):
     #   estimate = (本轮文本 token + 提示词固定开销) × 平均步数 + 输出预留
     # 旧默认 2000 偏低 6.5 倍（真跑：reserve=2000 / 实际=12937），钱包被事后补扣、预算门失效。
     token_estimate_default: int = 2000       # 下限（上传/导出类任务的保底）
-    token_prompt_overhead: int = 3000        # 系统提示 + 工具清单 + 协议说明的固定开销
+    token_prompt_overhead: int = 4500        # 系统提示 + 工具清单 + 协议说明的固定开销
+    # （生产实测单步 prompt 约 7.7K，本地约 3.7K；4500 折中后两侧偏差均 <20%）
     token_estimate_steps_factor: float = 3.0 # 平均 ReAct 步数（每步都重发一遍 prompt）
     # 单任务全局硬上限：与钱包余额无关，对所有用户生效。0 表示关闭。
     # v2.4.0-p2.1：50000 → 200000。原值等于 v2.3.0-p1.4 的单步上限（50000），
