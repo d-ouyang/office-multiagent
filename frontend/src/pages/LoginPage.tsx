@@ -1,8 +1,8 @@
 // 登录页（p6.2 美化）：居中卡片。
 // 交互补强：密码明文切换（眼睛 icon）、登录成功后交给浏览器保存凭据。
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { login, type LoginUser } from '../lib/api';
+import { login, ssoLogin, type LoginUser } from '../lib/api';
 
 export function LoginPage({ onLoggedin }: { onLoggedin: (u: LoginUser) => void }) {
   const [username, setUsername] = useState('');
@@ -11,6 +11,27 @@ export function LoginPage({ onLoggedin }: { onLoggedin: (u: LoginUser) => void }
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const passwordRef = useRef<HTMLInputElement>(null);
+
+  // v2.4.4 演示 SSO：nianan.site 带 ?sso=ticket 跳进来 → 免账密登录 → 进工作台。
+  // 登录页只会在未登录时出现，所以这里就是 SSO 的唯一入口。
+  useEffect(() => {
+    const ticket = new URLSearchParams(window.location.search).get('sso');
+    if (!ticket) return;
+    (async () => {
+      setBusy(true);
+      setError(null);
+      try {
+        const user = await ssoLogin(ticket);
+        window.history.replaceState(null, '', window.location.pathname);
+        onLoggedin(user);
+      } catch (err) {
+        setError(`演示登录失败：${(err as Error).message}`);
+      } finally {
+        setBusy(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();

@@ -19,6 +19,21 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+/** v2.4.4 演示 SSO：nianan.site 的一次性 ticket 换 token（免账密）。错误 detail 在 data.detail.message。 */
+export async function ssoLogin(ticket: string): Promise<LoginUser> {
+  const res = await fetch('/api/v1/auth/sso', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ticket }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(String(data?.detail?.message ?? `登录失败（HTTP ${res.status}）`));
+  }
+  setToken(String(data.access_token));
+  return data.user as LoginUser;
+}
+
 /** 登录：成功存 token 并返回用户；失败抛 Error(message)。 */
 export async function login(username: string, password: string): Promise<LoginUser> {
   const res = await fetch('/api/v1/auth/login', {
