@@ -119,6 +119,10 @@ class Settings(BaseSettings):
     token_prompt_overhead: int = 4500        # 系统提示 + 工具清单 + 协议说明的固定开销
     # （生产实测单步 prompt 约 7.7K，本地约 3.7K；4500 折中后两侧偏差均 <20%）
     token_estimate_steps_factor: float = 3.0 # 平均 ReAct 步数（每步都重发一遍 prompt）
+    # nianan.site 演示 SSO（v2.4.4）：HMAC-SHA256 ticket 验签密钥，与 rag 网关、
+    # nianan-site 前端共享。空 = SSO 关闭。安全边界：ticket 只能换 username 以
+    # "demo" 开头的账号（白名单硬编码在端点里），密钥泄漏也只能拿到演示 token。
+    sso_shared_secret: str = ""
     # 单任务全局硬上限：与钱包余额无关，对所有用户生效。0 表示关闭。
     # v2.4.0-p2.1：50000 → 200000。原值等于 v2.3.0-p1.4 的单步上限（50000），
     # 导致"读一份 5 万字文档"第一次调用就撞任务上限 → paused_budget（真跑 2026-11-17）。
