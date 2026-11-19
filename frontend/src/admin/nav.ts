@@ -1,9 +1,10 @@
-export type AdminTab = 'overview' | 'tasks' | 'users' | 'pools' | 'audit' | 'feedback';
+export type AdminTab = 'overview' | 'tasks' | 'users' | 'pools' | 'reconcile' | 'audit' | 'feedback';
 
 export const ADMIN_TABS: Array<{ key: AdminTab; label: string; hint: string; icon: string }> = [
   { key: 'overview', label: '概览', hint: '指标、系统状态和用量', icon: '▣' },
   { key: 'tasks', label: '任务监控', hint: '全局任务与问答溯源', icon: '◎' },
   { key: 'users', label: '用户额度', hint: '员工余额、充值与流水', icon: '◈' },
+  { key: 'reconcile', label: '任务对账', hint: '预扣、真实用量与折扣结算三列对齐', icon: '≡' },
   { key: 'pools', label: '模型池', hint: '角色可见模型与参数', icon: '⬡' },
   { key: 'audit', label: '审计日志', hint: '谁在什么时候做了什么', icon: '▤' },
   { key: 'feedback', label: '意见反馈', hint: '回答的点赞点踩与原因', icon: '♡' },

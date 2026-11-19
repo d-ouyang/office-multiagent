@@ -115,6 +115,34 @@ def _json_safe_dict(value: Any) -> dict[str, Any]:
         return {str(k): str(v) for k, v in (value or {}).items()}
 
 
+
+def _attach_llm_recorder(brain: Any, run_id: str | None, agent: str) -> None:
+    """给 brain 挂调用记录器（v2.4.3）：每次模型调用落 llm_call 一行。
+
+    失败静默——可观测不能影响任务；run_id 为空（单测 StubBrain）时跳过。
+    """
+    if brain is None or not run_id:
+        return
+    try:
+        from ..core.db import get_engine
+        from ..core.llm_call_repo import LlmCallRepo
+
+        repo = LlmCallRepo(get_engine())
+        counter = [0]
+
+        def _rec(model, messages, response_text, prompt_tokens, completion_tokens, ms):
+            counter[0] += 1
+            repo.record(
+                run_id, agent=agent, step=counter[0], model=model,
+                messages=messages or [], response_text=response_text or "",
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, ms=ms,
+            )
+
+        brain.call_recorder = _rec
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("挂载 LLM 调用记录器失败（忽略）")
+
+
 def _history_budget(model_id: str | None) -> int:
     """v2.3.0-p1.1：单次请求给历史用的 token 预算 = 模型窗口 × 百分比。
 
@@ -246,6 +274,7 @@ def build_graph(
                 token_budget=token_budget,
                 history_budget=hb,
             )
+            _attach_llm_recorder(brain, state.get("run_id"), st.agent_type)
             extra_tokens = {"n": 0}  # p4.3d：强制收尾那次 LLM 调用的用量，最后并入账
 
             def _synthesize(reason: str, history) -> str:
@@ -260,6 +289,7 @@ def build_graph(
                     token_budget=token_budget,
                     history_budget=hb,
                 )
+                _attach_llm_recorder(bare, state.get("run_id"), f"{st.agent_type}:synth")
                 step = bare.next_step(
                     f"【强制收尾】{reason}。不要再调用任何工具，直接基于以上已获得的观察，"
                     "写面向用户的最终回答（中文：已完成什么、得到哪些数据、还缺什么）。",
@@ -377,6 +407,7 @@ def build_graph(
             token_budget=token_budget,
             history_budget=_history_budget(state.get("model")),
         )
+        _attach_llm_recorder(brain, state.get("run_id"), agent)
         # 2.1.0 P1-1（HITL）：paused_input 续跑时回放已完成步骤 + 注入用户补充；
         # ask_count ≥ 3 后不再允许 ask_user（防问询循环），强制收敛给终答。
         ask_count = int(state.get("ask_count") or 0)
@@ -520,6 +551,7 @@ def build_graph(
                 # 汇总脑最容易超窗口（塞的是各子任务终答），预算必须给
                 history_budget=_history_budget(state.get("model")),
             )
+            _attach_llm_recorder(synth, state.get("run_id"), "synthesizer")
             task_lines = "\n".join(f"【{k}】{(v.final or '')[:2000]}" for k, v in results.items())
             asset_block = ("\n\n生成的文件：\n" + "\n".join(deliverables)) if deliverables else ""
             step = synth.next_step(
