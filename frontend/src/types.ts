@@ -14,7 +14,9 @@ export type EventType =
   | 'task_summary'
   | 'context_usage'
   | 'visual'
-  | 'ask_user';
+  | 'ask_user'
+  // v2.4.5：流式心跳（首 token 前/长思考期间每 3s），只用于"已等待 Ns"提示
+  | 'heartbeat';
 
 export interface StreamEvent {
   type: EventType;

@@ -37,6 +37,7 @@ const TASK_STATUS_OPTIONS = [
   { value: 'paused_insufficient_quota', label: '配额暂停' },
   { value: 'paused_error', label: '出错暂停' },
   { value: 'resumed', label: '续跑' },
+  { value: 'superseded', label: '已作废' },
 ];
 
 function readQuery() {

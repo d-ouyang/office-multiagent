@@ -45,6 +45,8 @@ class EventType(str, Enum):
     CONTEXT_USAGE = "context_usage"
     VISUAL = "visual"
     ASK_USER = "ask_user"
+    # v2.4.5：流式心跳——首 token 前与长思考期间每 N 秒一帧，只为"证明连接还活着"
+    HEARTBEAT = "heartbeat"
 
 
 class Event(BaseModel):
@@ -170,6 +172,15 @@ class RunEventEmitter:
         """2.1.0 P1-1 HITL：模型请求用户补充输入（任务随即进入 paused_input）。
         questions 为归一化数组（每项 question/options/need_file/file_hint），前端按 n/N 逐题收集。"""
         return self.emit(EventType.ASK_USER, questions=questions)
+
+    def heartbeat(self, elapsed_s: int, phase: str = "thinking") -> Event:
+        """流式心跳（v2.4.5）：首 token 前与长思考期间每 N 秒一帧。
+
+        为什么需要：真跑测到上游推理模型首 token 有 29~54s 完全静默，这段时间
+        连接上一个字节都没有——前端看起来就是死了，Caddy/网关的空闲超时也会
+        掐流。心跳不携带业务语义，前端只用来显示"已等待 Ns"。
+        """
+        return self.emit(EventType.HEARTBEAT, elapsed_s=elapsed_s, phase=phase)
 
     def artifact(self, asset_id: str, type: str, storage_url: str, name: str | None = None) -> Event:
         return self.emit(

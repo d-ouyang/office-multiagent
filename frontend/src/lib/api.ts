@@ -564,10 +564,33 @@ export async function listTasks(params: { status?: string; session_id?: string; 
   return data.tasks ?? [];
 }
 
-/** 某会话最近一条"暂停/失败"任务（刷新后横幅还能出现） */
+/** 某会话最近一条"暂停/失败"任务（刷新后横幅还能出现）
+ *
+ * v2.4.5：**只看该会话最新一条任务**。旧实现从最近 10 条里 find 任意 paused，
+ * 于是"答完一条旧暂停、后面又跑了几轮 done"的会话会被旧行永久拖住——刷新一次
+ * 弹一次同一张问题卡（实测：3 条僵尸 paused_input 让侧栏永远挂"待确认"）。
+ * 语义上也只有最新一条是"还等着你"的：更新的任务一发出，旧的暂停即作废。
+ */
 export async function latestPausedTask(sessionId: string): Promise<PausedTask | null> {
   const tasks = await listTasks({ session_id: sessionId, limit: 10 });
-  return tasks.find((t) => String(t.status).startsWith('paused') || t.status === 'failed') ?? null;
+  const latest = tasks[0];
+  if (!latest) return null;
+  const st = String(latest.status);
+  return st.startsWith('paused') || st === 'failed' ? latest : null;
+}
+
+/** v2.4.5：跳过本轮补充输入——必须落库，否则刷新后同一张卡又冒出来 */
+export async function skipPausedTask(taskId: string): Promise<boolean> {
+  const res = await fetch(`/api/v1/tasks/${encodeURIComponent(taskId)}/answer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'skip' }),
+  });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  return res.ok;
 }
 
 /** 续跑/重试：返回原始 Response 供 consumeNdjson 消费 */

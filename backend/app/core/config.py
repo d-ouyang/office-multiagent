@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     # Brain 用的对话大模型 id（config/models.yaml 注册表里的 id）
     llm_brain_model: str = "deepseek-chat"
     llm_timeout: float = 120.0
+    # v2.4.5：首 token 超时（秒）。httpx 的 read timeout 是"两个 chunk 之间"的
+    # 上限，管不住"一个字都还没来"的情况——真跑测到上游推理模型首 token 静默
+    # 29~54s，偶发无限期不吐字，任务就挂在 worker 线程里直到 900s 硬超时。
+    # 到点主动关掉响应 → 走既有的首块前瞬时失败重试链路（_is_transient 认 Timeout）。
+    llm_first_token_timeout: float = 45.0
+    # v2.4.5：流式心跳间隔（秒）。首 token 前与长思考期间每 N 秒补一帧 heartbeat，
+    # 让前端能显示"已等待 Ns"、也让网关的空闲超时不吃掉连接。
+    heartbeat_interval_seconds: float = 3.0
     # v2.0.0-p5.1：LLM 重试参数配置化（此前 range(3) 与 0.8*(attempt+1) 硬编码在
     # core/llm.py 两条路径里）。llm_max_retries=额外重试次数，总尝试 = 1 + 该值，
     # 缺省 2 与 p6.7b 现状一致；0 表示完全关闭重试。

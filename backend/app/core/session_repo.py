@@ -134,7 +134,9 @@ class SessionRepo:
                     "  COALESCE((SELECT MAX(m2.created_at) FROM message m2 "
                     "     WHERE m2.session_id = s.id), s.created_at) AS updated_at, "
                     "  EXISTS(SELECT 1 FROM task t WHERE t.session_id = s.id "
-                    "     AND t.status = 'paused_input') AS has_pending_input "
+                    "     AND t.status = 'paused_input' "
+                    "     AND t.id = (SELECT t2.id FROM task t2 WHERE t2.session_id = s.id "
+                    "                 ORDER BY t2.created_at DESC, t2.id DESC LIMIT 1)) AS has_pending_input "
                     "FROM session s WHERE s.user_id = :u "
                     "ORDER BY COALESCE(s.pinned, 0) DESC, s.pinned_at DESC, updated_at DESC LIMIT :l"
                 ),
@@ -308,6 +310,42 @@ class SessionRepo:
                 text("UPDATE task SET status = 'resumed' WHERE id = :i AND status LIKE 'paused%'"),
                 {"i": task_id},
             )
+
+    def supersede_session_paused(self, session_id: str) -> int:
+        """把该会话里所有还没被回答的 paused_input 标成 superseded（v2.4.5）。
+
+        为什么需要：task 行是"跑完才 INSERT"的，用户等不及重发、或在别的会话里接着干，
+        旧那条 paused_input 就一直留在库里。侧栏徽章（EXISTS paused_input）与刷新后的
+        横幅都会把它当"待确认"反复捞出来——实测一个会话堆了 3 条僵尸 paused，每次
+        刷新都弹同一张问题卡，点"跳过"只改本地 state，刷新就回来。
+
+        语义：会话里出现新任务 = 用户已经不想回答上一轮了，旧暂停一律作废。
+        """
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    "UPDATE task SET status = 'superseded', pause_reason = NULL "
+                    "WHERE session_id = :s AND status = 'paused_input'"
+                ),
+                {"s": session_id},
+            )
+        return int(result.rowcount or 0)
+
+    def supersede_task(self, task_id: str) -> bool:
+        """单条 paused_input → superseded（v2.4.5：前端「跳过本轮」落库）。
+
+        只接受 paused_input：done/failed 之类终态不该被这个口子改写，避免把
+        已完成任务的结论抹成"作废"。
+        """
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    "UPDATE task SET status = 'superseded', pause_reason = NULL "
+                    "WHERE id = :i AND status = 'paused_input'"
+                ),
+                {"i": task_id},
+            )
+        return bool(result.rowcount)
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         """按 id 取任务（p7.1：暂停详情/续跑入口用）。"""

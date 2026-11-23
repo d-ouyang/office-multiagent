@@ -7,6 +7,9 @@ export const STATUS: Record<string, string> = {
   paused_user: '用户暂停',
   paused_error: '出错暂停',
   paused_insufficient_quota: '配额暂停',
+  paused_input: '待确认',
+  // v2.4.5：新任务一发出，旧的"待确认"即作废——不再计入暂停口径
+  superseded: '已作废',
 };
 
 export const REASON: Record<string, string> = {

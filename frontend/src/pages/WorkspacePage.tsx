@@ -14,7 +14,7 @@ import Notice from '../components/Notice';
 import { describeError, parseApiError } from '../lib/apiError';
 import { deriveAskUser, deriveContextUsage, deriveCurrentAgent, agentLabel, normalizeAsk, pauseText, quotaPauseText, type AskUserPayload } from '../lib/derive';
 import AskUserCard from '../components/AskUserCard';
-import { answerTaskResponse, authHeaders, fetchMessageTrace, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
+import { answerTaskResponse, authHeaders, fetchMessageTrace, cancelMessageFeedback, clearToken, createSession, deleteSession, getMessages, getQuota, latestPausedTask, listSessions, pauseTask, skipPausedTask, submitMessageFeedback, updateSession, type FeedbackRating, type MessageFeedback } from '../lib/api';
 
 const EFFORTS = ['低', '高', '最大'] as const;
 const EFFORT_API: Record<string, string> = { 低: 'low', 高: 'high', 最大: 'max' };
@@ -600,7 +600,25 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
 
   const liveMessages = useMemo<ChatMessageData[]>(
     () => (events.length || status === 'streaming'
-      ? [...messages, { role: 'assistant', events, streaming: status === 'streaming' }]
+      ? [
+          ...messages,
+          {
+            role: 'assistant',
+            events,
+            streaming: status === 'streaming',
+            // v2.4.5：取最后一帧心跳的 elapsed_s（心跳 seq 从 10^6 起，永远排在
+            // 真实事件之后，不会打乱 derive 的过程分段）
+            waitedSec: (() => {
+              for (let i = events.length - 1; i >= 0; i -= 1) {
+                if (events[i].type === 'heartbeat') {
+                  const n = Number(events[i].data.elapsed_s);
+                  return Number.isFinite(n) ? n : undefined;
+                }
+              }
+              return undefined;
+            })(),
+          },
+        ]
       : messages),
     [messages, events, status],
   );
@@ -756,7 +774,13 @@ export function WorkspacePage({ user, onLogout, onOpenAdmin }: { user: SessionUs
             uploadError={uploadError}
             onUploadFile={uploadFile}
             onSubmit={onAskSubmit}
-            onDismiss={() => setPaused((p) => (p ? { ...p, dismissed: true } : p))}
+            onDismiss={() => {
+              // v2.4.5：跳过必须落库（paused_input → superseded）。此前只改本地
+              // dismissed 标记，刷新后 latestPausedTask 又把同一条捞回来，弹窗复现。
+              const id = paused?.taskId;
+              setPaused((p) => (p ? { ...p, dismissed: true } : p));
+              if (id) void skipPausedTask(id).catch(() => {});
+            }}
           />
         )}
         {paused && paused.status === 'paused_input' && paused.ask && paused.ask.questions.length > 0 && paused.dismissed && (

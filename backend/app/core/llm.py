@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field as dataclass_field
@@ -401,6 +402,57 @@ def chat_stream(
     )
 
 
+class SilentStreamWatchdog:
+    """首 token 看门狗：N 秒内一个字节都没来就回调 `on_timeout`（关掉流）。
+
+    为什么需要：httpx 的 read timeout 计的是"两个 chunk 之间"的间隔，管不住
+    "首字迟迟不来"——上游推理模型真出现过 29~54s 静默、偶发直接不吐字，任务就
+    挂在 worker 线程里直到 900s 硬超时（用户侧看到的就是"卡住了一直不动"）。
+
+    为什么是关流而不是抛异常：读取循环正阻塞在 socket 上，只有从另一线程把连接
+    关掉才能把它打断（真实网络流会读失败退出）。已收到首个 chunk 之后不再干预——
+    已出字的重试会重复输出，宁可不补。
+    """
+
+    def __init__(self, seconds: float, on_timeout: Callable[[], None]) -> None:
+        self._seconds = max(0.01, float(seconds))
+        self._on_timeout = on_timeout
+        self._first_chunk = threading.Event()
+        self._fired = threading.Event()
+        self._timer: threading.Timer | None = None
+
+    def start(self) -> None:
+        timer = threading.Timer(self._seconds, self._tick)
+        timer.daemon = True
+        self._timer = timer
+        timer.start()
+
+    def _tick(self) -> None:
+        if self._first_chunk.is_set():
+            return
+        self._fired.set()
+        try:
+            self._on_timeout()
+        except Exception:  # noqa: BLE001 - 关流失败不影响主流程
+            pass
+
+    def mark_chunk(self) -> None:
+        """收到首个 chunk：失活（之后只由 httpx read timeout 兜底）。"""
+        if self._first_chunk.is_set():
+            return
+        self._first_chunk.set()
+        if self._timer is not None:
+            self._timer.cancel()
+
+    def cancel(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+
+    @property
+    def fired(self) -> bool:
+        return self._fired.is_set()
+
+
 def _chat_stream_impl(
     model_id: str,
     messages: list[dict[str, str]],
@@ -450,15 +502,29 @@ def _chat_stream_impl(
         parts.clear()
         usage = {}
         raw_calls.clear()
+        # v2.4.5：首 token 看门狗（见 SilentStreamWatchdog）——到点关流把阻塞中的
+        # iter_lines 打断，交给下面既有的"首块前瞬时失败重试"分支。
+        resp_holder: dict[str, httpx.Response | None] = {"resp": None}
+
+        def _abort_silent_stream() -> None:
+            resp = resp_holder["resp"]
+            if resp is not None:
+                resp.close()
+
+        watchdog = SilentStreamWatchdog(settings.llm_first_token_timeout, _abort_silent_stream)
+
         try:
             with httpx.Client(timeout=timeout or settings.llm_timeout, transport=transport) as client:
                 with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    resp_holder["resp"] = resp
                     if resp.status_code != 200:
                         body = resp.read().decode("utf-8", "replace")
                         if _is_context_overflow(resp.status_code, body):
                             raise ContextOverflowError(f"上下文超限（{resp.status_code}）：{body[:300]}")
                         raise LlmError(f"LLM 返回 {resp.status_code}: {body[:200]}")
+                    watchdog.start()  # 只在 HTTP 200 之后计时：4xx/5xx 立即返回，不用等
                     for line in resp.iter_lines():
+                        watchdog.mark_chunk()  # 首个字节到了，剩下的交给 read timeout
                         if not line.startswith("data:"):
                             continue
                         data = line[5:].strip()
@@ -512,7 +578,14 @@ def _chat_stream_impl(
                 tool_calls=tool_calls,
             )
         except (httpx.HTTPError, LlmError) as e:
-            last_err = e if isinstance(e, LlmError) else LlmError(f"LLM 请求失败：{type(e).__name__}: {e}")
+            if watchdog.fired and not emitted_any:
+                # 看门狗打断的流：httpx 只会抛一个泛化的 ReadError/StreamClosed，
+                # 必须换成人话，并带上 Timeout 字样以便 _is_transient 判定为可重试。
+                last_err = LlmError(
+                    f"LLM 首 token Timeout：{settings.llm_first_token_timeout:.0f}s 内未吐任何内容 model={model_id}"
+                )
+            else:
+                last_err = e if isinstance(e, LlmError) else LlmError(f"LLM 请求失败：{type(e).__name__}: {e}")
             if emitted_any:
                 raise last_err from e  # 已出字：重试会重复输出，如实终止
             if not _is_transient(last_err) or attempt >= settings.llm_max_retries:
@@ -523,4 +596,6 @@ def _chat_stream_impl(
                 delay, attempt + 1, settings.llm_max_retries, model_id, last_err,
             )
             time.sleep(delay)
+        finally:
+            watchdog.cancel()
     raise last_err  # pragma: no cover

@@ -1152,6 +1152,23 @@ def answer_task(task_id: str, body: dict[str, Any] | None = None, authorization:
     注入原循环。返回 NDJSON 流（可能再次 ask_user——模型可多轮追问，上限 3 次）。"""
     if not isinstance(body, dict):
         body = {}
+    # v2.4.5：跳过本轮补充（HITL 的"我不想答了"）——必须落库，否则刷新后
+    # 同一张问题卡又从 paused_input 里被捞出来（实测：点跳过只改本地 state）。
+    if str(body.get("action") or "") == "skip":
+        user = _current_user(authorization)
+        from ..core.db import get_engine
+        from ..core.session_repo import SessionRepo
+
+        repo = SessionRepo(get_engine())
+        task = repo.get_task(task_id)
+        if not task or not repo.task_belongs_to(task_id, user["id"]):
+            raise HTTPException(404, detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"})
+        if task["status"] != "paused_input":
+            raise HTTPException(
+                409, detail={"code": "TASK_NOT_WAITING_INPUT", "message": "该任务不在等待补充输入状态"}
+            )
+        repo.supersede_task(task_id)
+        return {"ok": True, "status": "superseded"}
     # 2.1.0：放弃本轮（budget 暂停的取消按钮）——任务终态 done，产物留会话
     if str(body.get("action") or "") == "cancel":
         user = _current_user(authorization)
@@ -1305,8 +1322,11 @@ def _stream_answer(
                 logger.exception("续跑失败落库也失败 task_id=%s", task_id)
         finally:
             runs.finish(run_id)
+            stop_hb.set()
             q.put(None)
 
+    stop_hb = threading.Event()
+    _start_heartbeat(q, run_id, stop_hb)
     threading.Thread(target=worker, daemon=True, name="task_answer").start()
 
     def gen():
@@ -1758,6 +1778,32 @@ def admin_resume_task(task_id: str, authorization: str | None = Header(default=N
     return _resume_task_impl(task_id, operator_id=int(admin["id"]))
 
 
+def _start_heartbeat(q: Any, run_id: str, stop_ev: Any) -> None:
+    """流式心跳（v2.4.5）：首 token 前与长思考期间每 N 秒往队列补一帧。
+
+    真跑证据：上游推理模型首 token 静默 29~54s，这段时间响应里一个字节都没有，
+    前端只能干转圈（用户原话"卡住了一直不动"），Caddy/网关的空闲超时也可能掐流。
+    心跳只带 elapsed_s，不参与业务语义——前端用它显示"已等待 Ns"。
+    seq 从 10^6 起：绝不与 run 自身的事件序列抢号（前端按 seq 排序）。
+    """
+    import threading as _threading
+
+    from ..core.events import EventSequence, RunEventEmitter
+
+    em = RunEventEmitter(
+        run_id, run_id, EventSequence(start=10**6), trace_id=run_id, tenant_id="office"
+    )
+    interval = max(1.0, float(settings.heartbeat_interval_seconds))
+
+    def loop() -> None:
+        elapsed = 0
+        while not stop_ev.wait(interval):
+            elapsed += int(interval)
+            q.put(em.heartbeat(elapsed))
+
+    _threading.Thread(target=loop, daemon=True, name="run_heartbeat").start()
+
+
 def _stream_task(
     *,
     user: dict[str, Any],
@@ -1853,6 +1899,13 @@ def _stream_task(
             409,
             detail={"code": "LEASE_CONFLICT", "message": "该任务正在执行中，请等待完成或暂停后再操作"},
         )
+    # v2.4.5：新任务一发出，本会话里还没被回答的暂停就作废（superseded）——
+    # 否则侧栏"待确认"徽章和刷新后的横幅会永远捞到那条僵尸 paused_input。
+    # 放在 lease 之后：被 409 挡掉的重复请求不该动别人的状态。
+    try:
+        repo.supersede_session_paused(session_id)
+    except Exception:  # noqa: BLE001 - 状态收敛失败不阻断任务
+        logger.exception("作废旧暂停失败 session_id=%s（忽略）", session_id)
 
     def worker() -> None:
         try:
@@ -2015,6 +2068,7 @@ def _stream_task(
         finally:
             _watchdog.cancel()
             runs.finish(run_id)
+            stop_hb.set()  # 先停心跳再投哨兵：心跳帧不许落在 None 之后
             q.put(None)  # 哨兵：流结束
 
     # v2.2.0-p1.8（C2）：run 级硬超时 watchdog——到点置位取消事件，编排走协作取消
@@ -2023,6 +2077,8 @@ def _stream_task(
     _watchdog.daemon = True
     _watchdog.start()
 
+    stop_hb = threading.Event()
+    _start_heartbeat(q, run_id, stop_hb)
     threading.Thread(target=worker, daemon=True, name="run_task").start()
 
     def gen():

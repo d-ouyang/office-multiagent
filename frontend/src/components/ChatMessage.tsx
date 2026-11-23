@@ -24,6 +24,8 @@ export interface ChatMessageData {
   content?: string;
   events?: StreamEvent[];
   streaming?: boolean;
+  /** v2.4.5：流式心跳累计秒数——首字未到时显示"正在思考… 已等待 Ns" */
+  waitedSec?: number;
   createdAt?: number;
   /** v2.4.2：后端留有完整 trace（含思考逐字流），界面上可按需加载 */
   hasFullTrace?: boolean;
@@ -400,7 +402,13 @@ export function ChatMessage({
             ))}
           </div>
         )}
-        {msg.streaming && !content && !failure && <div className="typing">正在思考…</div>}
+        {msg.streaming && !content && !failure && (
+          <div className="typing">
+            正在思考…
+            {/* v2.4.5：上游推理模型首字常有 30~60s 静默，心跳让用户看到"还活着" */}
+            {msg.waitedSec ? ` 已等待 ${msg.waitedSec}s` : ''}
+          </div>
+        )}
         {!msg.streaming && (
           <div className="reply-meta">
             <CopyIcon getText={copyText} />

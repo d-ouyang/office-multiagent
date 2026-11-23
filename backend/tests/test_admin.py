@@ -178,17 +178,24 @@ def test_overview_month_tokens_only_task_settles(eng):
 
 
 def test_usage_series_by_day(eng):
+    # v2.4.5：日期改成"相对今天"——原先硬编码 2026-10-21/22，一过 30 天窗口就必红
+    # （时间炸弹：今天 2026-11-23 时 10-21 已在窗外）。口径与服务端一致：UTC 日期。
+    from datetime import datetime, timedelta, timezone
+
+    today = datetime.now(timezone.utc).date()
+    d1 = (today - timedelta(days=2)).isoformat()
+    d2 = (today - timedelta(days=1)).isoformat()
     with eng.begin() as conn:
-        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (1, 'a', 'deepseek-chat', 'task', 2000, 100, '2026-10-21 10:00:00')"))
-        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (1, 'b', 'deepseek-chat', 'task', 2000, 200, '2026-10-21 11:00:00')"))
-        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (2, 'c', 'qwen3.5-9b-sf', 'task', 2000, 300, '2026-10-22 12:00:00')"))
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (1, 'a', 'deepseek-chat', 'task', 2000, 100, :t)"), {"t": f"{d1} 10:00:00"})
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (1, 'b', 'deepseek-chat', 'task', 2000, 200, :t)"), {"t": f"{d1} 11:00:00"})
+        conn.execute(text("INSERT INTO token_ledger (user_id, task_id, model, kind, reserve, settle, created_at) VALUES (2, 'c', 'qwen3.5-9b-sf', 'task', 2000, 300, :t)"), {"t": f"{d2} 12:00:00"})
     data = TestClient(app).get("/api/v1/admin/usage?days=30", headers=_auth()).json()
     series = {row["date"]: row for row in data["series"]}
     assert len(data["series"]) == 30
-    assert series["2026-10-21"]["tokens"] == 300 and series["2026-10-21"]["calls"] == 2
-    assert series["2026-10-21"]["by_model"]["deepseek-chat"] == 300
-    assert series["2026-10-22"]["tokens"] == 300
-    assert series["2026-10-22"]["by_model"]["qwen3.5-9b-sf"] == 300
+    assert series[d1]["tokens"] == 300 and series[d1]["calls"] == 2
+    assert series[d1]["by_model"]["deepseek-chat"] == 300
+    assert series[d2]["tokens"] == 300
+    assert series[d2]["by_model"]["qwen3.5-9b-sf"] == 300
     assert data["models"][0] == "deepseek-chat"
 
 

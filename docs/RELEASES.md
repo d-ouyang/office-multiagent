@@ -9,6 +9,30 @@
 
 ---
 
+## v2.4.5 — 待确认收敛 / 流式心跳 / 首 token 超时（2026-11-23）
+
+分支 `master`（接 v2.4.4），后端 **658 passed / 3 skipped**，前端 **144 passed**。
+详见 `docs/iterations/v2.4.5-hitl-converge-and-heartbeat.md`。
+
+**一句话**：修两个"看起来像挂了"的真问题——任务停住后界面永远弹同一张问题卡；模型首字不来时界面完全静止。
+
+### 产品改动
+
+| 改动 | 内容 |
+| ---- | ---- |
+| 「待确认」只认最新一条 | 新任务一发出，本会话旧 `paused_input` 自动作废为 `superseded`；侧栏徽章、刷新横幅同步收敛 |
+| 「跳过」落库 | `POST /tasks/{id}/answer {action:"skip"}`，不再"点完收起、刷新又回来" |
+| 思考中可见 | 流式期间每 3s 一帧 `heartbeat`，前端显示"正在思考… 已等待 Ns" |
+| 首 token 兜底 | 45s 无任何内容 → 关流 + 重试（`LLM 首 token Timeout`），不再挂到 900s 硬超时 |
+
+### 根因与结论
+
+- 不是会话互相阻塞：读写全按 `session_id`/`user_id` 过滤，lease 是 `run_id` 级，checkpoint `thread_id = run_id`。
+- 是**状态收敛缺失**：`task` 行跑完才 INSERT + 徽章/横幅取"任意 paused" + 跳过不落库，三者叠加。
+- 线上首 token 静默实测 29s/54s（`deepseek-v4.1-flash`），单轮 12.3s / 39.1s / 78.1s 波动。
+
+---
+
 ## v2.4.1 — 引导入口与结果完整性（2026-11-17）
 
 分支 `feature/2.4.0-routing-and-io`（接 v2.4.0），后端 **633 → 637 passed / 3 skipped**，前端 **137 → 139 passed**。详见 `docs/iterations/v2.4.1-entry-and-integrity.md`。
